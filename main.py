@@ -35,6 +35,7 @@ class ZhiHuiShuGUI:
 
         # Database
         self.db = Database()
+        self._video_history_data = []  # [(url, note), ...] for ComboboxSelected lookup
 
         # Thread communication
         self.log_queue = queue.Queue()
@@ -71,10 +72,20 @@ class ZhiHuiShuGUI:
     # ---------- load / save ----------
 
     def _load_saved_values(self):
-        """Load previously saved config from keyring."""
+        """Load previously saved config from keyring and DB."""
         self._refresh_url_history()
+        # Auto-fill with latest URL from history
+        logged_history = self.db.get_url_history("logged")
+        if logged_history:
+            self.logged_url_var.set(logged_history[0][0])
+        video_history = self.db.get_url_history("video")
+        if video_history:
+            self.video_url_var.set(video_history[0][0])
+            self.course_note_var.set(video_history[0][1])
         self.zhanghao_var.set(self._kr_get(KEYRING_USER_KEY))
         self.mima_var.set(self._kr_get(KEYRING_PASS_KEY))
+        saved_limit = self.db.get_setting("time_limit", "")
+        self.time_limit_var.set(saved_limit)
 
     def _save_all_values(self):
         """Persist current field values to keyring and DB."""
@@ -82,18 +93,40 @@ class ZhiHuiShuGUI:
         mima = self.mima_var.get()
         logged_url = self.logged_url_var.get()
         video_url = self.video_url_var.get()
+        time_limit = self.time_limit_var.get()
 
         if zhanghao:
             self._kr_set(KEYRING_USER_KEY, zhanghao)
         if mima:
             self._kr_set(KEYRING_PASS_KEY, mima)
+        self.db.set_setting("time_limit", time_limit)
         self.db.save_url_history("logged", logged_url)
-        self.db.save_url_history("video", video_url)
+        self.db.save_url_history("video", video_url, self.course_note_var.get())
         self._refresh_url_history()
 
     def _refresh_url_history(self):
-        self.logged_url_combo["values"] = self.db.get_url_history("logged")
-        self.video_url_combo["values"] = self.db.get_url_history("video")
+        logged_data = self.db.get_url_history("logged")
+        self.logged_url_combo["values"] = [url for url, _ in logged_data]
+        video_data = self.db.get_url_history("video")
+        self._video_history_data = video_data
+        self.video_url_combo["values"] = [
+            f"（{note}）{url}" if note else url
+            for url, note in video_data
+        ]
+
+    def _on_video_url_selected(self, event):
+        """When user picks a video URL from the dropdown, fill URL and note fields."""
+        idx = self.video_url_combo.current()
+        if 0 <= idx < len(self._video_history_data):
+            url, note = self._video_history_data[idx]
+            self.video_url_var.set(url)
+            self.course_note_var.set(note)
+
+    def _on_video_url_changed(self, *args):
+        """When the video URL text changes, sync the note field from DB."""
+        current_url = self.video_url_var.get().strip()
+        note = self.db.get_note_for_url(current_url)
+        self.course_note_var.set(note)
 
     # ---------- UI construction ----------
 
@@ -139,6 +172,23 @@ class ZhiHuiShuGUI:
             url_frame, textvariable=self.video_url_var, width=77
         )
         self.video_url_combo.grid(row=1, column=1, sticky=tk.EW, pady=2)
+        self.video_url_combo.bind("<<ComboboxSelected>>", self._on_video_url_selected)
+        self.video_url_var.trace_add("write", self._on_video_url_changed)
+
+        ttk.Label(url_frame, text="课程备注:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        self.course_note_var = tk.StringVar()
+        ttk.Entry(url_frame, textvariable=self.course_note_var, width=60).grid(
+            row=2, column=1, sticky=tk.EW, pady=2
+        )
+
+        ttk.Label(url_frame, text="刷课时长(分钟):").grid(row=3, column=0, sticky=tk.W, pady=2)
+        self.time_limit_var = tk.StringVar(value="0")
+        ttk.Entry(url_frame, textvariable=self.time_limit_var, width=10).grid(
+            row=3, column=1, sticky=tk.W, pady=2
+        )
+        ttk.Label(url_frame, text="（0=不限，达到时长后自动停止）", foreground="gray").grid(
+            row=3, column=1, sticky=tk.E, pady=2
+        )
 
         url_frame.columnconfigure(1, weight=1)
 
@@ -252,6 +302,10 @@ class ZhiHuiShuGUI:
         password = self.mima_var.get()
         logged_url = self.logged_url_var.get().strip()
         video_url = self.video_url_var.get().strip()
+        try:
+            time_limit = int(self.time_limit_var.get() or "0")
+        except ValueError:
+            time_limit = 0
 
         # Save to persistent storage
         self._save_all_values()
@@ -263,6 +317,7 @@ class ZhiHuiShuGUI:
             logged_url=logged_url,
             video_url=video_url,
             login_method=login_method,
+            time_limit_minutes=time_limit,
             captcha_event=self.captcha_needed,
             captcha_done_event=self.captcha_done,
             stop_event=self.stop_event,

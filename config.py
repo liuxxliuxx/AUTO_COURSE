@@ -1,5 +1,19 @@
-# 智慧树自动刷课脚本 — 配置文件
-# 敏感信息（账号密码）通过系统 keyring 存储，DQPP_BASE_URL 存 SQLite
-# 此文件仅保留 DB_PATH 常量，所有配置在 GUI 中管理
+import os
+import sys
 
-DB_PATH = "course_progress.db"
+
+def _get_db_path():
+    """Return platform-appropriate database path in user data directory."""
+    if sys.platform == "darwin":
+        base = os.path.join(os.path.expanduser("~"), "Library", "Application Support")
+    elif sys.platform == "win32":
+        base = os.environ.get("APPDATA", os.path.expanduser("~"))
+    else:
+        base = os.environ.get("XDG_DATA_HOME",
+                              os.path.join(os.path.expanduser("~"), ".local", "share"))
+    path = os.path.join(base, "zhihuishu_auto_course")
+    os.makedirs(path, exist_ok=True)
+    return os.path.join(path, "course_progress.db")
+
+
+DB_PATH = _get_db_path()

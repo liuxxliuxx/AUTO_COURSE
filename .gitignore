@@ -12,3 +12,6 @@ dist/
 *.pyc
 *.egg-info/
 .DS_Store
+
+.vscode/
+.idea/

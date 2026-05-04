@@ -668,113 +668,138 @@ class ZhiHuiShuBot:
 
         return None
 
-    def handle_quiz_dialog(self, dialog):
-        """Handle a quiz popup: randomly click an option, verify it was selected,
-        then close the dialog."""
-        try:
-            # --- Step 1: Find and click a random option ---
-            options = dialog.find_elements(By.CSS_SELECTOR, ".topic-item")
-            if not options:
-                options = dialog.find_elements(
-                    By.XPATH, ".//li[contains(@class,'topic-item')]"
-                )
+    def _answer_current_question(self, dialog):
+        """Answer the currently displayed question inside the quiz dialog.
+        Returns True if an option was selected, False otherwise."""
+        options = dialog.find_elements(By.CSS_SELECTOR, ".topic-item")
+        if not options:
+            options = dialog.find_elements(
+                By.XPATH, ".//li[contains(@class,'topic-item')]"
+            )
 
-            if options:
-                choice = random.choice(options)
-                # Try clicking all clickable parts of the option item
-                clicked = False
-                for click_target in [
-                    choice,
-                    *choice.find_elements(By.CSS_SELECTOR, ".item-topic"),
-                    *choice.find_elements(By.CSS_SELECTOR, "span"),
-                    *choice.find_elements(By.CSS_SELECTOR, "div"),
-                ]:
-                    try:
-                        click_target.click()
-                        clicked = True
-                        break
-                    except Exception:
-                        continue
+        if not options:
+            logger.info("未找到弹题选项")
+            return False
 
-                if clicked:
-                    logger.info("已点击弹题选项")
-                else:
-                    logger.warning("无法点击弹题选项")
-            else:
-                logger.info("未找到弹题选项，直接关闭")
+        choice = random.choice(options)
+        clicked = False
+        for click_target in [
+            choice,
+            *choice.find_elements(By.CSS_SELECTOR, ".item-topic"),
+            *choice.find_elements(By.CSS_SELECTOR, "span"),
+            *choice.find_elements(By.CSS_SELECTOR, "div"),
+        ]:
+            try:
+                click_target.click()
+                clicked = True
+                break
+            except Exception:
+                continue
 
-            # --- Step 2: Verify at least one option is selected ---
-            time.sleep(0.5)
-            selected = False
-            for _ in range(5):  # Retry up to 5 times
-                # Check for the "active" class on option items
+        if clicked:
+            logger.info("已点击弹题选项")
+        else:
+            logger.warning("无法点击弹题选项")
+            return False
+
+        # Verify at least one option is selected
+        time.sleep(0.5)
+        for _ in range(5):
+            active_opts = dialog.find_elements(
+                By.CSS_SELECTOR, ".topic-option-item.active"
+            )
+            if not active_opts:
                 active_opts = dialog.find_elements(
-                    By.CSS_SELECTOR, ".topic-option-item.active"
+                    By.CSS_SELECTOR, ".item-topic.active"
                 )
-                if not active_opts:
-                    active_opts = dialog.find_elements(
-                        By.CSS_SELECTOR, ".item-topic.active"
-                    )
-                if active_opts:
-                    selected = True
-                    logger.info("确认选项已被选中（%d个active元素）", len(active_opts))
-                    break
-                # Not selected yet — try clicking again if we have options
-                if options:
-                    retry_choice = random.choice(options)
-                    try:
-                        retry_choice.click()
-                    except Exception:
-                        pass
+            if active_opts:
+                logger.info("确认选项已被选中（%d个active元素）", len(active_opts))
+                return True
+            # Retry clicking
+            try:
+                random.choice(options).click()
+            except Exception:
+                pass
+            time.sleep(0.5)
+
+        logger.warning("未检测到选项被选中")
+        return False
+
+    def _close_quiz_dialog(self, dialog):
+        """Close the quiz dialog via various fallback strategies.
+        Returns True if closed successfully."""
+        close_selectors = [
+            ".el-dialog__headerbtn",
+            ".el-dialog__close",
+            "button[aria-label='Close']",
+        ]
+        for sel in close_selectors:
+            try:
+                close_btn = dialog.find_element(By.CSS_SELECTOR, sel)
+                if close_btn.is_displayed():
+                    close_btn.click()
+                    logger.info("已关闭弹题对话框")
+                    time.sleep(1)
+                    return True
+            except Exception:
+                continue
+
+        # Second pass: try buttons inside the dialog footer
+        try:
+            footer_btn = dialog.find_element(
+                By.XPATH,
+                ".//div[contains(@class,'dialog-footer')]//div[contains(@class,'btn')]"
+            )
+            footer_btn.click()
+            logger.info("已通过底部按钮关闭弹题")
+            time.sleep(1)
+            return True
+        except Exception:
+            pass
+
+        try:
+            footer_btn = dialog.find_element(
+                By.XPATH, ".//div[@class='btn'][contains(text(),'关闭')]"
+            )
+            footer_btn.click()
+            logger.info("已通过底部'关闭'按钮关闭弹题")
+            time.sleep(1)
+            return True
+        except Exception:
+            pass
+
+        logger.warning("未能关闭弹题对话框")
+        return False
+
+    def handle_quiz_dialog(self, dialog):
+        """Handle a multi-question quiz popup: answer each question, click next
+        after each answer, then close the dialog after the last question."""
+        try:
+            question_index = 0
+            while True:
+                question_index += 1
+                logger.info("处理弹题第 %d 题", question_index)
+
+                # --- Step 1: Answer the current question ---
+                self._answer_current_question(dialog)
                 time.sleep(0.5)
 
-            if not selected:
-                logger.warning("未检测到选项被选中，仍尝试关闭")
+                # --- Step 2: Check if there is a next question ---
+                try:
+                    next_btn = dialog.find_element(By.CSS_SELECTOR, ".btn-next")
+                    if next_btn.is_enabled() and next_btn.is_displayed():
+                        logger.info("点击右箭头进入下一题")
+                        next_btn.click()
+                        time.sleep(1)
+                        continue
+                except Exception:
+                    pass
+
+                # No enabled next button → last question, close the dialog
+                break
 
             # --- Step 3: Close the dialog ---
-            close_selectors = [
-                ".el-dialog__headerbtn",
-                ".el-dialog__close",
-                "button[aria-label='Close']",
-            ]
-            for sel in close_selectors:
-                try:
-                    close_btn = dialog.find_element(By.CSS_SELECTOR, sel)
-                    if close_btn.is_displayed():
-                        close_btn.click()
-                        logger.info("已关闭弹题对话框")
-                        time.sleep(1)
-                        return True
-                except Exception:
-                    continue
-
-            # Second pass: try buttons inside the dialog footer
-            try:
-                footer_btn = dialog.find_element(
-                    By.XPATH,
-                    ".//div[contains(@class,'dialog-footer')]//div[contains(@class,'btn')]"
-                )
-                footer_btn.click()
-                logger.info("已通过底部按钮关闭弹题")
-                time.sleep(1)
-                return True
-            except Exception:
-                pass
-
-            # Last resort
-            try:
-                footer_btn = dialog.find_element(
-                    By.XPATH, ".//div[@class='btn'][contains(text(),'关闭')]"
-                )
-                footer_btn.click()
-                logger.info("已通过底部'关闭'按钮关闭弹题")
-                time.sleep(1)
-                return True
-            except Exception:
-                pass
-
-            logger.warning("未能关闭弹题对话框")
-            return False
+            return self._close_quiz_dialog(dialog)
 
         except Exception as e:
             logger.error("处理弹题时出错: %s", e)

@@ -7,7 +7,7 @@ FRAMEWORKS="${DIST_APP}/Contents/Frameworks"
 ANACONDA_LIB="$(python3 -c 'import sys; print(sys.prefix)')/lib"
 
 echo "==> Building with py2app..."
-python3 setup.py py2app
+python3 scripts/setup_mac.py py2app
 
 echo "==> Copying Anaconda dylibs..."
 DYNLOAD="${DIST_APP}/Contents/Resources/lib/python3.*/lib-dynload"

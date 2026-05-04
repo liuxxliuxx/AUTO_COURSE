@@ -25,6 +25,24 @@ python main.py
 
 验证码弹出时需在浏览器中手动完成，完成后点击 GUI 的"确认验证码已完成"继续。
 
+## 构建
+
+### macOS
+
+```bash
+./scripts/build_mac.sh
+```
+
+使用 py2app 打包，输出 `dist/智慧树自动刷课.app`。
+
+### Windows
+
+```powershell
+.\scripts\build_win.ps1
+```
+
+使用 pyinstaller 打包为单文件，输出 `dist/智慧树自动刷课.exe`。
+
 ## 功能
 
 - 自动识别未完成课程视频并逐个播放

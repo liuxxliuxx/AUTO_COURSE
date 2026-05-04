@@ -14,7 +14,7 @@ OPTIONS = {
         "CFBundleName": "智慧树自动刷课",
         "CFBundleDisplayName": "智慧树自动刷课",
         "CFBundleIdentifier": "com.zhihuishu.autocourse",
-        "CFBundleVersion": "1.0.0",
+        "CFBundleVersion": "1",
         "CFBundleShortVersionString": "1.0.0",
     },
 }

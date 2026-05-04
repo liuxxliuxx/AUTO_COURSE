@@ -8,4 +8,7 @@ __pycache__/
 
 build/
 dist/
+*.spec
+*.pyc
+*.egg-info/
 .DS_Store

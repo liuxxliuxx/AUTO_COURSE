@@ -15,6 +15,24 @@ python main.py          # Launches the Tkinter GUI
 
 No test suite, no linter, no type checker is currently configured.
 
+## Building
+
+### macOS
+
+```bash
+./scripts/build_mac.sh        # py2app, outputs dist/智慧树自动刷课.app
+```
+
+Uses `scripts/setup_mac.py` (py2app config). The script auto-copies Anaconda dylibs into the app bundle if present.
+
+### Windows
+
+```powershell
+.\scripts\build_win.ps1        # pyinstaller, outputs dist/智慧树自动刷课.exe
+```
+
+One-file, windowed mode (no console).
+
 ## Architecture
 
 - **[main.py](main.py)** — Tkinter GUI entry point. `ZhiHuiShuGUI` owns the UI, spawns a bot on a daemon thread, and bridges logging/CAPTCHA-events between the bot thread and the GUI via `threading.Event` primitives.

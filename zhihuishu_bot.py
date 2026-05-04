@@ -1,5 +1,6 @@
 import logging
 import random
+import shutil
 import time
 
 from selenium import webdriver
@@ -67,8 +68,12 @@ class ZhiHuiShuBot:
             "profile.password_manager_enabled": False,
         }
         options.add_experimental_option("prefs", prefs)
-        service = Service(r'C:\Users\liuxx\Downloads\chromedriver-win64\chromedriver.exe')
-        driver = webdriver.Chrome(options=options,service=service)
+        chromedriver_path = shutil.which("chromedriver")
+        if chromedriver_path:
+            service = Service(chromedriver_path)
+        else:
+            service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(options=options, service=service)
         driver.execute_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
@@ -208,73 +213,43 @@ class ZhiHuiShuBot:
             except TimeoutException:
                 logger.warning("登录后未检测到 logged_URL，但继续执行")
 
-    def _switch_to_login_iframe(self):
-        """Check if the UPC login form is inside an iframe and switch to it."""
-        iframes = self.driver.find_elements(By.TAG_NAME, "iframe")
-        for iframe in iframes:
-            try:
-                src = iframe.get_attribute("src") or ""
-                if any(kw in src for kw in ["uc.upc", "login", "cas", "sso", "auth"]):
-                    logger.info("检测到登录 iframe: %s", src)
-                    self.driver.switch_to.frame(iframe)
-                    return True
-            except Exception:
-                pass
-        return False
-
     def do_login_upc(self):
         """Login via 数字石大 (UPC) SSO portal."""
-        # Wait for the Vant UI to render the login form
-        time.sleep(5)
+        import json
 
-        # Switch to login iframe if present
-        self._switch_to_login_iframe()
+        time.sleep(3)
+        logger.info("CAS 页面 URL: %s", self.driver.current_url)
 
-        # --- 1. Wait for username input to be present in DOM ---
         try:
             WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, "input[placeholder*='用户名']")
+                    (By.CSS_SELECTOR, "iframe[src*='login-normal']")
                 )
             )
-        except TimeoutException:
-            logger.warning("用户名输入框未在10秒内出现")
-            self._notify_and_wait_captcha("未找到用户名输入框，请在浏览器中手动完成操作后点击确认")
+            self.driver.switch_to.frame(
+                self.driver.find_element(By.CSS_SELECTOR, "iframe[src*='login-normal']")
+            )
+            time.sleep(2)
+
+            js_code = (
+                "var app = document.querySelector('#app').__vue__;"
+                "app.username = %s;"
+                "app.password = %s;"
+                "app.passwordLogin();"
+            ) % (json.dumps(self.username), json.dumps(self.password))
+            self.driver.execute_script(js_code)
+            logger.info("已通过 JS 注入凭据并触发登录，等待跳转...")
+
             self.driver.switch_to.default_content()
-            return
+        except (TimeoutException, NoSuchElementException) as e:
+            logger.error("CAS 登录表单操作失败: %s", e)
+            try:
+                self.driver.switch_to.default_content()
+            except Exception:
+                pass
+            raise
 
-        # Fill username via JS
-        self.driver.execute_script(
-            "var inp=document.querySelector('input[placeholder*=\"用户名\"]');"
-            "if(inp){inp.value=arguments[0];"
-            "inp.dispatchEvent(new Event('input',{bubbles:true}));"
-            "inp.dispatchEvent(new Event('change',{bubbles:true}));}",
-            self.username,
-        )
-        logger.info("已填入用户名")
-
-        # --- 2. Fill password via JS ---
-        self.driver.execute_script(
-            "var inp=document.querySelector('input[placeholder*=\"密码\"]');"
-            "if(inp){inp.value=arguments[0];"
-            "inp.dispatchEvent(new Event('input',{bubbles:true}));"
-            "inp.dispatchEvent(new Event('change',{bubbles:true}));}",
-            self.password,
-        )
-        logger.info("已填入密码")
-
-        # --- 3. Click login button via JS ---
-        self.driver.execute_script(
-            "var btn=document.querySelector('.van-button--block');"
-            "if(!btn)btn=document.querySelector('.van-button');"
-            "if(btn)btn.click();"
-        )
-        logger.info("已点击登录按钮")
-
-        # Switch back from iframe if needed
-        self.driver.switch_to.default_content()
-
-        # --- 4. Wait for SSO redirect, then navigate to app ---
+        # --- Wait for SSO redirect, then navigate to app ---
         time.sleep(5)
         forward_url = (
             "https://i.upc.edu.cn/dcp/forward.action"
@@ -285,10 +260,10 @@ class ZhiHuiShuBot:
         self.driver.get(forward_url)
         time.sleep(5)
 
-        # --- 5. Handle CAPTCHA if any ---
+        # --- Handle CAPTCHA if any ---
         self._check_and_handle_captcha("登录时出现验证码，请完成验证")
 
-        # --- 6. Wait for redirect to logged_URL ---
+        # --- Wait for redirect to logged_URL ---
         try:
             WebDriverWait(self.driver, 60).until(
                 lambda d: self.logged_url in d.current_url

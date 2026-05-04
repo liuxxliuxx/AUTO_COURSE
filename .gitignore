@@ -3,3 +3,9 @@
 course_progress.db
 
 UselessPrompt.md
+
+__pycache__/
+
+build/
+dist/
+.DS_Store

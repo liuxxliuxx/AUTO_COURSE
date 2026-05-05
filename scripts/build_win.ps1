@@ -70,6 +70,7 @@ pyinstaller `
     --hidden-import src.utils `
     --hidden-import src.utils.element_finder `
     --collect-submodules webdriver_manager `
+    --collect-submodules selenium `
     main.py
 
 # Clean up work dir and .spec file

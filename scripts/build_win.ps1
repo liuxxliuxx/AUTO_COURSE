@@ -1,8 +1,9 @@
-﻿# 智慧树自动刷课 - Windows 构建脚本 (pyinstaller)
+# ZhiHuiShu Auto Course - Windows Build Script (pyinstaller)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$APP_NAME = "智慧树自动刷课"
+# Internal name: English only (used for directories, exe, paths)
+$APP_NAME = "ZhiHuiShu_AutoCourse"
 $DIST_DIR = "dist"
 $WORK_DIR = "build_win_tmp"
 
@@ -10,6 +11,22 @@ Write-Host "==> Installing/updating dependencies..." -ForegroundColor Cyan
 pip install --upgrade pip
 pip install -r requirements.txt
 pip install pyinstaller
+
+# Check and download Chrome for Testing
+$BIN_DIR = "bin"
+$CHROME_EXE = "$BIN_DIR\chrome-win64\chrome.exe"
+$CHROMEDRIVER_EXE = "$BIN_DIR\chromedriver-win64\chromedriver.exe"
+
+if (-not (Test-Path $CHROME_EXE) -or -not (Test-Path $CHROMEDRIVER_EXE)) {
+    Write-Host "==> Chrome for Testing not found, downloading..." -ForegroundColor Cyan
+    python scripts/download_chrome.py
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: Chrome for Testing download failed" -ForegroundColor Red
+        exit 1
+    }
+} else {
+    Write-Host "==> Chrome for Testing already exists, skipping download" -ForegroundColor Cyan
+}
 
 # Clean previous output
 if (Test-Path $DIST_DIR) {
@@ -28,6 +45,7 @@ pyinstaller `
     --workpath $WORK_DIR `
     --clean `
     --noconfirm `
+    --add-data "${BIN_DIR};${BIN_DIR}" `
     --hidden-import keyring.backends.Windows `
     --hidden-import keyring.backends.null `
     --hidden-import keyring.backends.chainer `
@@ -64,9 +82,10 @@ if (Test-Path $specFile) {
     Remove-Item -Force $specFile
 }
 
+Write-Host ""
 Write-Host "==> Done: $DIST_DIR\$APP_NAME\$APP_NAME.exe" -ForegroundColor Green
 Write-Host ""
 Write-Host "IMPORTANT:" -ForegroundColor Yellow
 Write-Host "  - Output is a directory (--onedir), not a single .exe" -ForegroundColor Yellow
-Write-Host "  - Chrome must be installed on the target system" -ForegroundColor Yellow
-Write-Host "  - chromedriver is auto-managed by webdriver-manager at runtime" -ForegroundColor Yellow
+Write-Host "  - Chrome for Testing is bundled -- no need to install Chrome" -ForegroundColor Yellow
+Write-Host "  - Distribute the entire '$DIST_DIR\$APP_NAME\' folder" -ForegroundColor Yellow

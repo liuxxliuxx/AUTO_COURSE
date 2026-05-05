@@ -17,6 +17,16 @@ No test suite, no linter, no type checker is currently configured.
 
 ## Building
 
+### Prerequisites
+
+Before the first build, download Chrome for Testing (bundled into the package so target PCs don't need Chrome installed):
+
+```bash
+python scripts/download_chrome.py
+```
+
+This downloads ~150MB of Chrome + ChromeDriver matching a specific version into `bin/`.
+
 ### macOS
 
 ```bash
@@ -28,10 +38,19 @@ Uses `scripts/setup_mac.py` (py2app config). The script auto-copies missing @rpa
 ### Windows
 
 ```powershell
-.\scripts\build_win.ps1        # pyinstaller, outputs dist/智慧树自动刷课.exe
+.\scripts\build_win.ps1        # pyinstaller, outputs dist/智慧树自动刷课/
 ```
 
-One-directory mode (--onedir), windowed (no console).
+One-directory mode (--onedir), windowed (no console). The script auto-runs `download_chrome.py` if `bin/` is missing.
+
+### Creating an installer (Windows)
+
+```powershell
+.\scripts\create_installer.ps1           # NSIS installer (requires NSIS installed)
+.\scripts\create_installer.ps1 -Portable # Portable zip with shortcut script
+```
+
+The installer creates a desktop shortcut and Start Menu entry.
 
 ## Architecture
 
@@ -76,6 +95,6 @@ Two strategies, selectable from the GUI, both implementing `LoginStrategy`:
 - Credentials persisted via system keyring (service: `zhihuishu_auto_course`).
 - Video completion: CSS class `.time_icofinish` on `li.video`. When "跳过已学课程" is unchecked, all videos are processed regardless.
 - Quiz popups polled every 2s, CAPTCHA every 30s during video monitoring.
-- ChromeDriver auto-managed by `webdriver-manager`, system chromedriver preferred if found.
+- Browser: bundled Chrome for Testing in `bin/` preferred. Falls back to system chromedriver → webdriver-manager if bundle absent.
 - Quiz answering uses `AnswerStrategy` protocol — default `RandomAnswerStrategy`, swappable via `QuizHandler(answer_strategy=...)`.
 - All CSS selectors / timeouts / URLs live in `src/constants.py` — platform DOM changes only need updates there.

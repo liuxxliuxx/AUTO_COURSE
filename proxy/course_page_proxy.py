@@ -335,6 +335,48 @@ class CoursePageProxy:
     def get_unfinished_videos(self):
         return [(title, item) for title, item in self.extract_videos() if not self.is_finished(item)]
 
+    def rebuild_unfinished_after_play(self, played_title, skip_completed):
+        """Re-extract videos after one finishes.  If the user manually clicked a
+        different course, advance from that course's position, not from the
+        original list index."""
+        all_videos = self.extract_videos()
+        if not all_videos:
+            return [], 0
+
+        new_unfinished = [
+            (t, el) for t, el in all_videos if not self.is_finished(el)
+        ]
+
+        played_pos = next(
+            (i for i, (t, _) in enumerate(all_videos) if t == played_title), -1
+        )
+        if played_pos < 0:
+            return new_unfinished, 0
+
+        if skip_completed:
+            target_pos = -1
+            for i in range(played_pos + 1, len(all_videos)):
+                if not self.is_finished(all_videos[i][1]):
+                    target_pos = i
+                    break
+            if target_pos < 0:
+                for i in range(0, played_pos):
+                    if not self.is_finished(all_videos[i][1]):
+                        target_pos = i
+                        break
+        else:
+            target_pos = played_pos + 1 if played_pos + 1 < len(all_videos) else -1
+
+        if target_pos < 0:
+            return new_unfinished, len(new_unfinished)
+
+        target_title = all_videos[target_pos][0]
+        next_idx = next(
+            (i for i, (t, _) in enumerate(new_unfinished) if t == target_title),
+            len(new_unfinished),
+        )
+        return new_unfinished, next_idx
+
     def get_finished_courses(self):
         try:
             all_items = self.driver.find_elements(By.CSS_SELECTOR, "li.video")

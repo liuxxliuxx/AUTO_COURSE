@@ -26,7 +26,11 @@ class VideoPlaybackLoopEvent(IEvent):
 
         if skip_completed and ctx.is_finished(video_el):
             logger.info("跳过已学课程: %s", title)
-            ctx.set("video_index", idx + 1)
+            new_unfinished, next_idx = ctx.rebuild_unfinished_after_play(
+                title, skip_completed
+            )
+            ctx.set("unfinished", new_unfinished)
+            ctx.set("video_index", next_idx)
             return
 
         logger.info("=" * 40)
@@ -41,25 +45,41 @@ class VideoPlaybackLoopEvent(IEvent):
             ctx.handle_initial_dialogs()
             ctx.wait(1)
 
+        # Snapshot finished courses so we can detect which one actually completed
+        all_before = ctx.extract_videos()
+        finished_before = {t for t, el in all_before if ctx.is_finished(el)}
+
         success = ctx.monitor_and_wait_for_video(title)
         ctx.bot.total_watched_seconds += ctx.get_video_duration_seconds()
         if hasattr(ctx.bot, "on_video_completed"):
             ctx.bot.on_video_completed(
                 db_proxy=getattr(ctx.bot, "db", None)
             )
+
+        # Detect which course actually finished (handles manual clicks)
+        all_after = ctx.extract_videos()
+        finished_after = {t for t, el in all_after if ctx.is_finished(el)}
+        newly_finished = finished_after - finished_before
+        actual_played = newly_finished.pop() if len(newly_finished) == 1 else title
+
         if success:
-            logger.info("已完成课程: %s", title)
+            logger.info("已完成课程: %s", actual_played)
         else:
-            logger.warning("课程超时，仍计入完成: %s", title)
+            logger.warning("课程超时，仍计入完成: %s", actual_played)
 
         if getattr(ctx.bot, 'db', None) is not None:
             try:
-                ctx.bot.db.save_finished_course(ctx.bot.video_url, title)
+                ctx.bot.db.save_finished_course(ctx.bot.video_url, actual_played)
             except Exception:
-                logger.debug("记录已学课程失败: %s", title)
+                logger.debug("记录已学课程失败: %s", actual_played)
 
         ctx.set("completed_this_run", ctx.get("completed_this_run", 0) + 1)
-        ctx.set("video_index", idx + 1)
+
+        new_unfinished, next_idx = ctx.rebuild_unfinished_after_play(
+            actual_played, skip_completed
+        )
+        ctx.set("unfinished", new_unfinished)
+        ctx.set("video_index", next_idx)
 
     def is_end(self, ctx) -> bool:
         if ctx.should_stop():

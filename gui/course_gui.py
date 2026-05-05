@@ -375,6 +375,9 @@ class CourseGUI:
         self.stop_event.set()
         self.captcha_done.set()
         self.captcha_needed.clear()
+        if self.auto_enabled_var.get():
+            self.auto_enabled_var.set(False)
+            self._save_all_values()
         if self.auto_scheduler is not None:
             try:
                 self.auto_scheduler.on_video_completed(db_proxy=self.db)
@@ -446,7 +449,10 @@ class CourseGUI:
     def _on_auto_config_changed(self):
         self._save_all_values()
         self._sync_config_to_scheduler()
-        self.root.after(1000, self._force_scheduler_recheck)
+        if not self.get("auto_enabled", False) and self.running and self._was_auto_started:
+            self._stop_bot()
+        else:
+            self.root.after(1000, self._force_scheduler_recheck)
 
     def _force_scheduler_recheck(self):
         try:

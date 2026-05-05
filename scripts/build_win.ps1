@@ -1,4 +1,4 @@
-# ZhiHuiShu Auto Course - Windows Build Script (pyinstaller)
+﻿# ZhiHuiShu Auto Course - Windows Build Script (pyinstaller)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
@@ -50,8 +50,24 @@ pyinstaller `
     --hidden-import keyring.backends.null `
     --hidden-import keyring.backends.chainer `
     --hidden-import certifi `
+    --hidden-import urllib3 `
+    --hidden-import selenium `
+    --hidden-import selenium.webdriver `
+    --hidden-import selenium.webdriver.chrome `
+    --hidden-import selenium.webdriver.chrome.webdriver `
     --hidden-import selenium.webdriver.chrome.options `
     --hidden-import selenium.webdriver.chrome.service `
+    --hidden-import selenium.webdriver.common `
+    --hidden-import selenium.webdriver.common.by `
+    --hidden-import selenium.webdriver.common.action_chains `
+    --hidden-import selenium.webdriver.common.keys `
+    --hidden-import selenium.webdriver.remote `
+    --hidden-import selenium.webdriver.remote.webdriver `
+    --hidden-import selenium.webdriver.support `
+    --hidden-import selenium.webdriver.support.ui `
+    --hidden-import selenium.webdriver.support.expected_conditions `
+    --hidden-import selenium.common `
+    --hidden-import selenium.common.exceptions `
     --hidden-import src `
     --hidden-import src.constants `
     --hidden-import src.bot `

@@ -19,14 +19,14 @@ InstallDir "$PROGRAMFILES64\\{app_name}"
 RequestExecutionLevel admin
 
 !insertmacro MUI_PAGE_DIRECTORY
+!insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "SimpChinese"
 
-Section "Install"
+Section "!{display_name}" SecMain
+    SectionIn RO
     SetOutPath $INSTDIR
     File /r "{app_dir}\\*.*"
-
-    CreateShortCut "$DESKTOP\\{display_name}.lnk" "$INSTDIR\\{app_name}.exe"
 
     CreateDirectory "$SMPROGRAMS\\{display_name}"
     CreateShortCut "$SMPROGRAMS\\{display_name}\\{display_name}.lnk" "$INSTDIR\\{app_name}.exe"
@@ -34,6 +34,18 @@ Section "Install"
 
     WriteUninstaller "$INSTDIR\\uninstall.exe"
 SectionEnd
+
+Section "创建桌面快捷方式" SecDesktop
+    CreateShortCut "$DESKTOP\\{display_name}.lnk" "$INSTDIR\\{app_name}.exe"
+SectionEnd
+
+LangString DESC_SecMain 2052 "安装程序文件到计算机。"
+LangString DESC_SecDesktop 2052 "在桌面上创建快捷方式，方便快速启动。"
+
+!insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
+    !insertmacro MUI_DESCRIPTION_TEXT ${{SecMain}} $(DESC_SecMain)
+    !insertmacro MUI_DESCRIPTION_TEXT ${{SecDesktop}} $(DESC_SecDesktop)
+!insertmacro MUI_FUNCTION_DESCRIPTION_END
 
 Section "Uninstall"
     Delete "$DESKTOP\\{display_name}.lnk"

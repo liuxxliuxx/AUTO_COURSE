@@ -154,7 +154,7 @@ class CourseNavigator:
                 logger.debug("解析课程项出错: %s", e)
                 continue
 
-        return unfinished
+        return result
 
     def click_video(self, video_element, title):
         """点击侧边栏视频项以加载播放器。"""

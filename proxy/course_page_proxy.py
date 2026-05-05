@@ -22,6 +22,7 @@ class CoursePageProxy:
         self.bot = page.state["bot"]
         self.role = page.state.get("role", "course")
         self.urls = page.urls
+        self._quiz_counter = 0
 
     @property
     def driver(self):
@@ -425,69 +426,200 @@ class CoursePageProxy:
             return 0.0
 
     def find_quiz_dialog(self):
+        """Find visible quiz dialog, return WebElement or None."""
+        # Strategy A: preferred selector from dev branch.
         try:
-            dialogs = self.driver.find_elements(By.CSS_SELECTOR, "div.el-dialog[aria-label*='弹题']")
-            for dialog in dialogs:
-                if dialog.is_displayed():
-                    return dialog
+            dialogs = self.driver.find_elements(By.CSS_SELECTOR, "div.el-dialog[aria-label*='??']")
+            for d in dialogs:
+                if d.is_displayed():
+                    logger.info(
+                        "[QUIZ-DETECT] matched selector=aria-label*??, aria-label=%s class=%s",
+                        d.get_attribute("aria-label"),
+                        d.get_attribute("class"),
+                    )
+                    return d
         except Exception:
             pass
+
+        # Strategy B: fallback by aria-label keywords.
+        try:
+            dialogs = self.driver.find_elements(By.CSS_SELECTOR, "div.el-dialog")
+            for d in dialogs:
+                if not d.is_displayed():
+                    continue
+                label = d.get_attribute("aria-label") or ""
+                if any(k in label for k in ["??", "??", "??"]):
+                    logger.info(
+                        "[QUIZ-DETECT] matched fallback=aria-label keyword, aria-label=%s class=%s",
+                        label,
+                        d.get_attribute("class"),
+                    )
+                    return d
+        except Exception:
+            pass
+
+        # Strategy C: fallback by structure to avoid text-encoding issues.
+        try:
+            dialogs = self.driver.find_elements(By.CSS_SELECTOR, "div.el-dialog")
+            for d in dialogs:
+                if not d.is_displayed():
+                    continue
+                has_topic = bool(d.find_elements(By.CSS_SELECTOR, ".topic-item"))
+                has_next = bool(d.find_elements(By.CSS_SELECTOR, ".btn-next"))
+                if has_topic or has_next:
+                    logger.info(
+                        "[QUIZ-DETECT] matched fallback=structure, has_topic=%s has_next=%s class=%s",
+                        has_topic,
+                        has_next,
+                        d.get_attribute("class"),
+                    )
+                    return d
+        except Exception:
+            pass
+
+        logger.debug("[QUIZ-DETECT] no visible quiz dialog found")
         return None
 
+    def _answer_current_question(self, dialog):
+        """Answer the currently displayed question inside the quiz dialog.
+        Returns True if an option was selected, False otherwise."""
+        options = dialog.find_elements(By.CSS_SELECTOR, ".topic-item")
+        if not options:
+            options = dialog.find_elements(
+                By.XPATH, ".//li[contains(@class,'topic-item')]"
+            )
+
+        if not options:
+            logger.info("[QUIZ-ANSWER] no option found")
+            return False
+
+        choice = random.choice(options)
+        clicked = False
+        for click_target in [
+            choice,
+            *choice.find_elements(By.CSS_SELECTOR, ".item-topic"),
+            *choice.find_elements(By.CSS_SELECTOR, "span"),
+            *choice.find_elements(By.CSS_SELECTOR, "div"),
+        ]:
+            try:
+                click_target.click()
+                clicked = True
+                break
+            except Exception:
+                continue
+
+        if clicked:
+            logger.info("[QUIZ-ANSWER] option clicked")
+        else:
+            logger.warning("[QUIZ-ANSWER] option click failed")
+            return False
+
+        # Verify at least one option is selected
+        time.sleep(0.5)
+        for _ in range(5):
+            active_opts = dialog.find_elements(
+                By.CSS_SELECTOR, ".topic-option-item.active"
+            )
+            if not active_opts:
+                active_opts = dialog.find_elements(
+                    By.CSS_SELECTOR, ".item-topic.active"
+                )
+            if active_opts:
+                logger.info("[QUIZ-ANSWER] selected confirmed, active_count=%d", len(active_opts))
+                return True
+            try:
+                random.choice(options).click()
+            except Exception:
+                pass
+            time.sleep(0.5)
+
+        logger.warning("[QUIZ-ANSWER] selected not confirmed")
+        return False
+
+    def _close_quiz_dialog(self, dialog):
+        """Close the quiz dialog via various fallback strategies.
+        Returns True if closed successfully."""
+        close_selectors = [
+            ".el-dialog__headerbtn",
+            ".el-dialog__close",
+            "button[aria-label='Close']",
+        ]
+        for sel in close_selectors:
+            try:
+                close_btn = dialog.find_element(By.CSS_SELECTOR, sel)
+                if close_btn.is_displayed():
+                    close_btn.click()
+                    logger.info("[QUIZ-CLOSE] closed by selector=%s", sel)
+                    time.sleep(1)
+                    return True
+            except Exception:
+                continue
+
+        try:
+            footer_btn = dialog.find_element(
+                By.XPATH,
+                ".//div[contains(@class,'dialog-footer')]//div[contains(@class,'btn')]"
+            )
+            footer_btn.click()
+            logger.info("[QUIZ-CLOSE] closed by footer button")
+            time.sleep(1)
+            return True
+        except Exception:
+            pass
+
+        try:
+            footer_btn = dialog.find_element(
+                By.XPATH, ".//div[@class='btn'][contains(text(),'??')]"
+            )
+            footer_btn.click()
+            logger.info("[QUIZ-CLOSE] closed by footer text button")
+            time.sleep(1)
+            return True
+        except Exception:
+            pass
+
+        logger.warning("[QUIZ-CLOSE] close failed")
+        return False
+
     def handle_quiz_dialog(self, dialog):
+        """Handle a multi-question quiz popup: answer each question, click next
+        after each answer, then close the dialog after the last question."""
         try:
             question_index = 0
             while True:
+                # Re-locate dialog each round to avoid stale references after next-page switch.
+                current_dialog = self.find_quiz_dialog() or dialog
+
                 question_index += 1
-                logger.info("处理弹题第 %d 题", question_index)
-                options = dialog.find_elements(By.CSS_SELECTOR, ".topic-item")
-                if not options:
-                    options = dialog.find_elements(By.XPATH, ".//li[contains(@class,'topic-item')]")
-                if options:
-                    choice = random.choice(options)
-                    clicked = False
-                    for click_target in [
-                        choice,
-                        *choice.find_elements(By.CSS_SELECTOR, ".item-topic"),
-                        *choice.find_elements(By.CSS_SELECTOR, "span"),
-                        *choice.find_elements(By.CSS_SELECTOR, "div"),
-                    ]:
-                        try:
-                            click_target.click()
-                            clicked = True
-                            break
-                        except Exception:
-                            continue
-                    if clicked:
-                        time.sleep(0.3)
+                logger.info("[QUIZ-HANDLE] question_index=%d", question_index)
+
+                self._answer_current_question(current_dialog)
+                time.sleep(0.5)
+
+                # Check if there is a next question
                 try:
-                    next_btn = dialog.find_element(By.CSS_SELECTOR, ".next-btn, .iconfont.iconright")
-                    if next_btn.is_displayed() and next_btn.is_enabled():
-                        next_btn.click()
-                        time.sleep(0.8)
+                    next_btn = current_dialog.find_element(By.CSS_SELECTOR, ".btn-next")
+                    if next_btn.is_enabled() and next_btn.is_displayed():
+                        logger.info(
+                            "[QUIZ-NEXT] clickable selector=.btn-next class=%s text=%s",
+                            next_btn.get_attribute("class"),
+                            (next_btn.text or "").strip(),
+                        )
+                        try:
+                            next_btn.click()
+                        except Exception:
+                            logger.warning("[QUIZ-NEXT] native click failed, use js click")
+                            self.driver.execute_script("arguments[0].click();", next_btn)
+                        time.sleep(1)
                         continue
                 except Exception:
-                    pass
-                break
+                    logger.info("[QUIZ-NEXT] next button not available, treat as last question")
 
-            for sel in [".el-dialog__headerbtn", ".el-dialog__close", "button[aria-label='Close']"]:
-                try:
-                    close_btn = dialog.find_element(By.CSS_SELECTOR, sel)
-                    if close_btn.is_displayed():
-                        close_btn.click()
-                        return True
-                except Exception:
-                    continue
-            try:
-                footer_btn = dialog.find_element(
-                    By.XPATH,
-                    ".//div[contains(@class,'dialog-footer')]//div[contains(@class,'btn')]",
-                )
-                footer_btn.click()
-                return True
-            except Exception:
-                return False
-        except Exception:
+                # Last question, close dialog.
+                return self._close_quiz_dialog(current_dialog)
+
+        except Exception as e:
+            logger.error("[QUIZ-HANDLE] error: %s", e)
             return False
 
     def monitor_and_wait_for_video(self, title):
@@ -509,6 +641,8 @@ class CoursePageProxy:
 
             quiz_dialog = self.find_quiz_dialog()
             if quiz_dialog:
+                self._quiz_counter += 1
+                logger.info("处理第%d个弹题", self._quiz_counter)
                 self.handle_quiz_dialog(quiz_dialog)
                 time.sleep(1)
                 if not self.is_video_playing() and not self.is_video_ended():

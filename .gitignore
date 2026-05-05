@@ -12,3 +12,7 @@ dist/
 *.pyc
 *.egg-info/
 .DS_Store
+
+/bin
+
+.vscode/

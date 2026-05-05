@@ -37,6 +37,8 @@ class CourseBot:
         stop_event=None,
         db_proxy=None,
         skip_completed_courses=True,
+        auto_mode=False,
+        daily_target_seconds=0,
     ):
         self.driver = None
         self.db = db_proxy
@@ -52,9 +54,28 @@ class CourseBot:
         self.captcha_done_event = captcha_done_event
         self.stop_event = stop_event
         self.skip_completed_courses = bool(skip_completed_courses)
+        self.auto_mode = auto_mode
+        self.daily_target_seconds = daily_target_seconds
+        self._scheduler = None
 
     def should_stop(self) -> bool:
         return bool(self.stop_event and self.stop_event.is_set())
+
+    def set_scheduler(self, scheduler):
+        self._scheduler = scheduler
+
+    def add_realtime_seconds(self, seconds):
+        if self._scheduler:
+            self._scheduler.add_watched_seconds(seconds)
+
+    def get_daily_watched_seconds(self):
+        if self._scheduler:
+            return int(self._scheduler.get_daily_watched_minutes() * 60)
+        return self.total_watched_seconds
+
+    def on_video_completed(self, db_proxy=None):
+        if self._scheduler:
+            self._scheduler.on_video_completed(db_proxy=db_proxy or self.db)
 
     def create_driver(self):
         options = Options()

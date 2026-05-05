@@ -43,6 +43,10 @@ class VideoPlaybackLoopEvent(IEvent):
 
         success = ctx.monitor_and_wait_for_video(title)
         ctx.bot.total_watched_seconds += ctx.get_video_duration_seconds()
+        if hasattr(ctx.bot, "on_video_completed"):
+            ctx.bot.on_video_completed(
+                db_proxy=getattr(ctx.bot, "db", None)
+            )
         if success:
             logger.info("已完成课程: %s", title)
         else:
@@ -80,4 +84,17 @@ class VideoPlaybackLoopEvent(IEvent):
                 total_sec,
             )
             return True
+
+        if (
+            getattr(ctx.bot, "auto_mode", False)
+            and ctx.bot.daily_target_seconds > 0
+        ):
+            daily = ctx.bot.get_daily_watched_seconds()
+            if daily >= ctx.bot.daily_target_seconds:
+                logger.info(
+                    "已达到每日刷课目标 %d 分钟，停止刷课",
+                    ctx.bot.daily_target_seconds // 60,
+                )
+                return True
+
         return False

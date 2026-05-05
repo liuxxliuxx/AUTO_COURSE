@@ -672,6 +672,12 @@ class CoursePageProxy:
             time.sleep(check_interval)
             elapsed += check_interval
 
+            if self.is_video_playing():
+                try:
+                    self.bot.add_realtime_seconds(check_interval)
+                except Exception:
+                    pass
+
         logger.warning("视频监控超时: %s", title)
         return False
 

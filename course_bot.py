@@ -35,6 +35,7 @@ class CourseBot:
         captcha_done_event=None,
         stop_event=None,
         db_proxy=None,
+        skip_completed_courses=True,
     ):
         self.driver = None
         self.db = db_proxy
@@ -49,6 +50,7 @@ class CourseBot:
         self.captcha_event = captcha_event
         self.captcha_done_event = captcha_done_event
         self.stop_event = stop_event
+        self.skip_completed_courses = bool(skip_completed_courses)
 
     def should_stop(self) -> bool:
         return bool(self.stop_event and self.stop_event.is_set())

@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 from datetime import datetime
+import json
 
 from sqlalchemy import delete, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -89,3 +90,31 @@ class SQLAlchemyRepository:
 
     def close(self) -> None:
         self.engine.dispose()
+
+    def save_finished_course(self, video_url: str, title: str) -> None:
+        if not video_url or not title:
+            return
+        key = f"finished_courses::{video_url}"
+        existing = self.get_setting(key, "[]")
+        try:
+            items = json.loads(existing)
+            if not isinstance(items, list):
+                items = []
+        except Exception:
+            items = []
+        if title not in items:
+            items.append(title)
+        self.set_setting(key, json.dumps(items, ensure_ascii=False))
+
+    def get_finished_courses(self, video_url: str):
+        if not video_url:
+            return []
+        key = f"finished_courses::{video_url}"
+        raw = self.get_setting(key, "[]")
+        try:
+            items = json.loads(raw)
+            if isinstance(items, list):
+                return [str(x) for x in items if str(x).strip()]
+        except Exception:
+            pass
+        return []

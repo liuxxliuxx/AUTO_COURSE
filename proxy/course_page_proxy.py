@@ -304,14 +304,43 @@ class CoursePageProxy:
         except Exception:
             return
 
-    def get_unfinished_videos(self):
+    def extract_videos(self):
         try:
             all_items = self.driver.find_elements(By.CSS_SELECTOR, "li.video")
         except Exception:
             logger.warning("未找到课程列表")
             return []
 
-        unfinished = []
+        videos = []
+        for item in all_items:
+            try:
+                title_ele = item.find_elements(By.CSS_SELECTOR, ".catalogue_title")
+                if not title_ele:
+                    continue
+                title = title_ele[0].text.strip()
+                if not title:
+                    continue
+                videos.append((title, item))
+            except Exception:
+                continue
+        return videos
+
+    def is_finished(self, item) -> bool:
+        try:
+            return bool(item.find_elements(By.CSS_SELECTOR, ".time_icofinish"))
+        except Exception:
+            return False
+
+    def get_unfinished_videos(self):
+        return [(title, item) for title, item in self.extract_videos() if not self.is_finished(item)]
+
+    def get_finished_courses(self):
+        try:
+            all_items = self.driver.find_elements(By.CSS_SELECTOR, "li.video")
+        except Exception:
+            return []
+
+        finished = []
         for item in all_items:
             try:
                 title_ele = item.find_elements(By.CSS_SELECTOR, ".catalogue_title")
@@ -321,11 +350,10 @@ class CoursePageProxy:
                 if not title:
                     continue
                 if item.find_elements(By.CSS_SELECTOR, ".time_icofinish"):
-                    continue
-                unfinished.append((title, item))
+                    finished.append(title)
             except Exception:
                 continue
-        return unfinished
+        return finished
 
     def click_video(self, video_element, title):
         logger.info("点击课程: %s", title)
@@ -408,11 +436,41 @@ class CoursePageProxy:
 
     def handle_quiz_dialog(self, dialog):
         try:
-            options = dialog.find_elements(By.CSS_SELECTOR, ".topic-item")
-            if options:
-                random.choice(options).click()
-                time.sleep(0.3)
-            for sel in [".el-dialog__headerbtn", ".el-dialog__close"]:
+            question_index = 0
+            while True:
+                question_index += 1
+                logger.info("处理弹题第 %d 题", question_index)
+                options = dialog.find_elements(By.CSS_SELECTOR, ".topic-item")
+                if not options:
+                    options = dialog.find_elements(By.XPATH, ".//li[contains(@class,'topic-item')]")
+                if options:
+                    choice = random.choice(options)
+                    clicked = False
+                    for click_target in [
+                        choice,
+                        *choice.find_elements(By.CSS_SELECTOR, ".item-topic"),
+                        *choice.find_elements(By.CSS_SELECTOR, "span"),
+                        *choice.find_elements(By.CSS_SELECTOR, "div"),
+                    ]:
+                        try:
+                            click_target.click()
+                            clicked = True
+                            break
+                        except Exception:
+                            continue
+                    if clicked:
+                        time.sleep(0.3)
+                try:
+                    next_btn = dialog.find_element(By.CSS_SELECTOR, ".next-btn, .iconfont.iconright")
+                    if next_btn.is_displayed() and next_btn.is_enabled():
+                        next_btn.click()
+                        time.sleep(0.8)
+                        continue
+                except Exception:
+                    pass
+                break
+
+            for sel in [".el-dialog__headerbtn", ".el-dialog__close", "button[aria-label='Close']"]:
                 try:
                     close_btn = dialog.find_element(By.CSS_SELECTOR, sel)
                     if close_btn.is_displayed():
@@ -420,7 +478,15 @@ class CoursePageProxy:
                         return True
                 except Exception:
                     continue
-            return False
+            try:
+                footer_btn = dialog.find_element(
+                    By.XPATH,
+                    ".//div[contains(@class,'dialog-footer')]//div[contains(@class,'btn')]",
+                )
+                footer_btn.click()
+                return True
+            except Exception:
+                return False
         except Exception:
             return False
 

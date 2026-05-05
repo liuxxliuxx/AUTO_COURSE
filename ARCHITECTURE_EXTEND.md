@@ -1,136 +1,283 @@
-﻿# 框架扩展文档（中文）
+# AUTO_COURSE 开发手册（组件版）
 
-## 1. 当前架构说明
+## 1. 执行链路：`App -> Page -> Event`
+系统核心只看这一条：
 
-当前项目采用 `app -> page -> event` 执行链，并通过 `proxy` 传递页面上下文：
-
-1. `main.py` 只做入口，调用 `init_app()` 后执行 `app.run()`。
-2. `App.run()` 按顺序运行多个 `Page`。
-3. 每个 `Page.run()` 会先创建一个代理对象 `ctx`（由 `proxy_factory` 生成）。
-4. `event.run(ctx)` 只操作 `ctx`，不直接操作 `page`。
-5. 循环事件通过 `event.is_end(ctx)` 判断是否结束。
-
-这样做的目标是：
-- `page` 负责编排和生命周期
-- `proxy` 负责 driver/UI 上下文
-- `event` 只关注业务动作
-
----
-
-## 2. 如何新增一个 Page
-
-现在不需要再写 `BasePage` 子类，直接使用通用 `Page`：
-
-```python
-from page.page import Page
-
-my_page = Page(
-    name="my_page",
-    urls=["https://a.example.com", "https://b.example.com"],
-    events=[EventA(), EventB()],
-    proxy_factory=MyPageProxy,
-)
-
-my_page.state["bot"] = bot
-my_page.state["role"] = "my_role"
-my_page.state["loop_sleep_seconds"] = 1.0
+```text
+App.run()
+  -> 依次执行每个 Page.run()
+    -> Page 创建 ctx(Proxy)
+    -> 依次执行 Event.run(ctx)
+    -> 若 Event.is_loop=True，则循环 run(ctx) 直到 is_end(ctx)=True
 ```
 
-参数说明：
-- `name`: 页面名称，用于日志和定位。
-- `urls`: URL 数组，默认第一个为主 URL。
-- `events`: 该页面的事件列表，按顺序执行。
-- `proxy_factory`: 代理对象工厂，必须提供。
-- `state`: 页面运行时共享状态（字典）。
+你可以把它理解为：
+- `App` 管“先后顺序”
+- `Page` 管“本页事件编排 + 本页状态”
+- `Event` 管“流程决策”
+- `ctx(Proxy)` 管“页面动作实现”
 
 ---
 
-## 3. 如何编写代理对象（Proxy）
+## 2. App 组件（编排多个页面）
+### 必需元素
+1. `pages`
+- 类型：列表
+- 作用：定义页面执行顺序
 
-代理对象是 `event` 的唯一操作入口。事件拿到的是 `ctx`，不是 `page`。
+### 必需方法
+1. `run(self)`
+- 作用：按顺序调用每个 `page.run()`
 
-建议最少提供以下能力：
-- `wait(seconds)`
-- `get(key, default)` / `set(key, value)`
+### 最小示例
+```python
+from app.app import App
 
-如果是浏览器页面，建议再提供：
-- `driver` 属性
-- `open(url)`
-- `find(...)` / `click(...)` / `input(...)`
-- 可选生命周期钩子：
-  - `on_page_start(page)`
-  - `on_page_end(page)`
-
-示例位置：
-- `proxy/course_page_proxy.py`
-- `proxy/gui_callback_proxy.py`
+app = App([login_page, course_page])
+app.run()
+```
 
 ---
 
-## 4. 如何新增事件（Event）
+## 3. Page 组件（编排本页事件）
+### 必需元素
+1. `name`
+- 页面名称，用于标识
 
-所有事件实现 `IEvent`：
+2. `urls`
+- 本页可用 URL 列表（可多个）
 
+3. `events`
+- 本页事件列表，按顺序执行
+
+4. `proxy_factory`
+- 用来创建 `ctx`（代理对象）
+
+5. `state`
+- 字典，页面内共享运行态（事件之间传值）
+
+### 必需方法
+1. `run(self)`
+- 创建 `ctx`
+- 调 `ctx.on_page_start(self)`（如果有）
+- 执行全部事件
+- 调 `ctx.on_page_end(self)`（如果有）
+
+### 最小示例
+```python
+from page.page import Page
+from proxy.course_page_proxy import CoursePageProxy
+from events.course.navigate_course_event import NavigateCourseEvent
+
+course_page = Page(
+    name="course",
+    urls=["https://studyvideoh5.zhihuishu.com/..."],
+    events=[NavigateCourseEvent()],
+    proxy_factory=CoursePageProxy,
+)
+
+course_page.state["bot"] = bot
+course_page.state["role"] = "course"
+course_page.state["loop_sleep_seconds"] = 1.0
+```
+
+---
+
+## 4. Event 组件（流程决策）
+### 必需元素
+1. `is_loop: bool`
+- `False`：执行一次
+- `True`：循环执行
+
+### 必需方法
+1. `run(self, ctx)`
+- 写业务流程/决策逻辑
+
+2. `is_end(self, ctx)`（仅循环事件需要）
+- 返回 `True` 结束循环
+
+### 事件内部取值与存值
+1. 取配置值（来自 GUI 全局）  
+```python
+import global_state
+
+gui = global_state.get_gui()
+skip = gui.get("skip_completed_courses", True) if gui else True
+```
+
+2. 取页面共享状态（Page.state）  
+```python
+unfinished = ctx.get("unfinished", [])
+idx = ctx.get("video_index", 0)
+```
+
+3. 存页面共享状态（Page.state）  
+```python
+ctx.set("video_index", idx + 1)
+ctx.set("completed_this_run", ctx.get("completed_this_run", 0) + 1)
+```
+
+### 最小示例（一次性）
 ```python
 from events.base_event import IEvent
 
-class MyEvent(IEvent):
+class InitQueueEvent(IEvent):
     is_loop = False
 
     def run(self, ctx):
-        # 只通过 ctx 操作，不直接依赖 page
-        pass
+        videos = ctx.extract_videos()
+        ctx.set("unfinished", videos)
+        ctx.set("video_index", 0)
 ```
 
-循环事件：
-
+### 最小示例（循环）
 ```python
-class MyLoopEvent(IEvent):
+from events.base_event import IEvent
+
+class LoopPlayEvent(IEvent):
     is_loop = True
 
     def run(self, ctx):
-        pass
+        unfinished = ctx.get("unfinished", [])
+        idx = ctx.get("video_index", 0)
+        if idx < len(unfinished):
+            title, item = unfinished[idx]
+            ctx.click_video(item, title)
+            ctx.set("video_index", idx + 1)
 
-    def is_end(self, ctx) -> bool:
-        return False
+    def is_end(self, ctx):
+        return ctx.get("video_index", 0) >= len(ctx.get("unfinished", []))
 ```
 
-规则：
-- `is_loop=False`：执行一次 `run(ctx)`
-- `is_loop=True`：重复执行 `run(ctx)`，每轮后调用 `is_end(ctx)`
+---
+
+## 5. Proxy（ctx）组件（页面动作）
+Proxy 是 Event 的动作执行器，Event 不应直接写 Selenium。
+
+### 必需元素
+1. `page`
+- 当前 page 引用
+
+2. `bot`
+- 运行上下文对象（driver、账号等）
+
+### 常用方法（建议）
+1. 生命周期
+- `on_page_start(page)`
+- `on_page_end(page)`
+
+2. 上下文
+- `get(key, default)`
+- `set(key, value)`
+- `wait(seconds)`
+
+3. 页面动作
+- `open(url)`
+- `extract_videos()`
+- `is_finished(item)`
+- `click_video(item, title)`
+- `monitor_and_wait_for_video(title)`
 
 ---
 
-## 5. 双登录 URL 方案（你当前要求）
+## 6. URL 选择器（`urls` + `select_index`）
+当一个 Page 有多个 URL（例如智慧树登录和数字石大登录）时，用 URL 选择器决定打开哪一个。
 
-登录页支持多个 URL，通过“URL 选择器对象”决定用第几个：
+### 6.1 Page 侧配置
+```python
+login_page = Page(
+    name="login",
+    urls=[bot.base_url, "https://i.upc.edu.cn/"],
+    events=[...],
+    proxy_factory=CoursePageProxy,
+)
+login_page.state["url_selector"] = LoginURLSelector()
+```
 
-- 在页面里配置：
-  - `urls=[普通登录URL, UPC登录URL]`
-- 在 `page.state` 注入：
-  - `url_selector`
-- 在代理中执行选择逻辑：
-  - 有 `url_selector` 就按它返回的索引选 URL
-  - 无选择器或异常时，默认选 `urls[0]`
+### 6.2 选择器协议
+支持两种形式：
 
-已实现位置：
-- `proxy/url_selectors.py`（`LoginURLSelector`）
-- `proxy/course_page_proxy.py`（`pick_url` 逻辑）
-- `app/course_app_factory.py`（登录页注入 `url_selector`）
+1. 函数形式  
+```python
+def selector(urls, ctx) -> int:
+    return 0
+```
 
-支持两种选择器形式：
-1. 函数：`selector(urls, ctx) -> int`
-2. 对象方法：`selector.select_index(urls, ctx) -> int`
+2. 对象方法形式（推荐）  
+```python
+class LoginURLSelector:
+    def select_index(self, urls, ctx) -> int:
+        return 0
+```
+
+要求：
+- 返回值必须是 URL 下标（`0 ~ len(urls)-1`）。
+- 返回非法下标时，代理应回退到 `0`。
+
+### 6.3 双登录示例
+```python
+class LoginURLSelector:
+    def select_index(self, urls, ctx) -> int:
+        # upc 走第 2 个 URL，其余走第 1 个 URL
+        if getattr(ctx.bot, "login_method", "") == "upc":
+            return 1 if len(urls) > 1 else 0
+        return 0
+```
 
 ---
 
-## 6. 推荐扩展流程
+## 7. GUI 取值示例（统一入口）
+GUI 是全局配置中心，统一通过 `get`：
 
-新增一个业务能力时，建议按这个顺序：
+```python
+gui = global_state.get_gui()
+username = gui.get("username", "")
+password = gui.get("password", "")
+video_url = gui.get("video_url", "")
+time_limit = gui.get("time_limit_minutes", 0)
+skip_completed = gui.get("skip_completed_courses", True)
+```
 
-1. 先定义 Page（页面边界 + urls + events 顺序）
-2. 再定义 Proxy（上下文能力、driver切换、状态读写）
-3. 最后实现 Event（纯业务步骤）
-4. 在 `app_factory` 里装配并加入 `App` 执行链
+扩展新配置时，只需在 GUI 的 getter 映射里注册新 key。
 
-这样可以保持低耦合、易替换、易维护。
+---
+
+## 8. SQL 取值与写入示例
+### 7.1 取值
+```python
+# 读取设置
+limit = db.get_setting("time_limit", "0")
+
+# 读取 URL 历史
+logged_list = db.get_url_history("logged")
+video_list = db.get_url_history("video")
+
+# 读取已学课程
+finished = db.get_finished_courses(video_url)
+```
+
+### 7.2 写入
+```python
+# 写设置
+db.set_setting("time_limit", "120")
+
+# 写 URL 历史
+db.save_url_history("logged", logged_url)
+db.save_url_history("video", video_url, note)
+
+# 写已学课程
+db.save_finished_course(video_url, title)
+```
+
+---
+
+## 9. 开发时最常见的值流
+一个典型值流（跳过已学）：
+
+1. GUI 勾选框保存 `skip_completed_courses`
+2. Event 从 `gui.get("skip_completed_courses")` 读取策略
+3. Event 调用 `ctx.extract_videos()` 拿全量课程
+4. Event 基于 `ctx.is_finished(item)` 过滤并 `ctx.set("unfinished", ...)`
+5. 循环 Event 从 `ctx.get("unfinished")` 消费队列
+
+这个模式就是当前推荐的扩展范式。

@@ -20,3 +20,7 @@ def set_globals(*, sql=None, driver=None, yml=None, gui=None):
 
 def get_driver():
     return GLOBAL_DRIVER
+
+
+def get_gui():
+    return GLOBAL_GUI

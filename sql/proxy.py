@@ -24,5 +24,11 @@ class DatabaseProxy:
     def get_note_for_url(self, url):
         return self._repo.get_note_for_url(url)
 
+    def save_finished_course(self, video_url, title):
+        self._repo.save_finished_course(video_url, title)
+
+    def get_finished_courses(self, video_url):
+        return self._repo.get_finished_courses(video_url)
+
     def close(self):
         self._repo.close()

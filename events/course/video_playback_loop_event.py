@@ -1,7 +1,8 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import logging
 
+import global_state
 from events.base_event import IEvent
 
 logger = logging.getLogger(__name__)
@@ -17,24 +18,42 @@ class VideoPlaybackLoopEvent(IEvent):
             return
 
         title, video_el = unfinished[idx]
+
+        gui = global_state.get_gui()
+        skip_completed = True
+        if gui is not None:
+            skip_completed = bool(gui.get("skip_completed_courses", True))
+
+        if skip_completed and ctx.is_finished(video_el):
+            logger.info("??????: %s", title)
+            ctx.set("video_index", idx + 1)
+            return
+
         logger.info("=" * 40)
-        logger.info("[%d/%d] 正在处理: %s", idx + 1, len(unfinished), title)
+        logger.info("[%d/%d] ????: %s", idx + 1, len(unfinished), title)
 
         retry_count = 0
         while not ctx.click_video(video_el, title):
             if ctx.should_stop():
                 return
             retry_count += 1
-            logger.warning("点击课程失败（第%d次重试）: %s", retry_count, title)
+            logger.warning("????????%d????: %s", retry_count, title)
             ctx.handle_initial_dialogs()
             ctx.wait(1)
 
         success = ctx.monitor_and_wait_for_video(title)
         ctx.bot.total_watched_seconds += ctx.get_video_duration_seconds()
         if success:
-            logger.info("已完成课程: %s", title)
+            logger.info("?????: %s", title)
         else:
-            logger.warning("课程超时，仍计入完成: %s", title)
+            logger.warning("??????????: %s", title)
+
+        if getattr(ctx.bot, 'db', None) is not None:
+            try:
+                ctx.bot.db.save_finished_course(ctx.bot.video_url, title)
+            except Exception:
+                logger.debug("????????: %s", title)
+
         ctx.set("completed_this_run", ctx.get("completed_this_run", 0) + 1)
         ctx.set("video_index", idx + 1)
 
@@ -55,7 +74,7 @@ class VideoPlaybackLoopEvent(IEvent):
             total_min = int(ctx.bot.total_watched_seconds // 60)
             total_sec = int(ctx.bot.total_watched_seconds % 60)
             logger.info(
-                "已达到刷课时长上限 %d 分钟（累计 %d分%d秒），停止刷课",
+                "????????? %d ????? %d?%d???????",
                 limit_min,
                 total_min,
                 total_sec,

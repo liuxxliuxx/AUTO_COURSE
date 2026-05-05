@@ -45,9 +45,38 @@ class CourseGUI:
         logging.getLogger().addHandler(self._queue_handler)
 
         self._build_ui()
+        self._build_getters()
         self._load_saved_values()
         self._poll_log_queue()
         self._check_captcha_status()
+
+    def _build_getters(self):
+        self._getters = {
+            "username": lambda: self.zhanghao_var.get().strip(),
+            "password": lambda: self.mima_var.get(),
+            "logged_url": lambda: self.logged_url_var.get().strip(),
+            "video_url": lambda: self.video_url_var.get().strip(),
+            "course_note": lambda: self.course_note_var.get().strip(),
+            "time_limit_minutes": self._get_time_limit_minutes,
+            "skip_completed_courses": lambda: bool(self.skip_completed_var.get()),
+            "login_method": lambda: self.current_login_method,
+            "running": lambda: self.running,
+        }
+
+    def _get_time_limit_minutes(self):
+        try:
+            return int(self.time_limit_var.get() or "0")
+        except ValueError:
+            return 0
+
+    def get(self, key, default=None):
+        getter = self._getters.get(key)
+        if getter is None:
+            return default
+        try:
+            return getter()
+        except Exception:
+            return default
 
     @staticmethod
     def _kr_get(key):
@@ -113,6 +142,7 @@ class CourseGUI:
         self.course_note_var.set(self.db.get_note_for_url(current_url))
 
     def _build_ui(self):
+        self.current_login_method = "zhihuishu"
         acct_frame = ttk.LabelFrame(self.root, text="账号配置", padding=10)
         acct_frame.pack(fill=tk.X, padx=10, pady=(10, 5))
 
@@ -155,6 +185,13 @@ class CourseGUI:
         ttk.Entry(url_frame, textvariable=self.time_limit_var, width=10).grid(row=3, column=1, sticky=tk.W, pady=2)
         ttk.Label(url_frame, text="0 表示不限时", foreground="gray").grid(row=3, column=1, sticky=tk.E, pady=2)
 
+        self.skip_completed_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            url_frame,
+            text="跳过已学课程",
+            variable=self.skip_completed_var,
+        ).grid(row=4, column=1, sticky=tk.W, pady=2)
+
         url_frame.columnconfigure(1, weight=1)
 
         btn_frame = ttk.Frame(self.root)
@@ -168,6 +205,9 @@ class CourseGUI:
 
         self.stop_btn = ttk.Button(btn_frame, text="停止", command=self._stop_bot, state=tk.DISABLED)
         self.stop_btn.pack(side=tk.LEFT)
+
+        self.preview_btn = ttk.Button(btn_frame, text="查看已学课程", command=self._preview_finished_courses)
+        self.preview_btn.pack(side=tk.LEFT, padx=(10, 0))
 
         status_frame = ttk.LabelFrame(self.root, text="运行状态", padding=10)
         status_frame.pack(fill=tk.X, padx=10, pady=5)
@@ -229,16 +269,13 @@ class CourseGUI:
         base_url = "https://i.upc.edu.cn/" if login_method == "upc" else "https://onlineweb.zhihuishu.com/"
         login_name = "数字石大登录" if login_method == "upc" else "智慧树登录"
         self.status_label.config(text=f"正在初始化（{login_name}）...", foreground="green")
+        self.current_login_method = login_method
 
-        username = self.zhanghao_var.get().strip()
-        password = self.mima_var.get()
-        logged_url = self.logged_url_var.get().strip()
-        video_url = self.video_url_var.get().strip()
-
-        try:
-            time_limit = int(self.time_limit_var.get() or "0")
-        except ValueError:
-            time_limit = 0
+        username = self.get("username", "")
+        password = self.get("password", "")
+        logged_url = self.get("logged_url", "")
+        video_url = self.get("video_url", "")
+        time_limit = self.get("time_limit_minutes", 0)
 
         self._save_all_values()
 
@@ -254,9 +291,31 @@ class CourseGUI:
             captcha_done_event=self.captcha_done,
             stop_event=self.stop_event,
             db_proxy=self.db,
+            skip_completed_courses=self.get("skip_completed_courses", True),
         )
         self.bot_thread = threading.Thread(target=bot.run, daemon=True)
         self.bot_thread.start()
+
+    def _preview_finished_courses(self):
+        if self.running:
+            self.status_label.config(text="运行中暂不支持预览，请先停止", foreground="orange")
+            return
+        video_url = self.get("video_url", "")
+        if not video_url:
+            self.status_label.config(text="请先填写课程视频URL", foreground="red")
+            return
+
+        try:
+            finished = self.db.get_finished_courses(video_url)
+            logging.info("=" * 50)
+            logging.info("已学课程数量: %d", len(finished))
+            for idx, title in enumerate(finished, 1):
+                logging.info("[已学 %d] %s", idx, title)
+            logging.info("=" * 50)
+            self.status_label.config(text=f"已学课程统计完成，共 {len(finished)} 门", foreground="green")
+        except Exception as exc:
+            logging.exception("查看已学课程失败: %s", exc)
+            self.status_label.config(text="查看已学课程失败，请看日志", foreground="red")
 
     def _stop_bot(self):
         self.running = False

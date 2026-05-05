@@ -1,15 +1,20 @@
+"""
+数据库访问层 —— 仅负责 SQLite 的 CRUD 操作，不包含业务逻辑或业务默认值。
+"""
+
 import sqlite3
 
 from config import DB_PATH
+from src.constants import DEFAULT_LOGGED_URL
 
 
 class Database:
+    """SQLite 数据库封装，管理 URL 历史和键值设置。"""
+
     def __init__(self, db_path=None):
         self.db_path = db_path or DB_PATH
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._init_tables()
-
-    DEFAULT_LOGGED_URL = "https://hike-teaching-center.polymas.com/custom-stu-hike/agent-course-hike/ai-course-center"
 
     def _init_tables(self):
         self.conn.execute("""
@@ -29,30 +34,34 @@ class Database:
             )
         """)
         self.conn.commit()
-        # Migrate pre-existing databases: add note column if missing
+
+        # 兼容旧库：补充可能缺失的字段和约束
+        self._migrate_schema()
+
+    def _migrate_schema(self):
+        """兼容旧版本数据库的字段和约束迁移。"""
         try:
             self.conn.execute(
                 "ALTER TABLE url_history ADD COLUMN note TEXT DEFAULT ''"
             )
         except Exception:
-            pass  # Column already exists
-        # Ensure UNIQUE constraint exists even on pre-existing databases
+            pass  # 字段已存在
         self.conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_url_history_type_url "
             "ON url_history(url_type, url)"
         )
         self.conn.commit()
-        # Pre-populate default logged URL if no history exists
         self._ensure_default_url()
 
     def _ensure_default_url(self):
+        """如果 logged 类型无历史记录，预填充默认课程中心 URL。"""
         cursor = self.conn.execute(
             "SELECT COUNT(*) FROM url_history WHERE url_type = 'logged'"
         )
         if cursor.fetchone()[0] == 0:
             self.conn.execute(
                 "INSERT INTO url_history (url_type, url) VALUES (?, ?)",
-                ("logged", self.DEFAULT_LOGGED_URL),
+                ("logged", DEFAULT_LOGGED_URL),
             )
             self.conn.commit()
 
@@ -75,8 +84,7 @@ class Database:
     # ---------- URL history ----------
 
     def save_url_history(self, url_type, url, note=""):
-        """Record a URL usage. url_type is 'logged' or 'video'.
-        If the (url_type, url) pair already exists, update used_at and note."""
+        """记录 URL 使用历史。url_type: 'logged' 或 'video'。"""
         if not url:
             return
         self.conn.execute(
@@ -87,7 +95,7 @@ class Database:
         self.conn.commit()
 
     def get_url_history(self, url_type, limit=20):
-        """Return distinct recent (url, note) tuples for a given type, newest first."""
+        """获取指定类型的 URL 历史，按最近使用排序。"""
         cursor = self.conn.execute(
             "SELECT url, note FROM url_history WHERE url_type = ? "
             "GROUP BY url "
@@ -97,7 +105,7 @@ class Database:
         return [(row[0], row[1] or "") for row in cursor.fetchall()]
 
     def get_note_for_url(self, url):
-        """Look up the note for a specific video URL. Returns '' if not found."""
+        """根据视频 URL 查询备注，未找到返回空字符串。"""
         if not url:
             return ""
         cursor = self.conn.execute(

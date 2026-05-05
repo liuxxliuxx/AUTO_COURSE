@@ -34,6 +34,23 @@ pyinstaller `
     --hidden-import certifi `
     --hidden-import selenium.webdriver.chrome.options `
     --hidden-import selenium.webdriver.chrome.service `
+    --hidden-import src `
+    --hidden-import src.constants `
+    --hidden-import src.bot `
+    --hidden-import src.bot.bot_core `
+    --hidden-import src.bot.browser `
+    --hidden-import src.bot.video `
+    --hidden-import src.bot.quiz `
+    --hidden-import src.bot.captcha `
+    --hidden-import src.bot.course `
+    --hidden-import src.bot.login `
+    --hidden-import src.bot.login.base `
+    --hidden-import src.bot.login.zhihuishu `
+    --hidden-import src.bot.login.upc `
+    --hidden-import src.ui `
+    --hidden-import src.ui.log_handler `
+    --hidden-import src.utils `
+    --hidden-import src.utils.element_finder `
     --collect-submodules webdriver_manager `
     main.py
 

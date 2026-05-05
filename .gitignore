@@ -5,12 +5,14 @@ course_progress.db
 UselessPrompt.md
 
 __pycache__/
+*.pyc
 
 build/
+build_win_tmp/
 dist/
 *.spec
-*.pyc
 *.egg-info/
+
 .DS_Store
 
 .vscode/

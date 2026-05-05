@@ -9,7 +9,11 @@ from setuptools import setup
 APP = ["main.py"]
 OPTIONS = {
     "argv_emulation": False,
-    "packages": ["selenium", "webdriver_manager", "keyring", "certifi"],
+    "packages": [
+        "selenium", "webdriver_manager", "keyring", "certifi",
+        "src", "src.constants", "src.db", "src.bot", "src.bot.login",
+        "src.ui", "src.utils",
+    ],
     "plist": {
         "CFBundleName": "智慧树自动刷课",
         "CFBundleDisplayName": "智慧树自动刷课",

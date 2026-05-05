@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Running
 
 ```bash
-source .venv/bin/activate
+# Activate conda env (named "zhihuishu") or .venv
 python main.py          # Launches the Tkinter GUI
 ```
 
@@ -35,22 +35,47 @@ One-directory mode (--onedir), windowed (no console).
 
 ## Architecture
 
-- **[main.py](main.py)** — Tkinter GUI entry point. `ZhiHuiShuGUI` owns the UI, spawns a bot on a daemon thread, and bridges logging/CAPTCHA-events between the bot thread and the GUI via `threading.Event` primitives.
-- **[zhihuishu_bot.py](zhihuishu_bot.py)** — Core Selenium automation. `ZhiHuiShuBot.run()` is the main loop: launch Chrome → login → navigate to course → iterate unfinished videos → monitor playback. Quiz popups are answered randomly and closed. CAPTCHA detections notify the GUI thread via shared `threading.Event` objects so the user can solve them manually in the browser.
-- **[database.py](database.py)** — SQLite wrapper (`Database` class). Stores URL history (per login type) and key-value app settings. Automatically creates tables and migrates missing columns on first use.
+```
+src/
+├── constants.py                  # All CSS selectors, timeouts, URLs, intervals
+├── config.py                     # DB path, keyring key names
+├── db/
+│   └── database.py               # SQLite CRUD (no business logic)
+├── bot/
+│   ├── bot_core.py               # ZhiHuiShuBot orchestrator (main loop)
+│   ├── browser.py                # Chrome driver factory
+│   ├── video.py                  # VideoController: play/pause/progress
+│   ├── quiz.py                   # QuizHandler: detect/answer/close popups
+│   ├── captcha.py                # CaptchaHandler: detect + notify GUI
+│   ├── course.py                 # CourseNavigator: navigate, parse video list
+│   └── login/
+│       ├── base.py               # LoginStrategy ABC
+│       ├── zhihuishu.py          # Direct phone-number login
+│       └── upc.py                # UPC SSO login (Vue JS injection)
+├── ui/
+│   └── log_handler.py            # QueueLogHandler (logging → Tkinter)
+└── utils/
+    └── element_finder.py         # Multi-selector fallback find_element()
+```
 
-- **[config.py](config.py)** — Resolves `DB_PATH` to platform-appropriate user data directory (`~/Library/Application Support/`, `%APPDATA%`, `~/.local/share/`). Sensitive config (credentials) is stored via the system keyring.
+- **[main.py](main.py)** — Tkinter GUI entry point. `ZhiHuiShuGUI` owns UI, spawns bot on daemon thread, bridges logging/CAPTCHA via `threading.Event`.
+- **[src/bot/bot_core.py](src/bot/bot_core.py)** — Orchestrator that composes sub-modules. `run()` flow: init driver → login → navigate → iterate videos → cleanup. Accepts 8 hook callbacks (`on_bot_start`, `on_video_end`, etc.) for external extensibility.
+- **[src/db/database.py](src/db/database.py)** — SQLite wrapper. Stores URL history and key-value settings. Auto-creates tables and migrates on first use.
+- **[src/config.py](src/config.py)** — Platform-appropriate DB path + keyring config.
 
 ## Login methods
 
-Two paths, selectable from the GUI:
-1. **zhihuishu** — Direct login at `onlineweb.zhihuishu.com`, fills a phone-number + password form, then handles a NetEase Yidun slider CAPTCHA.
-2. **upc** — SSO via `i.upc.edu.cn` (数字石大). Fills username/password in a Vant UI form inside an iframe, then navigates to the course-center app via a hardcoded `forward_url`.
+Two strategies, selectable from the GUI, both implementing `LoginStrategy`:
+
+1. **zhihuishu** — `ZhihuishuLogin`: phone + password form → Yidun slider CAPTCHA
+2. **upc** — `UPCLogin`: SSO via `i.upc.edu.cn`, injects credentials into Vue component via JS → redirects to course center
 
 ## Key details
 
-- Database file (`course_progress.db`) is stored in the platform user data directory, not the app bundle.
-- Credentials are persisted via the system keyring (service name: `zhihuishu_auto_course`), not in plaintext.
-- Video completion is determined by checking for `.time_icofinish` CSS class on `li.video` items, not by database state.
-- The bot polls for quiz popups every 2 seconds and CAPTCHA every 30 seconds during video monitoring.
-- ChromeDriver is auto-managed by `webdriver-manager` — no manual path configuration needed.
+- Database (`course_progress.db`) stored in platform user data directory, not app bundle.
+- Credentials persisted via system keyring (service: `zhihuishu_auto_course`).
+- Video completion: CSS class `.time_icofinish` on `li.video`. When "跳过已学课程" is unchecked, all videos are processed regardless.
+- Quiz popups polled every 2s, CAPTCHA every 30s during video monitoring.
+- ChromeDriver auto-managed by `webdriver-manager`, system chromedriver preferred if found.
+- Quiz answering uses `AnswerStrategy` protocol — default `RandomAnswerStrategy`, swappable via `QuizHandler(answer_strategy=...)`.
+- All CSS selectors / timeouts / URLs live in `src/constants.py` — platform DOM changes only need updates there.

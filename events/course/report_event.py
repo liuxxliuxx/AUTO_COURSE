@@ -7,4 +7,4 @@ class ReportEvent(IEvent):
     is_loop = False
 
     def run(self, ctx) -> None:
-        ctx.bot._show_completion_report(ctx.get("completed_this_run", 0))
+        ctx.show_completion_report(ctx.get("completed_this_run", 0))

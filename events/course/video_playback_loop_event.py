@@ -21,16 +21,16 @@ class VideoPlaybackLoopEvent(IEvent):
         logger.info("[%d/%d] 正在处理: %s", idx + 1, len(unfinished), title)
 
         retry_count = 0
-        while not ctx.bot.click_video(video_el, title):
-            if ctx.bot._should_stop():
+        while not ctx.click_video(video_el, title):
+            if ctx.should_stop():
                 return
             retry_count += 1
             logger.warning("点击课程失败（第%d次重试）: %s", retry_count, title)
-            ctx.bot._handle_initial_dialogs()
+            ctx.handle_initial_dialogs()
             ctx.wait(1)
 
-        success = ctx.bot.monitor_and_wait_for_video(title)
-        ctx.bot.total_watched_seconds += ctx.bot._get_video_duration_seconds()
+        success = ctx.monitor_and_wait_for_video(title)
+        ctx.bot.total_watched_seconds += ctx.get_video_duration_seconds()
         if success:
             logger.info("已完成课程: %s", title)
         else:
@@ -39,7 +39,7 @@ class VideoPlaybackLoopEvent(IEvent):
         ctx.set("video_index", idx + 1)
 
     def is_end(self, ctx) -> bool:
-        if ctx.bot._should_stop():
+        if ctx.should_stop():
             return True
 
         unfinished = ctx.get("unfinished", [])

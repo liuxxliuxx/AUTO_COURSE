@@ -7,9 +7,9 @@ class EnsureLoginEvent(IEvent):
     is_loop = False
 
     def run(self, ctx) -> None:
-        if ctx.bot.check_login():
+        if ctx.check_login():
             return
         if ctx.bot.login_method == "upc":
-            ctx.bot.do_login_upc()
+            ctx.do_login_upc()
         else:
-            ctx.bot.do_login()
+            ctx.do_login()

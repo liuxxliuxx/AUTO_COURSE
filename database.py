@@ -3,6 +3,7 @@
 """
 
 import sqlite3
+import time
 
 from config import DB_PATH
 from src.constants import DEFAULT_LOGGED_URL
@@ -31,6 +32,12 @@ class Database:
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
+            )
+        """)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS daily_progress (
+                date TEXT PRIMARY KEY,
+                watched_seconds INTEGER NOT NULL DEFAULT 0
             )
         """)
         self.conn.commit()
@@ -114,6 +121,26 @@ class Database:
         )
         row = cursor.fetchone()
         return row[0] if row else ""
+
+    # ---------- daily progress ----------
+
+    def get_daily_progress(self, date_str):
+        """返回指定日期（YYYY-MM-DD）的已观看秒数，无记录返回 0。"""
+        cursor = self.conn.execute(
+            "SELECT watched_seconds FROM daily_progress WHERE date = ?",
+            (date_str,),
+        )
+        row = cursor.fetchone()
+        return row[0] if row else 0
+
+    def add_daily_progress(self, date_str, seconds_delta):
+        """原子递增指定日期的已观看秒数（UPSERT）。"""
+        self.conn.execute(
+            "INSERT INTO daily_progress (date, watched_seconds) VALUES (?, ?) "
+            "ON CONFLICT(date) DO UPDATE SET watched_seconds = watched_seconds + ?",
+            (date_str, seconds_delta, seconds_delta),
+        )
+        self.conn.commit()
 
     def close(self):
         self.conn.close()

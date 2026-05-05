@@ -8,6 +8,9 @@
 import logging
 import queue
 import threading
+import time
+from datetime import datetime, time as dt_time
+
 import tkinter as tk
 from tkinter import scrolledtext, ttk
 
@@ -16,8 +19,17 @@ import keyring
 from config import KEYRING_PASSWORD_KEY, KEYRING_SERVICE, KEYRING_USERNAME_KEY
 from database import Database
 from src.bot.bot_core import ZhiHuiShuBot
-from src.constants import GUI_CAPTCHA_POLL_MS, GUI_LOG_POLL_MS, UPC_BASE_URL, ZHIHUISHU_BASE_URL
+from src.constants import (
+    AUTO_COOLDOWN_SECONDS,
+    AUTO_SCHEDULER_INTERVAL_MS,
+    GUI_CAPTCHA_POLL_MS,
+    GUI_LOG_POLL_MS,
+    UPC_BASE_URL,
+    ZHIHUISHU_BASE_URL,
+)
 from src.ui.log_handler import QueueLogHandler
+
+logger = logging.getLogger(__name__)
 
 
 class ZhiHuiShuGUI:
@@ -36,8 +48,15 @@ class ZhiHuiShuGUI:
         self.captcha_needed = threading.Event()
         self.captcha_done = threading.Event()
         self.stop_event = threading.Event()
+        self.bot = None
         self.bot_thread = None
         self.running = False
+
+        # 自动调度器状态
+        self._last_recorded_seconds = 0
+        self._todays_watched_seconds = 0
+        self._auto_cooldown_until = 0.0
+        self._today_date = ""
 
         self._queue_handler = QueueLogHandler(self.log_queue)
         logging.getLogger().addHandler(self._queue_handler)
@@ -83,6 +102,18 @@ class ZhiHuiShuGUI:
         saved_limit = self.db.get_setting("time_limit", "")
         self.time_limit_var.set(saved_limit)
 
+        # 加载自动调度器设置
+        self.auto_mode_var.set(self.db.get_setting("auto_mode", "0") == "1")
+        self.auto_start_var.set(self.db.get_setting("auto_start_time", "06:00"))
+        self.auto_end_var.set(self.db.get_setting("auto_end_time", "23:00"))
+        self.auto_target_var.set(self.db.get_setting("auto_target_minutes", "30"))
+
+        # 加载今日进度并启动调度器轮询
+        self._today_date = time.strftime("%Y-%m-%d")
+        self._todays_watched_seconds = self.db.get_daily_progress(self._today_date)
+        self._update_progress_label()
+        self._auto_scheduler_tick()
+
     def _save_all_values(self):
         username = self.username_var.get()
         password = self.password_var.get()
@@ -97,6 +128,13 @@ class ZhiHuiShuGUI:
         self.db.set_setting("time_limit", time_limit)
         self.db.save_url_history("logged", logged_url)
         self.db.save_url_history("video", video_url, self.course_note_var.get())
+
+        # 保存自动调度器设置
+        self.db.set_setting("auto_mode", "1" if self.auto_mode_var.get() else "0")
+        self.db.set_setting("auto_start_time", self.auto_start_var.get().strip() or "06:00")
+        self.db.set_setting("auto_end_time", self.auto_end_var.get().strip() or "23:00")
+        self.db.set_setting("auto_target_minutes", self.auto_target_var.get().strip() or "30")
+
         self._refresh_url_history()
 
     def _refresh_url_history(self):
@@ -185,6 +223,46 @@ class ZhiHuiShuGUI:
         ).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=(5, 0))
 
         url_frame.columnconfigure(1, weight=1)
+
+        # 自动设置
+        auto_frame = ttk.LabelFrame(self.root, text="自动设置", padding=10)
+        auto_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        self.auto_mode_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            auto_frame, text="自动使用数字石大登录",
+            variable=self.auto_mode_var,
+        ).grid(row=0, column=0, columnspan=5, sticky=tk.W, pady=(0, 5))
+
+        ttk.Label(auto_frame, text="允许运行时间:").grid(
+            row=1, column=0, sticky=tk.W, pady=2
+        )
+        self.auto_start_var = tk.StringVar(value="06:00")
+        ttk.Entry(auto_frame, textvariable=self.auto_start_var, width=7).grid(
+            row=1, column=1, sticky=tk.W, pady=2
+        )
+        ttk.Label(auto_frame, text="至").grid(row=1, column=2, pady=2)
+        self.auto_end_var = tk.StringVar(value="23:00")
+        ttk.Entry(auto_frame, textvariable=self.auto_end_var, width=7).grid(
+            row=1, column=3, sticky=tk.W, pady=2
+        )
+
+        ttk.Label(auto_frame, text="每日目标时长(分钟):").grid(
+            row=2, column=0, sticky=tk.W, pady=2
+        )
+        self.auto_target_var = tk.StringVar(value="30")
+        ttk.Entry(auto_frame, textvariable=self.auto_target_var, width=7).grid(
+            row=2, column=1, sticky=tk.W, pady=2
+        )
+
+        self.auto_progress_label = ttk.Label(
+            auto_frame, text="今日已刷课时长：0 分钟", foreground="blue"
+        )
+        self.auto_progress_label.grid(
+            row=3, column=0, columnspan=5, sticky=tk.W, pady=(5, 0)
+        )
+
+        auto_frame.columnconfigure(4, weight=1)
 
         # 操作按钮
         btn_frame = ttk.Frame(self.root)
@@ -289,7 +367,7 @@ class ZhiHuiShuGUI:
 
         return True, ""
 
-    def _start_bot(self, login_method):
+    def _start_bot(self, login_method, auto_start=False):
         if self.running:
             return
 
@@ -324,14 +402,19 @@ class ZhiHuiShuGUI:
         password = self.password_var.get()
         logged_url = self.logged_url_var.get().strip()
         video_url = self.video_url_var.get().strip()
-        try:
-            time_limit = int(self.time_limit_var.get() or "0")
-        except ValueError:
+
+        # 自动模式：由调度器管理停止时机，不设单次时长上限
+        if auto_start:
             time_limit = 0
+        else:
+            try:
+                time_limit = int(self.time_limit_var.get() or "0")
+            except ValueError:
+                time_limit = 0
 
         self._save_all_values()
 
-        bot = ZhiHuiShuBot(
+        self.bot = ZhiHuiShuBot(
             base_url=base_url,
             username=username,
             password=password,
@@ -344,7 +427,35 @@ class ZhiHuiShuGUI:
             captcha_done_event=self.captcha_done,
             stop_event=self.stop_event,
         )
-        self.bot_thread = threading.Thread(target=bot.run, daemon=True)
+
+        # 连接钩子：将视频进度写入数据库
+        self._last_recorded_seconds = 0
+        captured_bot = self.bot
+
+        def _on_video_end(title, success):
+            if captured_bot is None:
+                return
+            delta = captured_bot.total_watched_seconds - self._last_recorded_seconds
+            if delta > 0:
+                self._last_recorded_seconds = captured_bot.total_watched_seconds
+                today = time.strftime("%Y-%m-%d")
+                self.db.add_daily_progress(today, delta)
+                self._todays_watched_seconds += delta
+
+        def _on_bot_stop():
+            if captured_bot is None:
+                return
+            delta = captured_bot.total_watched_seconds - self._last_recorded_seconds
+            if delta > 0:
+                self._last_recorded_seconds = captured_bot.total_watched_seconds
+                today = time.strftime("%Y-%m-%d")
+                self.db.add_daily_progress(today, delta)
+                self._todays_watched_seconds += delta
+
+        self.bot.on_video_end = _on_video_end
+        self.bot.on_bot_stop = _on_bot_stop
+
+        self.bot_thread = threading.Thread(target=self.bot.run, daemon=True)
         self.bot_thread.start()
 
     def _stop_bot(self):
@@ -352,11 +463,124 @@ class ZhiHuiShuGUI:
         self.stop_event.set()
         self.captcha_done.set()
         self.captcha_needed.clear()
+        self._auto_cooldown_until = time.time() + AUTO_COOLDOWN_SECONDS
         self.status_label.config(text="● 已停止", foreground="orange")
         self.start_zhihuishu_btn.config(state=tk.NORMAL)
         self.start_upc_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
         self.captcha_btn.config(state=tk.DISABLED)
+
+    # ---------- auto-scheduler ----------
+
+    def _update_progress_label(self):
+        """刷新'今日已刷课时长'标签。"""
+        minutes = self._todays_watched_seconds // 60
+        self.auto_progress_label.config(
+            text=f"今日已刷课时长：{minutes} 分钟"
+        )
+
+    @staticmethod
+    def _time_in_range(now, start_str, end_str):
+        """判断当前时间是否在允许范围内，支持跨夜窗口（如 22:00-02:00）。"""
+        try:
+            sh, sm = map(int, start_str.strip().split(":"))
+            eh, em = map(int, end_str.strip().split(":"))
+        except (ValueError, AttributeError):
+            return True  # 格式异常时默认允许运行
+
+        start = dt_time(sh, sm)
+        end = dt_time(eh, em)
+
+        if start <= end:
+            return start <= now <= end
+        else:
+            return now >= start or now <= end
+
+    def _auto_scheduler_tick(self):
+        """调度器入口，每 30 秒由 root.after 触发。"""
+        try:
+            self._auto_scheduler_evaluate()
+        finally:
+            self.root.after(AUTO_SCHEDULER_INTERVAL_MS, self._auto_scheduler_tick)
+
+    def _auto_scheduler_evaluate(self):
+        """核心调度逻辑（仅在主线程执行）。"""
+        now = datetime.now()
+        today = now.strftime("%Y-%m-%d")
+        now_time = now.time()
+
+        # 跨天：重新加载今日进度
+        if self._today_date != today:
+            self._today_date = today
+            self._todays_watched_seconds = self.db.get_daily_progress(today)
+
+        bot_alive = self.bot_thread is not None and self.bot_thread.is_alive()
+
+        # 检测 Bot 自然结束（线程已退出但 running 仍为 True）
+        if self.running and not bot_alive:
+            self.running = False
+            self.start_zhihuishu_btn.config(state=tk.NORMAL)
+            self.start_upc_btn.config(state=tk.NORMAL)
+            self.stop_btn.config(state=tk.DISABLED)
+            self.captcha_btn.config(state=tk.DISABLED)
+            # 如果本轮几乎没有进度，说明课程已学完，进入冷却
+            if self._last_recorded_seconds < 60:
+                self._auto_cooldown_until = time.time() + AUTO_COOLDOWN_SECONDS
+                logger.info(
+                    "自动调度：本轮进度不足 60 秒，进入 %d 秒冷却期",
+                    AUTO_COOLDOWN_SECONDS,
+                )
+
+        # 刷新今日进度（捕获钩子写入的增量）
+        self._todays_watched_seconds = self.db.get_daily_progress(today)
+        self._update_progress_label()
+
+        if not self.auto_mode_var.get():
+            return
+
+        # 解析参数
+        try:
+            target_min = int(self.auto_target_var.get() or "0")
+        except ValueError:
+            target_min = 0
+        target_seconds = target_min * 60
+
+        in_range = self._time_in_range(
+            now_time,
+            self.auto_start_var.get(),
+            self.auto_end_var.get(),
+        )
+
+        if bot_alive:
+            # 正在运行 → 评估是否需要停止
+            if not in_range:
+                logger.info(
+                    "自动调度：当前时间 %s 超出允许范围，停止刷课",
+                    now.strftime("%H:%M"),
+                )
+                self._stop_bot()
+            elif target_seconds > 0 and self._todays_watched_seconds >= target_seconds:
+                logger.info(
+                    "自动调度：今日已刷 %d/%d 分钟，已达到目标，停止刷课",
+                    self._todays_watched_seconds // 60, target_min,
+                )
+                self._stop_bot()
+        else:
+            # 未运行 → 评估是否需要启动
+            if not in_range:
+                return
+            if target_seconds <= 0:
+                return
+            if self._todays_watched_seconds >= target_seconds:
+                return
+            if time.time() < self._auto_cooldown_until:
+                return
+
+            logger.info(
+                "自动调度：满足条件，自动启动 UPC 刷课（今日已刷 %d/%d 分钟）",
+                self._todays_watched_seconds // 60, target_min,
+            )
+            self._start_bot("upc", auto_start=True)
 
     def run(self):
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)

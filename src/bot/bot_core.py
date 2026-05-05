@@ -80,14 +80,14 @@ class ZhiHuiShuBot:
         self.login_strategy = None
 
         # --- Hook 回调（供外部扩展，默认无操作） ---
-        self.on_bot_start = lambda: None
-        self.on_login_success = lambda: None
-        self.on_video_start = lambda title: None
-        self.on_video_end = lambda title, success: None
-        self.on_quiz_found = lambda: None
-        self.on_captcha_needed = lambda: None
-        self.on_time_limit_reached = lambda: None
-        self.on_bot_stop = lambda: None
+        self.on_bot_start = lambda *a, **kw: None
+        self.on_login_success = lambda *a, **kw: None
+        self.on_video_start = lambda title, *a, **kw: None
+        self.on_video_end = lambda title, success, *a, **kw: None
+        self.on_quiz_found = lambda *a, **kw: None
+        self.on_captcha_needed = lambda *a, **kw: None
+        self.on_time_limit_reached = lambda *a, **kw: None
+        self.on_bot_stop = lambda *a, **kw: None
 
     def _should_stop(self):
         return self._stop_event and self._stop_event.is_set()

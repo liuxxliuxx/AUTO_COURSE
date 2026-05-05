@@ -35,6 +35,7 @@ pyinstaller `
     --hidden-import selenium.webdriver.chrome.options `
     --hidden-import selenium.webdriver.chrome.service `
     --collect-submodules webdriver_manager `
+    --collect-submodules selenium `
     main.py
 
 # Clean up work dir and .spec file

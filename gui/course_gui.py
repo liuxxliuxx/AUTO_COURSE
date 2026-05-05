@@ -206,8 +206,6 @@ class CourseGUI:
         self.stop_btn = ttk.Button(btn_frame, text="停止", command=self._stop_bot, state=tk.DISABLED)
         self.stop_btn.pack(side=tk.LEFT)
 
-        self.preview_btn = ttk.Button(btn_frame, text="查看已学课程", command=self._preview_finished_courses)
-        self.preview_btn.pack(side=tk.LEFT, padx=(10, 0))
 
         status_frame = ttk.LabelFrame(self.root, text="运行状态", padding=10)
         status_frame.pack(fill=tk.X, padx=10, pady=5)
@@ -295,27 +293,6 @@ class CourseGUI:
         )
         self.bot_thread = threading.Thread(target=bot.run, daemon=True)
         self.bot_thread.start()
-
-    def _preview_finished_courses(self):
-        if self.running:
-            self.status_label.config(text="运行中暂不支持预览，请先停止", foreground="orange")
-            return
-        video_url = self.get("video_url", "")
-        if not video_url:
-            self.status_label.config(text="请先填写课程视频URL", foreground="red")
-            return
-
-        try:
-            finished = self.db.get_finished_courses(video_url)
-            logging.info("=" * 50)
-            logging.info("已学课程数量: %d", len(finished))
-            for idx, title in enumerate(finished, 1):
-                logging.info("[已学 %d] %s", idx, title)
-            logging.info("=" * 50)
-            self.status_label.config(text=f"已学课程统计完成，共 {len(finished)} 门", foreground="green")
-        except Exception as exc:
-            logging.exception("查看已学课程失败: %s", exc)
-            self.status_label.config(text="查看已学课程失败，请看日志", foreground="red")
 
     def _stop_bot(self):
         self.running = False

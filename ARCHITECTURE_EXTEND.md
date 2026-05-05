@@ -251,9 +251,6 @@ limit = db.get_setting("time_limit", "0")
 # 读取 URL 历史
 logged_list = db.get_url_history("logged")
 video_list = db.get_url_history("video")
-
-# 读取已学课程
-finished = db.get_finished_courses(video_url)
 ```
 
 ### 7.2 写入

@@ -55,6 +55,8 @@ class ZhiHuiShuBot:
         captcha_event=None,
         captcha_done_event=None,
         stop_event=None,
+        chrome_binary=None,
+        chromedriver_binary=None,
     ):
         self.base_url = base_url
         self.username = username
@@ -64,6 +66,8 @@ class ZhiHuiShuBot:
         self.login_method = login_method
         self.time_limit_seconds = (time_limit_minutes or 0) * 60
         self.skip_completed = skip_completed
+        self.chrome_binary = chrome_binary
+        self.chromedriver_binary = chromedriver_binary
         self.total_watched_seconds = 0
         self._last_monitor_elapsed = 0
 
@@ -192,7 +196,10 @@ class ZhiHuiShuBot:
     def _init_modules(self):
         """初始化 WebDriver 和各子模块并注入依赖。"""
         logger.info("正在启动浏览器...")
-        self.driver = create_driver()
+        self.driver = create_driver(
+            chrome_binary=self.chrome_binary,
+            chromedriver_binary=self.chromedriver_binary,
+        )
         self.wait = WebDriverWait(self.driver, WAIT_DEFAULT)
         logger.info("浏览器已启动")
 

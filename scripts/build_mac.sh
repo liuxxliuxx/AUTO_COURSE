@@ -8,27 +8,12 @@ DIST_APP="dist/${APP_NAME}.app"
 FRAMEWORKS="${DIST_APP}/Contents/Frameworks"
 PYTHON=".venv/bin/python3"
 PYTHON_LIB="$(${PYTHON} -c 'import sys; print(sys.base_prefix)')/lib"
-BIN_DIR="bin"
-
-# Check and download Chrome for Testing
-CHROME_BIN="${BIN_DIR}/chrome-mac-arm64/Google Chrome for Testing.app"
-if [ ! -d "${CHROME_BIN}" ]; then
-    echo "==> Chrome for Testing not found, downloading..."
-    ${PYTHON} scripts/download_chrome.py
-else
-    echo "==> Chrome for Testing already exists, skipping download"
-fi
-
 echo "==> Building with py2app..."
 ${PYTHON} scripts/setup_mac.py py2app
 
 echo "==> Copying root-level modules..."
 RES="${DIST_APP}/Contents/Resources"
 cp config.py database.py "${RES}/"
-
-echo "==> Copying Chrome for Testing..."
-mkdir -p "${RES}/${BIN_DIR}"
-cp -R "${BIN_DIR}/"* "${RES}/${BIN_DIR}/"
 
 echo "==> Copying dylibs..."
 DYNLOAD=$(echo "${DIST_APP}"/Contents/Resources/lib/python3.*/lib-dynload)

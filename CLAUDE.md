@@ -18,16 +18,6 @@ No test suite, linter, or type checker is configured.
 
 ## Building
 
-### Prerequisites
-
-Before the first build, download Chrome for Testing (bundled into the package so target PCs don't need Chrome):
-
-```bash
-python scripts/download_chrome.py
-```
-
-This downloads ~150MB of Chrome + ChromeDriver into `bin/`.
-
 ### Windows
 
 ```powershell

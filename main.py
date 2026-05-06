@@ -22,7 +22,7 @@ if os.path.isdir(_lib_dir):
     sys.path.insert(0, _lib_dir)
 
 import tkinter as tk
-from tkinter import scrolledtext, ttk
+from tkinter import filedialog, scrolledtext, ttk
 
 import keyring
 
@@ -47,7 +47,7 @@ class ZhiHuiShuGUI:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("智慧树自动刷课")
-        self.root.geometry("720x680")
+        self.root.geometry("1000x1000")
         self.root.resizable(True, True)
 
         self.db = Database()
@@ -121,6 +121,10 @@ class ZhiHuiShuGUI:
         self.auto_end_var.set(self.db.get_setting("auto_end_time", "23:00"))
         self.auto_allday_var.set(self.db.get_setting("auto_allday", "0") == "1")
 
+        # 加载 Chrome/ChromeDriver 路径
+        self.chrome_binary_var.set(self.db.get_setting("chrome_binary", ""))
+        self.chromedriver_binary_var.set(self.db.get_setting("chromedriver_binary", ""))
+
         # 加载今日进度并启动调度器轮询
         self._today_date = time.strftime("%Y-%m-%d")
         self._todays_watched_seconds = self.db.get_daily_progress(self._today_date)
@@ -145,6 +149,10 @@ class ZhiHuiShuGUI:
         # 保存登录方式
         method_val = "upc" if self.login_method_var.get() == "数字石大" else "zhihuishu"
         self.db.set_setting("login_method", method_val)
+
+        # 保存 Chrome/ChromeDriver 路径
+        self.db.set_setting("chrome_binary", self.chrome_binary_var.get())
+        self.db.set_setting("chromedriver_binary", self.chromedriver_binary_var.get())
 
         # 保存自动调度器设置
         self.db.set_setting("auto_mode", "1" if self.auto_mode_var.get() else "0")
@@ -177,9 +185,116 @@ class ZhiHuiShuGUI:
         note = self.db.get_note_for_url(current_url)
         self.course_note_var.set(note)
 
+    # ---------- Chrome 浏览器检测 ----------
+
+    def _browse_chrome(self):
+        import sys
+        if sys.platform == "darwin":
+            # macOS: .app 是 bundle 目录，不能用 filetypes 否则变灰
+            path = filedialog.askopenfilename(title="选择 Chrome 应用")
+        else:
+            path = filedialog.askopenfilename(
+                title="选择 Chrome 可执行文件",
+                filetypes=[("可执行文件", "*.exe"), ("所有文件", "*")],
+            )
+        if path:
+            self.chrome_binary_var.set(self._normalize_chrome_path(path))
+
+    @staticmethod
+    def _normalize_chrome_path(path):
+        """将 Chrome .app bundle 路径解析为实际二进制路径。"""
+        if path.endswith(".app"):
+            app_name = os.path.basename(path)[:-4]
+            inner = os.path.join(path, "Contents", "MacOS", app_name)
+            if os.path.exists(inner):
+                return inner
+        return path
+
+    def _browse_chromedriver(self):
+        import sys
+        if sys.platform == "win32":
+            path = filedialog.askopenfilename(
+                title="选择 ChromeDriver 可执行文件",
+                filetypes=[("可执行文件", "*.exe"), ("所有文件", "*")],
+            )
+        else:
+            path = filedialog.askopenfilename(title="选择 ChromeDriver 可执行文件")
+        if path:
+            self.chromedriver_binary_var.set(path)
+
+    def _auto_detect_chrome(self):
+        """自动检测系统可用的 Chrome 和 ChromeDriver。"""
+        from src.bot.browser import _find_cached_chrome, _find_cached_chromedriver, _find_system_chrome
+        import shutil
+
+        # 清空当前
+        self.chrome_binary_var.set("")
+        self.chromedriver_binary_var.set("")
+
+        # 1. 系统 Chrome
+        system_chrome = _find_system_chrome()
+        system_driver = shutil.which("chromedriver")
+
+        if system_chrome and system_driver:
+            self.chrome_binary_var.set(system_chrome)
+            self.chromedriver_binary_var.set(system_driver)
+            self.chrome_status_var.set("已检测到系统 Chrome + ChromeDriver")
+            return
+
+        if system_chrome:
+            self.chrome_binary_var.set(system_chrome)
+            self.chrome_status_var.set("已检测到系统 Chrome（无 ChromeDriver）")
+        elif system_driver:
+            self.chromedriver_binary_var.set(system_driver)
+            self.chrome_status_var.set("已检测到系统 ChromeDriver（无 Chrome）")
+        else:
+            # 2. 缓存的 Chrome for Testing
+            cached_chrome = _find_cached_chrome()
+            cached_driver = _find_cached_chromedriver()
+            if cached_chrome and cached_driver:
+                self.chrome_binary_var.set(cached_chrome)
+                self.chromedriver_binary_var.set(cached_driver)
+                self.chrome_status_var.set("已检测到缓存的 Chrome for Testing")
+                return
+
+            self.chrome_status_var.set("未检测到可用 Chrome，启动时将自动下载")
+
     # ---------- UI ----------
 
     def _build_ui(self):
+        # 浏览器配置
+        chrome_frame = ttk.LabelFrame(self.root, text="浏览器配置（留空则自动检测/下载）", padding=10)
+        chrome_frame.pack(fill=tk.X, padx=10, pady=(10, 5))
+
+        # Chrome 路径行
+        chrome_row = ttk.Frame(chrome_frame)
+        chrome_row.pack(fill=tk.X, pady=2)
+        ttk.Label(chrome_row, text="Chrome:").pack(side=tk.LEFT)
+        self.chrome_binary_var = tk.StringVar()
+        ttk.Entry(chrome_row, textvariable=self.chrome_binary_var, width=60).pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0)
+        )
+        ttk.Button(chrome_row, text="浏览…", command=self._browse_chrome).pack(side=tk.LEFT, padx=(5, 0))
+
+        # ChromeDriver 路径行
+        driver_row = ttk.Frame(chrome_frame)
+        driver_row.pack(fill=tk.X, pady=2)
+        ttk.Label(driver_row, text="ChromeDriver:").pack(side=tk.LEFT)
+        self.chromedriver_binary_var = tk.StringVar()
+        ttk.Entry(driver_row, textvariable=self.chromedriver_binary_var, width=60).pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0)
+        )
+        ttk.Button(driver_row, text="浏览…", command=self._browse_chromedriver).pack(side=tk.LEFT, padx=(5, 0))
+
+        # 自动检测按钮
+        detect_row = ttk.Frame(chrome_frame)
+        detect_row.pack(fill=tk.X, pady=(2, 0))
+        self.chrome_status_var = tk.StringVar(value='点击「自动检测」扫描系统可用 Chrome')
+        ttk.Button(detect_row, text="自动检测", command=self._auto_detect_chrome).pack(side=tk.LEFT)
+        ttk.Label(detect_row, textvariable=self.chrome_status_var, foreground="gray").pack(
+            side=tk.LEFT, padx=(10, 0)
+        )
+
         # 账号配置
         acct_frame = ttk.LabelFrame(self.root, text="账号配置", padding=10)
         acct_frame.pack(fill=tk.X, padx=10, pady=(10, 5))
@@ -452,6 +567,8 @@ class ZhiHuiShuGUI:
             captcha_event=self.captcha_needed,
             captcha_done_event=self.captcha_done,
             stop_event=self.stop_event,
+            chrome_binary=self.chrome_binary_var.get() or None,
+            chromedriver_binary=self.chromedriver_binary_var.get() or None,
         )
 
         # 连接钩子：将视频进度写入数据库

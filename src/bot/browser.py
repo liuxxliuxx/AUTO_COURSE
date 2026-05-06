@@ -82,6 +82,35 @@ def _find_cached_chrome():
     return None
 
 
+def _find_system_chromedriver():
+    """查找系统安装的 chromedriver（优先 PATH，再查常见路径）。"""
+    # 1. PATH 中查找
+    path = shutil.which("chromedriver")
+    if path:
+        return path
+    # 2. 常见安装路径
+    if sys.platform == "darwin":
+        candidates = [
+            "/opt/homebrew/bin/chromedriver",
+            "/usr/local/bin/chromedriver",
+            "/usr/local/lib/node_modules/chromedriver/bin/chromedriver",
+            os.path.expanduser("~/.npm-global/bin/chromedriver"),
+        ]
+    else:
+        candidates = [
+            os.path.join(os.environ.get("PROGRAMFILES", "C:\\Program Files"),
+                         "chromedriver", "chromedriver.exe"),
+            os.path.join(os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)"),
+                         "chromedriver", "chromedriver.exe"),
+            os.path.join(os.environ.get("APPDATA", ""),
+                         "npm", "node_modules", "chromedriver", "bin", "chromedriver.exe"),
+        ]
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
+    return None
+
+
 def _find_cached_chromedriver():
     """在 bin/ 目录查找已缓存的 chromedriver。"""
     if sys.platform == "darwin":
@@ -142,7 +171,7 @@ def create_driver(chrome_binary=None, chromedriver_binary=None):
 
     # ---- Priority 2: 系统检测 ----
     system_chrome = _find_system_chrome()
-    system_chromedriver = shutil.which("chromedriver")
+    system_chromedriver = _find_system_chromedriver()
     if system_chrome and system_chromedriver:
         logger.info("使用系统 Chrome: %s", system_chrome)
         logger.info("使用系统 chromedriver: %s", system_chromedriver)

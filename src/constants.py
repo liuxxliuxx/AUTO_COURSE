@@ -113,6 +113,7 @@ VIDEO_LIST_ITEM_CSS = "li.video"
 VIDEO_SMALL_LESSON_CSS = ".small-lesson"
 VIDEO_TITLE_CSS = ".catalogue_title"
 VIDEO_FINISHED_MARK_CSS = ".time_icofinish"
+VIDEO_CURRENT_PLAY_CSS = "li.video.current_play"
 
 # ============================================================================
 # 视频播放器 — 选择器
@@ -206,6 +207,3 @@ CLICK_VIDEO_MAX_RETRIES = 10
 
 # 调度器轮询间隔（毫秒）
 AUTO_SCHEDULER_INTERVAL_MS = 30000
-
-# 防止无限重启的冷却时间（秒）
-AUTO_COOLDOWN_SECONDS = 300

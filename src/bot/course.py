@@ -16,6 +16,7 @@ from src.constants import (
     PRESCHOOL_CLOSE_CSS,
     PRESCHOOL_DIALOG_CSS,
     SHORT_SLEEP,
+    VIDEO_CURRENT_PLAY_CSS,
     VIDEO_FINISHED_MARK_CSS,
     VIDEO_LIST_ITEM_CSS,
     VIDEO_SMALL_LESSON_CSS,
@@ -155,6 +156,94 @@ class CourseNavigator:
                 continue
 
         return result
+
+    def get_next_video_after(self, current_title=None):
+        """在当前播放中视频的下方查找下一个符合条件的视频。
+
+        优先通过 DOM 中 class 含 'current_play' 的列表项定位当前位置，
+        如果找不到 current_play 则回退到 current_title 字符串匹配。
+        从当前位置的下一项向后搜索第一个有效视频（非小章节、有标题、
+        且当 skip_completed=True 时跳过已学）。
+        到达列表末尾则从头环形搜索。
+
+        返回 (title, element) 或 (None, None)。
+        """
+        try:
+            all_items = self.driver.find_elements(By.CSS_SELECTOR, VIDEO_LIST_ITEM_CSS)
+        except Exception:
+            logger.warning("未找到课程列表项")
+            return None, None
+
+        if not all_items:
+            return None, None
+
+        # 解析所有视频项，同时定位当前播放位置
+        parsed = []
+        current_idx = -1
+
+        # 优先：通过 DOM current_play 定位
+        try:
+            current_items = self.driver.find_elements(By.CSS_SELECTOR, VIDEO_CURRENT_PLAY_CSS)
+            if current_items:
+                current_el = current_items[0]
+                for i, item in enumerate(all_items):
+                    if item == current_el:
+                        current_idx = i
+                        break
+        except Exception:
+            pass
+
+        # 回退：通过标题匹配
+        if current_idx < 0 and current_title:
+            for i, item in enumerate(all_items):
+                try:
+                    title_el = item.find_elements(By.CSS_SELECTOR, VIDEO_TITLE_CSS)
+                    if title_el and title_el[0].text.strip() == current_title:
+                        current_idx = i
+                        break
+                except Exception:
+                    continue
+
+        # 解析每个视频项的元数据
+        for i, item in enumerate(all_items):
+            try:
+                small_lesson = item.find_elements(By.CSS_SELECTOR, VIDEO_SMALL_LESSON_CSS)
+                title_el = item.find_elements(By.CSS_SELECTOR, VIDEO_TITLE_CSS)
+                title = title_el[0].text.strip() if title_el else ""
+                finished = bool(item.find_elements(By.CSS_SELECTOR, VIDEO_FINISHED_MARK_CSS))
+                parsed.append((title, item, bool(small_lesson), finished))
+                if current_idx < 0 and title == current_title:
+                    current_idx = i
+            except Exception:
+                continue
+
+        # 判断视频项是否可播放
+        def _is_playable(title, is_small, is_finished):
+            if not title or is_small:
+                return False
+            if self.skip_completed and is_finished:
+                return False
+            return True
+
+        # 确定搜索起点
+        start = current_idx + 1 if current_idx >= 0 else 0
+
+        # 从起点向末尾搜索
+        for i in range(start, len(parsed)):
+            title, elem, is_small, is_finished = parsed[i]
+            if _is_playable(title, is_small, is_finished):
+                logger.info("下一个待学习: %s", title)
+                return title, elem
+
+        # 未找到则从头环形搜索
+        if start > 0:
+            for i in range(start):
+                title, elem, is_small, is_finished = parsed[i]
+                if _is_playable(title, is_small, is_finished):
+                    logger.info("下一个待学习（环回头部）: %s", title)
+                    return title, elem
+
+        return None, None
 
     def click_video(self, video_element, title):
         """点击侧边栏视频项以加载播放器。"""

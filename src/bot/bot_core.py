@@ -119,25 +119,27 @@ class ZhiHuiShuBot:
             # 3. 导航到课程页面
             self.course.navigate(self.video_url)
 
-            # 4. 获取未完成视频列表
-            unfinished = self.course.get_unfinished_videos()
-            if not unfinished:
+            # 4. 获取第一个待处理视频（None 表示从列表头开始）
+            title, video_el = self.course.get_next_video_after(None)
+            if not title:
                 logger.info("所有课程已完成！")
                 self._show_completion_report(0)
                 return
 
-            label = "未完成" if self.skip_completed else ""
-            logger.info("共发现 %d 个%s课程视频", len(unfinished), label)
+            label = "未完成" if self.skip_completed else "全部"
+            logger.info("开始依次处理%s课程视频", label)
 
-            # 5. 逐个处理视频
+            # 5. 逐个处理视频（每轮从上一个视频的下方查找下一个）
             completed_this_run = 0
-            for idx, (title, video_el) in enumerate(unfinished, 1):
+            seq = 0
+            while title and video_el:
                 if self._should_stop():
                     logger.info("收到停止信号，停止处理后续课程")
                     break
 
+                seq += 1
                 logger.info("=" * 40)
-                logger.info("[%d/%d] 正在处理: %s", idx, len(unfinished), title)
+                logger.info("[%d] 正在处理: %s", seq, title)
                 self.on_video_start(title)
 
                 # 点击视频（失败重试，交叉处理弹窗）
@@ -165,6 +167,9 @@ class ZhiHuiShuBot:
                     break
 
                 time.sleep(EXTRA_LONG_SLEEP)
+
+                # 从当前视频的下方查找下一个待处理视频
+                title, video_el = self.course.get_next_video_after(title)
 
             self._show_completion_report(completed_this_run)
 

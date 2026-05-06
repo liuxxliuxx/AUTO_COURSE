@@ -20,7 +20,6 @@ from config import KEYRING_PASSWORD_KEY, KEYRING_SERVICE, KEYRING_USERNAME_KEY
 from database import Database
 from src.bot.bot_core import ZhiHuiShuBot
 from src.constants import (
-    AUTO_COOLDOWN_SECONDS,
     AUTO_SCHEDULER_INTERVAL_MS,
     GUI_CAPTCHA_POLL_MS,
     GUI_LOG_POLL_MS,
@@ -55,7 +54,6 @@ class ZhiHuiShuGUI:
         # 自动调度器状态
         self._last_recorded_seconds = 0
         self._todays_watched_seconds = 0
-        self._auto_cooldown_until = 0.0
         self._today_date = ""
 
         self._queue_handler = QueueLogHandler(self.log_queue)
@@ -232,6 +230,7 @@ class ZhiHuiShuGUI:
         ttk.Checkbutton(
             auto_frame, text="自动使用数字石大登录",
             variable=self.auto_mode_var,
+            command=self._on_auto_mode_toggled,
         ).grid(row=0, column=0, columnspan=5, sticky=tk.W, pady=(0, 5))
 
         ttk.Label(auto_frame, text="允许运行时间:").grid(
@@ -458,12 +457,19 @@ class ZhiHuiShuGUI:
         self.bot_thread = threading.Thread(target=self.bot.run, daemon=True)
         self.bot_thread.start()
 
-    def _stop_bot(self):
+    def _stop_bot(self, auto_uncheck=True):
+        """停止 Bot。
+
+        auto_uncheck: 是否同时取消勾选"自动使用数字石大登录"。
+                      用户手动停止 / 课程全部学完 → True；
+                      调度器因时间/目标临时停止 → False。
+        """
         self.running = False
         self.stop_event.set()
         self.captcha_done.set()
         self.captcha_needed.clear()
-        self._auto_cooldown_until = time.time() + AUTO_COOLDOWN_SECONDS
+        if auto_uncheck:
+            self.auto_mode_var.set(False)
         self.status_label.config(text="● 已停止", foreground="orange")
         self.start_zhihuishu_btn.config(state=tk.NORMAL)
         self.start_upc_btn.config(state=tk.NORMAL)
@@ -471,6 +477,12 @@ class ZhiHuiShuGUI:
         self.captcha_btn.config(state=tk.DISABLED)
 
     # ---------- auto-scheduler ----------
+
+    def _on_auto_mode_toggled(self):
+        """取消勾选自动模式时立即停止正在运行的刷课任务。"""
+        if not self.auto_mode_var.get() and self.running:
+            logger.info("自动设置：已取消自动模式，停止当前刷课")
+            self._stop_bot(auto_uncheck=False)
 
     def _update_progress_label(self):
         """刷新'今日已刷课时长'标签。"""
@@ -523,13 +535,10 @@ class ZhiHuiShuGUI:
             self.start_upc_btn.config(state=tk.NORMAL)
             self.stop_btn.config(state=tk.DISABLED)
             self.captcha_btn.config(state=tk.DISABLED)
-            # 如果本轮几乎没有进度，说明课程已学完，进入冷却
+            # 如果本轮几乎没有进度，说明课程已学完，取消自动模式
             if self._last_recorded_seconds < 60:
-                self._auto_cooldown_until = time.time() + AUTO_COOLDOWN_SECONDS
-                logger.info(
-                    "自动调度：本轮进度不足 60 秒，进入 %d 秒冷却期",
-                    AUTO_COOLDOWN_SECONDS,
-                )
+                self.auto_mode_var.set(False)
+                logger.info("自动调度：本轮进度不足 60 秒，课程已学完，取消自动模式")
 
         # 刷新今日进度（捕获钩子写入的增量）
         self._todays_watched_seconds = self.db.get_daily_progress(today)
@@ -558,13 +567,13 @@ class ZhiHuiShuGUI:
                     "自动调度：当前时间 %s 超出允许范围，停止刷课",
                     now.strftime("%H:%M"),
                 )
-                self._stop_bot()
+                self._stop_bot(auto_uncheck=False)
             elif target_seconds > 0 and self._todays_watched_seconds >= target_seconds:
                 logger.info(
                     "自动调度：今日已刷 %d/%d 分钟，已达到目标，停止刷课",
                     self._todays_watched_seconds // 60, target_min,
                 )
-                self._stop_bot()
+                self._stop_bot(auto_uncheck=False)
         else:
             # 未运行 → 评估是否需要启动
             if not in_range:
@@ -572,8 +581,6 @@ class ZhiHuiShuGUI:
             if target_seconds <= 0:
                 return
             if self._todays_watched_seconds >= target_seconds:
-                return
-            if time.time() < self._auto_cooldown_until:
                 return
 
             logger.info(

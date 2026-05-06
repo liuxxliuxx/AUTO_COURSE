@@ -4,28 +4,39 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-智慧树 (ZhiHuiShu) auto-course-watching bot. Automates browser-based video playback on the Zhihuishu online education platform, handling login, quiz popups, and CAPTCHA interruptions. Has a Tkinter GUI for configuration and control.
+智慧树 (ZhiHuiShu) auto-course-watching bot. Automates browser-based video playback on the Zhihuishu online education platform, handling login, quiz popups, and CAPTCHA interruptions. Tkinter GUI for configuration and control.
 
 ## Running
 
 ```bash
-# Activate conda env (named "zhihuishu") or .venv
-python main.py          # Launches the Tkinter GUI
+# Activate conda env named "zhihuishu"
+# Use full path to conda python, e.g.:
+/c/Users/liuxx/anaconda3/envs/zhihuishu/python.exe main.py
 ```
 
-No test suite, no linter, no type checker is currently configured.
+No test suite, linter, or type checker is configured.
 
 ## Building
 
 ### Prerequisites
 
-Before the first build, download Chrome for Testing (bundled into the package so target PCs don't need Chrome installed):
+Before the first build, download Chrome for Testing (bundled into the package so target PCs don't need Chrome):
 
 ```bash
 python scripts/download_chrome.py
 ```
 
-This downloads ~150MB of Chrome + ChromeDriver matching a specific version into `bin/`.
+This downloads ~150MB of Chrome + ChromeDriver into `bin/`.
+
+### Windows
+
+```powershell
+.\scripts\build_win.ps1        # pyinstaller --onedir, outputs dist/ZhiHuiShu_AutoCourse/
+.\scripts\create_installer.ps1           # NSIS installer (requires NSIS installed)
+.\scripts\create_installer.ps1 -Portable # Portable zip with shortcut script
+```
+
+Build script auto-runs `download_chrome.py` if `bin/` is missing. Output is an English-named directory (Chinese paths break NSIS).
 
 ### macOS
 
@@ -33,68 +44,97 @@ This downloads ~150MB of Chrome + ChromeDriver matching a specific version into 
 ./scripts/build_mac.sh        # py2app, outputs dist/智慧树自动刷课.app
 ```
 
-Uses `scripts/setup_mac.py` (py2app config). The script auto-copies missing @rpath dylibs from the Python installation.
-
-### Windows
-
-```powershell
-.\scripts\build_win.ps1        # pyinstaller, outputs dist/智慧树自动刷课/
-```
-
-One-directory mode (--onedir), windowed (no console). The script auto-runs `download_chrome.py` if `bin/` is missing.
-
-### Creating an installer (Windows)
-
-```powershell
-.\scripts\create_installer.ps1           # NSIS installer (requires NSIS installed)
-.\scripts\create_installer.ps1 -Portable # Portable zip with shortcut script
-```
-
-The installer creates a desktop shortcut and Start Menu entry.
-
 ## Architecture
 
 ```
+main.py                         # Tkinter GUI + auto-scheduler (ZhiHuiShuGUI, ~600 lines)
+database.py                     # SQLite wrapper (root level, not src/db/)
+config.py                       # Platform DB path resolver + keyring keys
 src/
-├── constants.py                  # All CSS selectors, timeouts, URLs, intervals
-├── config.py                     # DB path, keyring key names
-├── db/
-│   └── database.py               # SQLite CRUD (no business logic)
+├── constants.py                # All CSS selectors, timeouts, URLs, polling intervals
 ├── bot/
-│   ├── bot_core.py               # ZhiHuiShuBot orchestrator (main loop)
-│   ├── browser.py                # Chrome driver factory
-│   ├── video.py                  # VideoController: play/pause/progress
-│   ├── quiz.py                   # QuizHandler: detect/answer/close popups
-│   ├── captcha.py                # CaptchaHandler: detect + notify GUI
-│   ├── course.py                 # CourseNavigator: navigate, parse video list
+│   ├── bot_core.py             # ZhiHuiShuBot orchestrator (main loop, 8 hooks)
+│   ├── browser.py              # Chrome driver factory (3-tier priority)
+│   ├── video.py                # VideoController: play/pause/progress
+│   ├── quiz.py                 # QuizHandler + AnswerStrategy protocol
+│   ├── captcha.py              # CaptchaHandler: detect + notify GUI via Event
+│   ├── course.py               # CourseNavigator + get_next_video_after()
 │   └── login/
-│       ├── base.py               # LoginStrategy ABC
-│       ├── zhihuishu.py          # Direct phone-number login
-│       └── upc.py                # UPC SSO login (Vue JS injection)
-├── ui/
-│   └── log_handler.py            # QueueLogHandler (logging → Tkinter)
-└── utils/
-    └── element_finder.py         # Multi-selector fallback find_element()
+│       ├── base.py             # LoginStrategy ABC
+│       ├── zhihuishu.py        # Direct phone-number login
+│       └── upc.py              # UPC SSO login (Vue JS injection)
+└── ui/
+    └── log_handler.py          # QueueLogHandler (logging → Tkinter queue)
 ```
 
-- **[main.py](main.py)** — Tkinter GUI entry point. `ZhiHuiShuGUI` owns UI, spawns bot on daemon thread, bridges logging/CAPTCHA via `threading.Event`.
-- **[src/bot/bot_core.py](src/bot/bot_core.py)** — Orchestrator that composes sub-modules. `run()` flow: init driver → login → navigate → iterate videos → cleanup. Accepts 8 hook callbacks (`on_bot_start`, `on_video_end`, etc.) for external extensibility.
-- **[src/db/database.py](src/db/database.py)** — SQLite wrapper. Stores URL history and key-value settings. Auto-creates tables and migrates on first use.
-- **[src/config.py](src/config.py)** — Platform-appropriate DB path + keyring config.
+## Key mechanisms
 
-## Login methods
+### Threading model
 
-Two strategies, selectable from the GUI, both implementing `LoginStrategy`:
+- **GUI thread**: owns tk widgets, polls via `root.after()` timers (200ms logs, 500ms captcha, 30s auto-scheduler)
+- **Bot thread**: daemon `threading.Thread(target=bot.run)`, communicates via `threading.Event` (captcha_needed, captcha_done, stop_event) and `queue.Queue` (logging)
+- `self.running` boolean only touched by GUI thread
+- Bot hooks (`on_video_end`, `on_bot_stop`) run in bot thread — they write DB progress but must NOT touch tk widgets directly
 
-1. **zhihuishu** — `ZhihuishuLogin`: phone + password form → Yidun slider CAPTCHA
-2. **upc** — `UPCLogin`: SSO via `i.upc.edu.cn`, injects credentials into Vue component via JS → redirects to course center
+### Auto-scheduler (`main.py:ZhiHuiShuGUI`)
 
-## Key details
+`_auto_scheduler_tick()` → `root.after(30000)` perpetually. Logic in `_auto_scheduler_evaluate()`:
 
-- Database (`course_progress.db`) stored in platform user data directory, not app bundle.
-- Credentials persisted via system keyring (service: `zhihuishu_auto_course`).
-- Video completion: CSS class `.time_icofinish` on `li.video`. When "跳过已学课程" is unchecked, all videos are processed regardless.
-- Quiz popups polled every 2s, CAPTCHA every 30s during video monitoring.
-- Browser: bundled Chrome for Testing in `bin/` preferred. Falls back to system chromedriver → webdriver-manager if bundle absent.
-- Quiz answering uses `AnswerStrategy` protocol — default `RandomAnswerStrategy`, swappable via `QuizHandler(answer_strategy=...)`.
-- All CSS selectors / timeouts / URLs live in `src/constants.py` — platform DOM changes only need updates there.
+- **Start conditions**: auto_mode ON, bot not running, time in range (or "全天" checked), today's watched < time_limit
+- **Stop conditions**: bot running AND (time out of range OR today's watched >= time_limit)
+- **Natural completion**: detected when `self.running` True but `bot_thread.is_alive()` False
+- If natural completion with <60s progress → course pool exhausted → auto-uncheck auto_mode
+- `_stop_bot()` with `auto_uncheck=True` (user/manual stop) also unchecks auto_mode; scheduler calls with `auto_uncheck=False` (temporary stops — keeps auto_mode for next day)
+
+### Video iteration (`bot_core.py` + `course.py`)
+
+Uses `get_next_video_after(current_title)` on `CourseNavigator` — detects current position from DOM class `li.video.current_play`, then searches downward for next eligible video (respecting `skip_completed`). Wraps around to head when at end. This means if the user manually clicks a different course during auto-play, the next video will be the one *below* the user-clicked one.
+
+### Progress tracking
+
+- `bot_core._accumulate_duration()` uses actual monitor-loop elapsed time (not video DOM duration), so progress-bar dragging doesn't inflate the counter
+- `on_video_end` hook (wired in `main.py:_start_bot`) writes delta to `daily_progress` table via `database.add_daily_progress()`
+- `_auto_scheduler_evaluate()` reloads from DB each tick and updates the "今日已刷课时长" label
+
+### Captcha flow
+
+- `CaptchaHandler._notify_and_wait()`: sets `captcha_needed` Event → GUI `_check_captcha_status()` (500ms poll) shows red status + enables confirm button
+- User clicks "没有需确认的验证码" → `_on_confirm_captcha()` sets `captcha_done` → bot resumes
+- On stop: `_stop_bot()` sets `stop_event` but does NOT set `captcha_done` (doing so would make the captcha loop mistake stop for user confirmation). The captcha loop checks `_should_stop()` every 1s and exits cleanly
+
+### Database schema
+
+- `url_history(url_type, url, note, used_at)` — URL autocomplete history, UNIQUE(type, url)
+- `settings(key PRIMARY KEY, value)` — key-value config persistence
+- `daily_progress(date TEXT PRIMARY KEY, watched_seconds INTEGER)` — per-day brush time, UPSERT-incremented
+
+### Login methods (GUI dropdown)
+
+Two strategies selectable from dropdown "登录方式" between "登录跳转URL" and "课程视频URL":
+1. **智慧树** — `ZhihuishuLogin`: phone + password → Yidun slider CAPTCHA
+2. **数字石大** — `UPCLogin`: SSO via `i.upc.edu.cn`, injects credentials into Vue component via JS
+
+When auto-mode checked, dropdown grays out (auto-mode always uses UPC).
+
+### CSS selectors
+
+All in `src/constants.py`. Key ones:
+- `VIDEO_LIST_ITEM_CSS = "li.video"`, `VIDEO_CURRENT_PLAY_CSS = "li.video.current_play"`, `VIDEO_FINISHED_MARK_CSS = ".time_icofinish"`
+- Platform DOM changes only need updates in constants.py
+
+### Status messages
+
+| State | Status text | Color |
+|---|---|---|
+| Idle | ● 就绪 | gray |
+| Initializing | ● 正在初始化（登录方式）... | green |
+| Brushing | ● 正在刷课 | green |
+| Captcha | ⚠ 检测到验证码 — 请在浏览器中完成验证 | red |
+| Manual stop | ● 已停止 | red |
+| Auto target reached | ● 今日自动刷课已到目标时长 | orange |
+| Auto out of range | ● 不在允许运行时间内 | orange |
+
+## Paths and conda
+
+- Conda env: `zhihuishu` at `/c/Users/liuxx/anaconda3/envs/zhihuishu/`
+- Python: `/c/Users/liuxx/anaconda3/envs/zhihuishu/python.exe` (Windows `python` cmd may point to MS Store stub)

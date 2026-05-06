@@ -65,6 +65,7 @@ class ZhiHuiShuBot:
         self.time_limit_seconds = (time_limit_minutes or 0) * 60
         self.skip_completed = skip_completed
         self.total_watched_seconds = 0
+        self._last_monitor_elapsed = 0
 
         self._captcha_event = captcha_event
         self._captcha_done = captcha_done_event
@@ -271,6 +272,7 @@ class ZhiHuiShuBot:
         while elapsed < VIDEO_MONITOR_MAX_WAIT:
             if self._should_stop():
                 logger.info("收到停止信号，退出视频监控")
+                self._last_monitor_elapsed = elapsed
                 return False
 
             # 弹题检测（高频）
@@ -300,6 +302,7 @@ class ZhiHuiShuBot:
             if self.video.is_ended():
                 current, duration = self.video.get_progress()
                 logger.info("视频播放完毕: %s (%s/%s)", title, current, duration)
+                self._last_monitor_elapsed = elapsed
                 return True
 
             # 防止自动暂停（每 10s 检查）
@@ -317,18 +320,23 @@ class ZhiHuiShuBot:
             elapsed += VIDEO_MONITOR_CHECK_INTERVAL
 
         logger.warning("视频监控超时: %s", title)
+        self._last_monitor_elapsed = elapsed
         return False
 
     def _accumulate_duration(self):
-        """累计当前视频时长并输出日志。"""
-        video_dur = self.video.get_duration_seconds()
+        """累计实际播放耗时并输出日志。
+
+        使用监控循环实际耗时而非视频 DOM 时长，
+        因为用户可能拖动进度条导致识别不准。
+        """
+        video_dur = self._last_monitor_elapsed
         self.total_watched_seconds += video_dur
         dur_min = int(video_dur // 60)
         dur_sec = int(video_dur % 60)
         total_min = int(self.total_watched_seconds // 60)
         total_sec = int(self.total_watched_seconds % 60)
         logger.info(
-            "本视频时长: %d分%d秒 | 累计观看: %d分%d秒",
+            "本视频耗时: %d分%d秒 | 累计观看: %d分%d秒",
             dur_min, dur_sec, total_min, total_sec,
         )
 

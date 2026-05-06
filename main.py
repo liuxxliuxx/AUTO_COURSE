@@ -100,11 +100,16 @@ class ZhiHuiShuGUI:
         saved_limit = self.db.get_setting("time_limit", "")
         self.time_limit_var.set(saved_limit)
 
-        # 加载自动调度器设置
-        self.auto_mode_var.set(self.db.get_setting("auto_mode", "0") == "1")
+        # 加载登录方式
+        saved_method = self.db.get_setting("login_method", "zhihuishu")
+        self.login_method_var.set(
+            "数字石大" if saved_method == "upc" else "智慧树"
+        )
+
+        # 加载自动调度器设置（自动模式默认不勾选，每次启动重置）
         self.auto_start_var.set(self.db.get_setting("auto_start_time", "06:00"))
         self.auto_end_var.set(self.db.get_setting("auto_end_time", "23:00"))
-        self.auto_target_var.set(self.db.get_setting("auto_target_minutes", "30"))
+        self.auto_allday_var.set(self.db.get_setting("auto_allday", "0") == "1")
 
         # 加载今日进度并启动调度器轮询
         self._today_date = time.strftime("%Y-%m-%d")
@@ -127,11 +132,15 @@ class ZhiHuiShuGUI:
         self.db.save_url_history("logged", logged_url)
         self.db.save_url_history("video", video_url, self.course_note_var.get())
 
+        # 保存登录方式
+        method_val = "upc" if self.login_method_var.get() == "数字石大" else "zhihuishu"
+        self.db.set_setting("login_method", method_val)
+
         # 保存自动调度器设置
         self.db.set_setting("auto_mode", "1" if self.auto_mode_var.get() else "0")
         self.db.set_setting("auto_start_time", self.auto_start_var.get().strip() or "06:00")
         self.db.set_setting("auto_end_time", self.auto_end_var.get().strip() or "23:00")
-        self.db.set_setting("auto_target_minutes", self.auto_target_var.get().strip() or "30")
+        self.db.set_setting("auto_allday", "1" if self.auto_allday_var.get() else "0")
 
         self._refresh_url_history()
 
@@ -191,34 +200,49 @@ class ZhiHuiShuGUI:
         self.logged_url_combo = ttk.Combobox(url_frame, textvariable=self.logged_url_var, width=77)
         self.logged_url_combo.grid(row=0, column=1, sticky=tk.EW, pady=2)
 
-        ttk.Label(url_frame, text="课程视频URL:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        ttk.Label(url_frame, text="登录方式:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        self.login_method_var = tk.StringVar(value="zhihuishu")
+        self.login_method_combo = ttk.Combobox(
+            url_frame, textvariable=self.login_method_var,
+            values=["智慧树", "数字石大"], state="readonly", width=15,
+        )
+        self.login_method_combo.grid(row=1, column=1, sticky=tk.W, pady=2)
+
+        ttk.Label(url_frame, text="课程视频URL:").grid(row=2, column=0, sticky=tk.W, pady=2)
         self.video_url_var = tk.StringVar()
         self.video_url_combo = ttk.Combobox(url_frame, textvariable=self.video_url_var, width=77)
-        self.video_url_combo.grid(row=1, column=1, sticky=tk.EW, pady=2)
+        self.video_url_combo.grid(row=2, column=1, sticky=tk.EW, pady=2)
         self.video_url_combo.bind("<<ComboboxSelected>>", self._on_video_url_selected)
         self.video_url_var.trace_add("write", self._on_video_url_changed)
 
-        ttk.Label(url_frame, text="课程备注:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        ttk.Label(url_frame, text="课程备注:").grid(row=3, column=0, sticky=tk.W, pady=2)
         self.course_note_var = tk.StringVar()
         ttk.Entry(url_frame, textvariable=self.course_note_var, width=60).grid(
-            row=2, column=1, sticky=tk.EW, pady=2
+            row=3, column=1, sticky=tk.EW, pady=2
         )
 
-        ttk.Label(url_frame, text="刷课时长(分钟):").grid(row=3, column=0, sticky=tk.W, pady=2)
+        # 刷课时长行（使用子 Frame 排布 Entry + 提示 + 今日进度）
+        time_row = ttk.Frame(url_frame)
+        time_row.grid(row=4, column=0, columnspan=2, sticky=tk.EW, pady=2)
+        ttk.Label(time_row, text="刷课时长(分钟):").pack(side=tk.LEFT)
         self.time_limit_var = tk.StringVar(value="0")
-        ttk.Entry(url_frame, textvariable=self.time_limit_var, width=10).grid(
-            row=3, column=1, sticky=tk.W, pady=2
+        ttk.Entry(time_row, textvariable=self.time_limit_var, width=7).pack(
+            side=tk.LEFT, padx=(5, 0)
         )
-        ttk.Label(url_frame, text="（0=不限，达到时长后自动停止）", foreground="gray").grid(
-            row=3, column=1, sticky=tk.E, pady=2
+        ttk.Label(time_row, text="（0=不限）", foreground="gray").pack(
+            side=tk.LEFT, padx=(2, 0)
         )
+        self.auto_progress_label = ttk.Label(
+            time_row, text="今日已刷课时长：0 分钟", foreground="blue"
+        )
+        self.auto_progress_label.pack(side=tk.RIGHT)
 
-        # 跳过已学课程复选框（默认勾选，保持原有行为）
+        # 跳过已学课程复选框
         self.skip_completed_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             url_frame, text="跳过已学课程（取消勾选后将依次学习全部课程）",
             variable=self.skip_completed_var,
-        ).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=(5, 0))
+        ).grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=(5, 0))
 
         url_frame.columnconfigure(1, weight=1)
 
@@ -237,29 +261,22 @@ class ZhiHuiShuGUI:
             row=1, column=0, sticky=tk.W, pady=2
         )
         self.auto_start_var = tk.StringVar(value="06:00")
-        ttk.Entry(auto_frame, textvariable=self.auto_start_var, width=7).grid(
-            row=1, column=1, sticky=tk.W, pady=2
+        self.auto_start_entry = ttk.Entry(
+            auto_frame, textvariable=self.auto_start_var, width=7,
         )
+        self.auto_start_entry.grid(row=1, column=1, sticky=tk.W, pady=2)
         ttk.Label(auto_frame, text="至").grid(row=1, column=2, pady=2)
         self.auto_end_var = tk.StringVar(value="23:00")
-        ttk.Entry(auto_frame, textvariable=self.auto_end_var, width=7).grid(
-            row=1, column=3, sticky=tk.W, pady=2
+        self.auto_end_entry = ttk.Entry(
+            auto_frame, textvariable=self.auto_end_var, width=7,
         )
+        self.auto_end_entry.grid(row=1, column=3, sticky=tk.W, pady=2)
 
-        ttk.Label(auto_frame, text="每日目标时长(分钟):").grid(
-            row=2, column=0, sticky=tk.W, pady=2
-        )
-        self.auto_target_var = tk.StringVar(value="30")
-        ttk.Entry(auto_frame, textvariable=self.auto_target_var, width=7).grid(
-            row=2, column=1, sticky=tk.W, pady=2
-        )
-
-        self.auto_progress_label = ttk.Label(
-            auto_frame, text="今日已刷课时长：0 分钟", foreground="blue"
-        )
-        self.auto_progress_label.grid(
-            row=3, column=0, columnspan=5, sticky=tk.W, pady=(5, 0)
-        )
+        self.auto_allday_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            auto_frame, text="全天", variable=self.auto_allday_var,
+            command=self._on_allday_toggled,
+        ).grid(row=1, column=4, sticky=tk.W, pady=2, padx=(10, 0))
 
         auto_frame.columnconfigure(4, weight=1)
 
@@ -267,17 +284,10 @@ class ZhiHuiShuGUI:
         btn_frame = ttk.Frame(self.root)
         btn_frame.pack(fill=tk.X, padx=10, pady=5)
 
-        self.start_zhihuishu_btn = ttk.Button(
-            btn_frame, text="启动并通过智慧树登录",
-            command=lambda: self._start_bot("zhihuishu"),
+        self.start_btn = ttk.Button(
+            btn_frame, text="启动", command=self._on_start_clicked,
         )
-        self.start_zhihuishu_btn.pack(side=tk.LEFT, padx=(0, 10))
-
-        self.start_upc_btn = ttk.Button(
-            btn_frame, text="启动并通过数字石大登录",
-            command=lambda: self._start_bot("upc"),
-        )
-        self.start_upc_btn.pack(side=tk.LEFT, padx=(0, 10))
+        self.start_btn.pack(side=tk.LEFT, padx=(0, 10))
 
         self.stop_btn = ttk.Button(btn_frame, text="停止", command=self._stop_bot, state=tk.DISABLED)
         self.stop_btn.pack(side=tk.LEFT)
@@ -287,12 +297,12 @@ class ZhiHuiShuGUI:
         status_frame.pack(fill=tk.X, padx=10, pady=5)
 
         self.status_label = ttk.Label(
-            status_frame, text="● 就绪 - 点击'开始运行'启动脚本", foreground="gray"
+            status_frame, text="● 就绪", foreground="gray"
         )
         self.status_label.pack(side=tk.LEFT, padx=(0, 20))
 
         self.captcha_btn = ttk.Button(
-            status_frame, text="确认验证码已完成",
+            status_frame, text="没有需确认的验证码",
             command=self._on_confirm_captcha, state=tk.DISABLED,
         )
         self.captcha_btn.pack(side=tk.RIGHT)
@@ -329,7 +339,7 @@ class ZhiHuiShuGUI:
     # ---------- CAPTCHA ----------
 
     def _check_captcha_status(self):
-        if self.captcha_needed.is_set():
+        if self.running and self.captcha_needed.is_set():
             self.status_label.config(
                 text="⚠ 检测到验证码 — 请在浏览器中完成验证", foreground="red"
             )
@@ -341,7 +351,7 @@ class ZhiHuiShuGUI:
         self.captcha_needed.clear()
         self.captcha_btn.config(state=tk.DISABLED)
         self.captcha_hint.config(text="")
-        self.status_label.config(text="● 正在运行", foreground="green")
+        self.status_label.config(text="● 正在刷课", foreground="green")
 
     # ---------- Bot lifecycle ----------
 
@@ -366,6 +376,14 @@ class ZhiHuiShuGUI:
 
         return True, ""
 
+    def _on_start_clicked(self):
+        """启动按钮回调。自动模式下固定 UPC 登录。"""
+        if self.auto_mode_var.get():
+            self._start_bot("upc", auto_start=True)
+        else:
+            method = "upc" if self.login_method_var.get() == "数字石大" else "zhihuishu"
+            self._start_bot(method)
+
     def _start_bot(self, login_method, auto_start=False):
         if self.running:
             return
@@ -382,8 +400,7 @@ class ZhiHuiShuGUI:
         self.stop_event.clear()
         self.captcha_needed.clear()
         self.captcha_done.clear()
-        self.start_zhihuishu_btn.config(state=tk.DISABLED)
-        self.start_upc_btn.config(state=tk.DISABLED)
+        self.start_btn.config(state=tk.DISABLED)
         self.stop_btn.config(state=tk.NORMAL)
 
         if login_method == "upc":
@@ -466,23 +483,36 @@ class ZhiHuiShuGUI:
         """
         self.running = False
         self.stop_event.set()
-        self.captcha_done.set()
+        # 注意：不能同时 set captcha_done，否则验证码等待循环会误判为"用户已确认"
+        # 只设 stop_event，让 CaptchaHandler._notify_and_wait 通过 _should_stop 自行退出
         self.captcha_needed.clear()
         if auto_uncheck:
             self.auto_mode_var.set(False)
-        self.status_label.config(text="● 已停止", foreground="orange")
-        self.start_zhihuishu_btn.config(state=tk.NORMAL)
-        self.start_upc_btn.config(state=tk.NORMAL)
+        self.status_label.config(text="● 已停止", foreground="red")
+        self.start_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
         self.captcha_btn.config(state=tk.DISABLED)
 
     # ---------- auto-scheduler ----------
 
     def _on_auto_mode_toggled(self):
-        """取消勾选自动模式时立即停止正在运行的刷课任务。"""
-        if not self.auto_mode_var.get() and self.running:
-            logger.info("自动设置：已取消自动模式，停止当前刷课")
-            self._stop_bot(auto_uncheck=False)
+        """自动模式切换：勾选时灰掉登录方式下拉，取消时停止刷课。"""
+        if self.auto_mode_var.get():
+            self.login_method_combo.config(state=tk.DISABLED)
+        else:
+            self.login_method_combo.config(state="readonly")
+            if self.running:
+                logger.info("自动设置：已取消自动模式，停止当前刷课")
+                self._stop_bot(auto_uncheck=False)
+
+    def _on_allday_toggled(self):
+        """全天复选框切换：勾选时灰掉时间输入框。"""
+        if self.auto_allday_var.get():
+            self.auto_start_entry.config(state=tk.DISABLED)
+            self.auto_end_entry.config(state=tk.DISABLED)
+        else:
+            self.auto_start_entry.config(state=tk.NORMAL)
+            self.auto_end_entry.config(state=tk.NORMAL)
 
     def _update_progress_label(self):
         """刷新'今日已刷课时长'标签。"""
@@ -531,8 +561,7 @@ class ZhiHuiShuGUI:
         # 检测 Bot 自然结束（线程已退出但 running 仍为 True）
         if self.running and not bot_alive:
             self.running = False
-            self.start_zhihuishu_btn.config(state=tk.NORMAL)
-            self.start_upc_btn.config(state=tk.NORMAL)
+            self.start_btn.config(state=tk.NORMAL)
             self.stop_btn.config(state=tk.DISABLED)
             self.captcha_btn.config(state=tk.DISABLED)
             # 如果本轮几乎没有进度，说明课程已学完，取消自动模式
@@ -547,20 +576,31 @@ class ZhiHuiShuGUI:
         if not self.auto_mode_var.get():
             return
 
-        # 解析参数
+        # 解析参数（读取统一的刷课时长）
         try:
-            target_min = int(self.auto_target_var.get() or "0")
+            target_min = int(self.time_limit_var.get() or "0")
         except ValueError:
             target_min = 0
         target_seconds = target_min * 60
 
-        in_range = self._time_in_range(
-            now_time,
-            self.auto_start_var.get(),
-            self.auto_end_var.get(),
-        )
+        if self.auto_allday_var.get():
+            in_range = True
+        else:
+            in_range = self._time_in_range(
+                now_time,
+                self.auto_start_var.get(),
+                self.auto_end_var.get(),
+            )
 
         if bot_alive:
+            # 更新运行状态（仅在非验证码状态下覆盖初始化提示）
+            if not self.captcha_needed.is_set():
+                cur = self.status_label.cget("text")
+                if "初始化" in cur or "就绪" in cur or "运行" in cur:
+                    self.status_label.config(
+                        text="● 正在刷课", foreground="green"
+                    )
+
             # 正在运行 → 评估是否需要停止
             if not in_range:
                 logger.info(
@@ -568,12 +608,18 @@ class ZhiHuiShuGUI:
                     now.strftime("%H:%M"),
                 )
                 self._stop_bot(auto_uncheck=False)
+                self.status_label.config(
+                    text="● 不在允许运行时间内", foreground="orange"
+                )
             elif target_seconds > 0 and self._todays_watched_seconds >= target_seconds:
                 logger.info(
                     "自动调度：今日已刷 %d/%d 分钟，已达到目标，停止刷课",
                     self._todays_watched_seconds // 60, target_min,
                 )
                 self._stop_bot(auto_uncheck=False)
+                self.status_label.config(
+                    text="● 今日自动刷课已到目标时长", foreground="orange"
+                )
         else:
             # 未运行 → 评估是否需要启动
             if not in_range:

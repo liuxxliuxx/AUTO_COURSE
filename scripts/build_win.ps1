@@ -29,6 +29,7 @@ pyinstaller `
     --workpath $WORK_DIR `
     --clean `
     --noconfirm `
+    --icon assets/icon.ico `
     --hidden-import keyring.backends.Windows `
     --hidden-import keyring.backends.null `
     --hidden-import keyring.backends.chainer `

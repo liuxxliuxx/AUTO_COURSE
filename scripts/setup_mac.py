@@ -8,6 +8,7 @@ from setuptools import setup
 APP = ["main.py"]
 OPTIONS = {
     "argv_emulation": False,
+    "iconfile": "assets/icon.icns",
     "packages": ["selenium", "webdriver_manager", "keyring", "certifi"],
     "includes": [
         "src", "src.constants", "src.db", "src.bot", "src.bot.login",

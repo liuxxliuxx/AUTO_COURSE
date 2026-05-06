@@ -23,12 +23,17 @@ logger = logging.getLogger(__name__)
 def _get_bin_dir():
     """获取 bin/ 目录的绝对路径。
 
-    兼容两种运行环境：
+    兼容三种运行环境：
     - 开发模式：项目根目录下的 bin/
-    - PyInstaller 打包后：sys._MEIPASS 下的 bin/
+    - py2app 打包后 (macOS)：RESOURCEPATH 下的 bin/
+    - PyInstaller 打包后 (Windows)：sys._MEIPASS 下的 bin/
     """
-    # PyInstaller 打包后的临时目录
-    if getattr(sys, "frozen", False):
+    frozen = getattr(sys, "frozen", False)
+    if frozen == "macosx_app":
+        # py2app: Resources 目录即项目根
+        base = os.environ["RESOURCEPATH"]
+    elif frozen:
+        # PyInstaller: _MEIPASS 指向临时解压目录
         base = sys._MEIPASS
     else:
         # 开发模式：从 src/bot/browser.py 向上 3 级到项目根目录
@@ -37,18 +42,42 @@ def _get_bin_dir():
 
 
 def _get_bundled_chrome_path():
-    """返回捆绑的 chrome.exe 路径，不存在则返回 None。"""
-    chrome_exe = os.path.join(_get_bin_dir(), "chrome-win64", "chrome.exe")
-    if os.path.exists(chrome_exe):
-        return chrome_exe
+    """返回捆绑的 Chrome 路径，不存在则返回 None。"""
+    bin_dir = _get_bin_dir()
+    if sys.platform == "darwin":
+        candidates = [
+            os.path.join(bin_dir, "chrome-mac-arm64",
+                         "Google Chrome for Testing.app", "Contents", "MacOS",
+                         "Google Chrome for Testing"),
+            os.path.join(bin_dir, "chrome-mac-x64",
+                         "Google Chrome for Testing.app", "Contents", "MacOS",
+                         "Google Chrome for Testing"),
+        ]
+        for p in candidates:
+            if os.path.exists(p):
+                return p
+    else:
+        chrome_exe = os.path.join(bin_dir, "chrome-win64", "chrome.exe")
+        if os.path.exists(chrome_exe):
+            return chrome_exe
     return None
 
 
 def _get_bundled_chromedriver_path():
-    """返回捆绑的 chromedriver.exe 路径，不存在则返回 None。"""
-    driver_exe = os.path.join(_get_bin_dir(), "chromedriver-win64", "chromedriver.exe")
-    if os.path.exists(driver_exe):
-        return driver_exe
+    """返回捆绑的 chromedriver 路径，不存在则返回 None。"""
+    bin_dir = _get_bin_dir()
+    if sys.platform == "darwin":
+        candidates = [
+            os.path.join(bin_dir, "chromedriver-mac-arm64", "chromedriver"),
+            os.path.join(bin_dir, "chromedriver-mac-x64", "chromedriver"),
+        ]
+        for p in candidates:
+            if os.path.exists(p):
+                return p
+    else:
+        driver_exe = os.path.join(bin_dir, "chromedriver-win64", "chromedriver.exe")
+        if os.path.exists(driver_exe):
+            return driver_exe
     return None
 
 

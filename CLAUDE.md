@@ -41,8 +41,10 @@ Build script auto-runs `download_chrome.py` if `bin/` is missing. Output is an E
 ### macOS
 
 ```bash
-./scripts/build_mac.sh        # py2app, outputs dist/智慧树自动刷课.app
+./scripts/build_mac.sh        # py2app, outputs dist/ZhiHuiShu_AutoCourse.app + DMG
 ```
+
+Uses `setup_mac.py` (project root, py2app config). Script auto-downloads Chrome for Testing and copies root-level modules into the bundle.
 
 ## Architecture
 

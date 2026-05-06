@@ -1,21 +1,21 @@
-import glob
 import os
-import shutil
 import sys
-from subprocess import check_output
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from setuptools import setup
 
 APP = ["main.py"]
 OPTIONS = {
     "argv_emulation": False,
-    "packages": [
-        "selenium", "webdriver_manager", "keyring", "certifi",
+    "packages": ["selenium", "webdriver_manager", "keyring", "certifi"],
+    "includes": [
         "src", "src.constants", "src.db", "src.bot", "src.bot.login",
         "src.ui", "src.utils",
+        "config", "database",
     ],
     "plist": {
-        "CFBundleName": "智慧树自动刷课",
+        "CFBundleName": "ZhiHuiShu_AutoCourse",
         "CFBundleDisplayName": "智慧树自动刷课",
         "CFBundleIdentifier": "com.zhihuishu.autocourse",
         "CFBundleVersion": "1",
@@ -25,7 +25,7 @@ OPTIONS = {
 
 setup(
     app=APP,
-    name="智慧树自动刷课",
+    name="ZhiHuiShu_AutoCourse",
     options={"py2app": OPTIONS},
     setup_requires=["py2app"],
 )

@@ -6,10 +6,20 @@
 """
 
 import logging
+import os
 import queue
+import sys
 import threading
 import time
 from datetime import datetime, time as dt_time
+
+# Ensure the script directory is importable (needed for bundled macOS .app)
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, _script_dir)
+# Also add the bundled lib/python3.x directory so packages like "src" are found
+_lib_dir = os.path.join(_script_dir, "lib", f"python{sys.version_info[0]}.{sys.version_info[1]}")
+if os.path.isdir(_lib_dir):
+    sys.path.insert(0, _lib_dir)
 
 import tkinter as tk
 from tkinter import scrolledtext, ttk

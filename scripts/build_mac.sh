@@ -1,14 +1,34 @@
 #!/bin/bash
 set -e
 
-APP_NAME="智慧树自动刷课"
+# Internal name: English only (used for directories, app bundle, DMG)
+APP_NAME="ZhiHuiShu_AutoCourse"
+DISPLAY_NAME="智慧树自动刷课"
 DIST_APP="dist/${APP_NAME}.app"
 FRAMEWORKS="${DIST_APP}/Contents/Frameworks"
 PYTHON=".venv/bin/python3"
 PYTHON_LIB="$(${PYTHON} -c 'import sys; print(sys.base_prefix)')/lib"
+BIN_DIR="bin"
+
+# Check and download Chrome for Testing
+CHROME_BIN="${BIN_DIR}/chrome-mac-arm64/Google Chrome for Testing.app"
+if [ ! -d "${CHROME_BIN}" ]; then
+    echo "==> Chrome for Testing not found, downloading..."
+    ${PYTHON} scripts/download_chrome.py
+else
+    echo "==> Chrome for Testing already exists, skipping download"
+fi
 
 echo "==> Building with py2app..."
 ${PYTHON} scripts/setup_mac.py py2app
+
+echo "==> Copying root-level modules..."
+RES="${DIST_APP}/Contents/Resources"
+cp config.py database.py "${RES}/"
+
+echo "==> Copying Chrome for Testing..."
+mkdir -p "${RES}/${BIN_DIR}"
+cp -R "${BIN_DIR}/"* "${RES}/${BIN_DIR}/"
 
 echo "==> Copying dylibs..."
 DYNLOAD=$(echo "${DIST_APP}"/Contents/Resources/lib/python3.*/lib-dynload)
@@ -43,4 +63,16 @@ if [ -z "$LIBPYTHON" ]; then
     fi
 fi
 
+echo "==> Creating DMG..."
+DMG_DIR="dist/${APP_NAME}_dmg"
+DMG_FILE="dist/${APP_NAME}.dmg"
+rm -rf "${DMG_DIR}" "${DMG_FILE}"
+mkdir -p "${DMG_DIR}"
+cp -R "${DIST_APP}" "${DMG_DIR}/"
+# Create symlink to /Applications for drag-to-install
+ln -s /Applications "${DMG_DIR}/Applications"
+hdiutil create -volname "${DISPLAY_NAME}" -srcfolder "${DMG_DIR}" -ov -format UDZO "${DMG_FILE}"
+rm -rf "${DMG_DIR}"
+
 echo "==> Done: ${DIST_APP}"
+echo "         ${DMG_FILE}"

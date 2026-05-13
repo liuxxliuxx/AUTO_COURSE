@@ -62,6 +62,13 @@ class CoursePageProxy:
         if target:
             self.driver.get(target)
 
+    def current_url(self):
+        try:
+            return self.driver.current_url or ""
+        except Exception as exc:
+            logger.warning("读取当前URL失败: %s", exc)
+            return ""
+
     def wait(self, seconds: float):
         time.sleep(seconds)
 
@@ -95,11 +102,13 @@ class CoursePageProxy:
     def check_login(self):
         self.driver.get(self.bot.base_url)
         time.sleep(3)
-        current_url = self.driver.current_url
+        current_url = self.current_url()
         logger.info("当前URL: %s", current_url)
         if self.bot.logged_url and self.bot.logged_url in current_url:
             logger.info("已登录，无需重新登录")
             return True
+        if not current_url:
+            logger.warning("当前URL为空，按未登录处理")
         logger.info("未登录，开始登录流程")
         return False
 
@@ -206,7 +215,9 @@ class CoursePageProxy:
     def wait_for_login_success(self):
         try:
             WebDriverWait(self.driver, 60).until(
-                lambda d: self.bot.logged_url in d.current_url if self.bot.logged_url else True
+                lambda _d: self.bot.logged_url in self.current_url()
+                if self.bot.logged_url
+                else True
             )
             logger.info("登录成功")
         except TimeoutException:
@@ -414,19 +425,84 @@ class CoursePageProxy:
             logger.warning("点击课程失败: %s (%s)", title, exc)
             return False
 
+    def _video_state(self):
+        try:
+            return self.driver.execute_script(
+                "var v=document.querySelector('video');"
+                "if(!v)return {exists:false,paused:true,ended:false,currentTime:0,duration:0,readyState:0};"
+                "return {exists:true,paused:!!v.paused,ended:!!v.ended,"
+                "currentTime:v.currentTime||0,duration:v.duration||0,readyState:v.readyState||0};"
+            )
+        except Exception:
+            return {
+                "exists": False,
+                "paused": True,
+                "ended": False,
+                "currentTime": 0,
+                "duration": 0,
+                "readyState": 0,
+            }
+
     def play_video(self):
         time.sleep(1)
-        for sel in [".vjs-big-play-button", "button.vjs-play-control", "#container video"]:
+        for attempt in range(3):
+            state = self._video_state()
+            if state.get("exists") and not state.get("paused") and not state.get("ended"):
+                return True
+            if state.get("ended"):
+                return False
+
             try:
-                btn = WebDriverWait(self.driver, 3).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, sel))
+                played = self.driver.execute_async_script(
+                    "var done=arguments[arguments.length-1];"
+                    "var v=document.querySelector('video');"
+                    "if(!v){done(false);return;}"
+                    "if(!v.paused&&!v.ended){done(true);return;}"
+                    "var p=v.play();"
+                    "if(p&&p.then){p.then(function(){done(true);}).catch(function(){done(false);});}"
+                    "else{setTimeout(function(){done(!v.paused&&!v.ended);},500);}"
                 )
-                ActionChains(self.driver).move_to_element(btn).pause(0.2).click().perform()
                 time.sleep(1)
-                if self.is_video_playing():
+                if played and self.is_video_playing():
                     return True
             except Exception:
-                continue
+                pass
+
+            for sel in [".vjs-big-play-button", "button.vjs-play-control"]:
+                if self.is_video_playing() or self.is_video_ended():
+                    return self.is_video_playing()
+                try:
+                    btn = WebDriverWait(self.driver, 2).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, sel))
+                    )
+                    classes = btn.get_attribute("class") or ""
+                    label = (
+                        btn.get_attribute("aria-label")
+                        or btn.get_attribute("title")
+                        or btn.text
+                        or ""
+                    )
+                    if "vjs-playing" in classes or "暂停" in label or "Pause" in label:
+                        continue
+                    ActionChains(self.driver).move_to_element(btn).pause(0.2).click().perform()
+                    time.sleep(1.5)
+                    if self.is_video_playing():
+                        return True
+                except Exception:
+                    continue
+
+            logger.warning("尝试恢复播放未成功（第%d次）", attempt + 1)
+
+        state = self._video_state()
+        logger.warning(
+            "视频仍未播放: exists=%s paused=%s ended=%s current=%.1f duration=%.1f readyState=%s",
+            state.get("exists"),
+            state.get("paused"),
+            state.get("ended"),
+            float(state.get("currentTime") or 0),
+            float(state.get("duration") or 0),
+            state.get("readyState"),
+        )
         return False
 
     def is_video_playing(self):

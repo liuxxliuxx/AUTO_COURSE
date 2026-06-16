@@ -17,6 +17,7 @@ from src.constants import (
     PLAY_BTN_CSS,
     PLAY_CONTROL_BTN_CSS,
     VIDEO_ELEMENT_CSS,
+    VIDEO_SRC_EXTRACTION_JS,
     WAIT_MEDIUM,
     WAIT_SHORT,
 )
@@ -156,3 +157,31 @@ class VideoController:
             return current_raw, duration_raw
         except Exception:
             return "0:00", "0:00"
+
+    def get_media_url(self):
+        """获取当前视频的媒体流 URL 和浏览器 Cookie。
+
+        通过 JS 注入从 <video> 元素的 src/currentSrc 或 <source> 子元素
+        中提取媒体 URL。排除 blob: URL（MSE 流，无法外部下载）。
+
+        Returns:
+            (media_url, cookie_header_string) — 如果提取失败返回 ("", "")
+        """
+        try:
+            url = self.driver.execute_script(VIDEO_SRC_EXTRACTION_JS)
+        except Exception:
+            return "", ""
+
+        if not url:
+            return "", ""
+
+        # 构建 Cookie 头
+        try:
+            cookies = self.driver.get_cookies()
+            cookie_str = "; ".join(
+                f"{c['name']}={c['value']}" for c in cookies if c.get("name")
+            )
+        except Exception:
+            cookie_str = ""
+
+        return url, cookie_str

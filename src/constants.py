@@ -207,3 +207,47 @@ CLICK_VIDEO_MAX_RETRIES = 10
 
 # 调度器轮询间隔（毫秒）
 AUTO_SCHEDULER_INTERVAL_MS = 30000
+
+# ============================================================================
+# 语音转文字 (Transcriber)
+# ============================================================================
+
+# 转录输出根目录下的文件夹名
+TRANSCRIPTION_ROOT_DIRNAME = "课程录音"
+
+# 课程备注为空时的默认课程名
+TRANSCRIPTION_DEFAULT_COURSE_NAME = "未命名课程"
+
+# 提取视频 URL 重试次数与间隔
+TRANSCRIPTION_URL_RETRIES = 3
+TRANSCRIPTION_URL_RETRY_INTERVAL = 2  # 秒
+
+# ffmpeg 下载超时（秒）
+TRANSCRIPTION_DOWNLOAD_TIMEOUT = 60
+
+# 转录 Worker 进程状态轮询间隔（秒）
+TRANSCRIPTION_POLL_INTERVAL = 1
+
+# GUI 转录状态轮询间隔（毫秒）
+GUI_TRANSCRIBE_POLL_MS = 500
+
+# 最小有效音频文件大小（字节），小于此值视为无音频轨道
+TRANSCRIPTION_MIN_WAV_SIZE_BYTES = 10_240  # 10KB
+
+# 调试模式：设为 True 保留临时 WAV 文件（不自动删除），方便排查录音问题
+TRANSCRIPTION_DEBUG_KEEP_WAV = True
+
+# 视频 src 提取的 JS 脚本
+VIDEO_SRC_EXTRACTION_JS = (
+    "var v=document.querySelector('video');"
+    "if(!v)return'';"
+    "var src=v.src||v.currentSrc||'';"
+    "if(src.startsWith('blob:')){"
+    "var sources=v.querySelectorAll('source');"
+    "for(var i=0;i<sources.length;i++){"
+    "if(sources[i].src&&!sources[i].src.startsWith('blob:'))return sources[i].src;"
+    "}"
+    "return'';"
+    "}"
+    "return src;"
+)

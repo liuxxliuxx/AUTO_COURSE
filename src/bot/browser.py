@@ -11,6 +11,7 @@ import logging
 import os
 import shutil
 import sys
+import tempfile
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -59,6 +60,11 @@ def create_driver():
     bundled_chrome = _get_bundled_chrome_path()
     bundled_driver = _get_bundled_chromedriver_path()
 
+    # --disable-web-security 要求独立 user-data-dir
+    user_data_dir = tempfile.mkdtemp(prefix="chrome_zhs_")
+    options.add_argument(f"--user-data-dir={user_data_dir}")
+    logger.info("Chrome user-data-dir: %s", user_data_dir)
+
     if bundled_chrome and bundled_driver:
         # ---- 优先使用捆绑的 Chrome for Testing ----
         logger.info("使用捆绑的 Chrome: %s", bundled_chrome)
@@ -87,6 +93,9 @@ def create_driver():
 def _build_chrome_options():
     """构建 Chrome Options 配置。"""
     options = Options()
+
+    # 允许跨域视频 captureStream()（MediaRecorder 录音需要）
+    options.add_argument("--disable-web-security")
 
     # 反检测参数
     options.add_argument("--disable-blink-features=AutomationControlled")

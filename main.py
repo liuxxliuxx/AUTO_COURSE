@@ -12,7 +12,7 @@ import time
 from datetime import datetime, time as dt_time
 
 import tkinter as tk
-from tkinter import scrolledtext, ttk
+from tkinter import filedialog, scrolledtext, ttk
 
 import keyring
 
@@ -51,6 +51,9 @@ class ZhiHuiShuGUI:
         self.bot_thread = None
         self.running = False
 
+        # 语音转文字
+        self.transcribe_queue = queue.Queue()
+
         # 自动调度器状态
         self._last_recorded_seconds = 0
         self._todays_watched_seconds = 0
@@ -63,6 +66,7 @@ class ZhiHuiShuGUI:
         self._load_saved_values()
         self._poll_log_queue()
         self._check_captcha_status()
+        self._poll_transcribe_queue()
 
     # ---------- keyring ----------
 
@@ -111,6 +115,19 @@ class ZhiHuiShuGUI:
         self.auto_end_var.set(self.db.get_setting("auto_end_time", "23:00"))
         self.auto_allday_var.set(self.db.get_setting("auto_allday", "0") == "1")
 
+        # 加载语音转文字设置
+        self.transcribe_enabled_var.set(
+            self.db.get_setting("transcribe_enabled", "0") == "1"
+        )
+        saved_transcribe_dir = self.db.get_setting("transcribe_base_dir", "")
+        if saved_transcribe_dir:
+            self.transcribe_dir_var.set(saved_transcribe_dir)
+
+        # 加载"从上次进度开始"设置
+        self.from_last_progress_var.set(
+            self.db.get_setting("from_last_progress", "0") == "1"
+        )
+
         # 加载今日进度并启动调度器轮询
         self._today_date = time.strftime("%Y-%m-%d")
         self._todays_watched_seconds = self.db.get_daily_progress(self._today_date)
@@ -142,6 +159,20 @@ class ZhiHuiShuGUI:
         self.db.set_setting("auto_end_time", self.auto_end_var.get().strip() or "23:00")
         self.db.set_setting("auto_allday", "1" if self.auto_allday_var.get() else "0")
 
+        # 保存语音转文字设置
+        self.db.set_setting(
+            "transcribe_enabled", "1" if self.transcribe_enabled_var.get() else "0"
+        )
+        transcribe_dir = self.transcribe_dir_var.get().strip()
+        if transcribe_dir:
+            self.db.set_setting("transcribe_base_dir", transcribe_dir)
+
+        # 保存"从上次进度开始"
+        self.db.set_setting(
+            "from_last_progress",
+            "1" if self.from_last_progress_var.get() else "0",
+        )
+
         self._refresh_url_history()
 
     def _refresh_url_history(self):
@@ -161,11 +192,35 @@ class ZhiHuiShuGUI:
             url, note = self._video_history_data[idx]
             self.video_url_var.set(url)
             self.course_note_var.set(note)
+            self._update_last_progress_display()
 
     def _on_video_url_changed(self, *args):
         current_url = self.video_url_var.get().strip()
         note = self.db.get_note_for_url(current_url)
         self.course_note_var.set(note)
+        self._update_last_progress_display()
+
+    def _update_last_progress_display(self):
+        """根据当前课程备注查询上次进度并更新显示。"""
+        note = self.course_note_var.get().strip()
+        if not note:
+            self.last_progress_label.config(text="")
+            return
+        last_title, updated_at = self.db.get_course_progress(note)
+        if last_title:
+            label_text = f"上次已完成: {last_title}"
+            if updated_at:
+                label_text += f" ({updated_at})"
+            self.last_progress_label.config(text=label_text, foreground="blue")
+        else:
+            self.last_progress_label.config(text="无进度记录", foreground="gray")
+
+    def _on_from_last_progress_toggled(self):
+        """从上次进度开始复选框切换时保存设置。"""
+        self.db.set_setting(
+            "from_last_progress",
+            "1" if self.from_last_progress_var.get() else "0",
+        )
 
     # ---------- UI ----------
 
@@ -244,7 +299,50 @@ class ZhiHuiShuGUI:
             variable=self.skip_completed_var,
         ).grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=(5, 0))
 
+        # 从上次进度开始
+        self.from_last_progress_var = tk.BooleanVar(value=False)
+        self.from_last_progress_cb = ttk.Checkbutton(
+            url_frame, text="从上次进度开始",
+            variable=self.from_last_progress_var,
+            command=self._on_from_last_progress_toggled,
+        )
+        self.from_last_progress_cb.grid(
+            row=6, column=0, columnspan=2, sticky=tk.W, pady=(5, 0)
+        )
+        self.last_progress_label = ttk.Label(
+            url_frame, text="", foreground="gray"
+        )
+        self.last_progress_label.grid(
+            row=6, column=1, sticky=tk.E, pady=(5, 0)
+        )
+
         url_frame.columnconfigure(1, weight=1)
+
+        # 语音转文字设置
+        transcribe_frame = ttk.LabelFrame(self.root, text="语音转文字", padding=10)
+        transcribe_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        self.transcribe_enabled_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            transcribe_frame, text="启用语音转文字（需安装 ffmpeg 和 FunASR）",
+            variable=self.transcribe_enabled_var,
+        ).grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=(0, 5))
+
+        ttk.Label(transcribe_frame, text="保存路径:").grid(
+            row=1, column=0, sticky=tk.W, pady=2
+        )
+        self.transcribe_dir_var = tk.StringVar()
+        self.transcribe_dir_entry = ttk.Entry(
+            transcribe_frame, textvariable=self.transcribe_dir_var, width=55,
+            state="readonly",
+        )
+        self.transcribe_dir_entry.grid(row=1, column=1, sticky=tk.EW, pady=2, padx=(0, 5))
+        self.transcribe_browse_btn = ttk.Button(
+            transcribe_frame, text="浏览", command=self._on_browse_transcribe_dir,
+            width=8,
+        )
+        self.transcribe_browse_btn.grid(row=1, column=2, pady=2)
+        transcribe_frame.columnconfigure(1, weight=1)
 
         # 自动设置
         auto_frame = ttk.LabelFrame(self.root, text="自动设置", padding=10)
@@ -301,6 +399,11 @@ class ZhiHuiShuGUI:
         )
         self.status_label.pack(side=tk.LEFT, padx=(0, 20))
 
+        self.transcribe_status_label = ttk.Label(
+            status_frame, text="转录: 未启用", foreground="gray"
+        )
+        self.transcribe_status_label.pack(side=tk.LEFT, padx=(0, 20))
+
         self.captcha_btn = ttk.Button(
             status_frame, text="没有需确认的验证码",
             command=self._on_confirm_captcha, state=tk.DISABLED,
@@ -321,6 +424,26 @@ class ZhiHuiShuGUI:
 
     def _toggle_pwd_visibility(self):
         self.password_entry.config(show="" if self.show_pwd_var.get() else "●")
+
+    # ---------- transcription ----------
+
+    def _on_browse_transcribe_dir(self):
+        """打开目录选择对话框，设置转录保存路径。"""
+        path = filedialog.askdirectory(title="选择语音转文字保存目录")
+        if path:
+            self.transcribe_dir_var.set(path)
+
+    def _poll_transcribe_queue(self):
+        """轮询转录状态队列，更新 GUI 标签。"""
+        try:
+            while True:
+                status = self.transcribe_queue.get_nowait()
+                self.transcribe_status_label.config(
+                    text=status["text"], foreground=status["color"]
+                )
+        except queue.Empty:
+            pass
+        self.root.after(500, self._poll_transcribe_queue)
 
     # ---------- log polling ----------
 
@@ -430,6 +553,18 @@ class ZhiHuiShuGUI:
 
         self._save_all_values()
 
+        # 语音转文字参数
+        enable_transcribe = self.transcribe_enabled_var.get()
+        transcribe_dir = self.transcribe_dir_var.get().strip()
+        course_note = self.course_note_var.get().strip()
+
+        # 课程进度参数
+        from_last = self.from_last_progress_var.get()
+        last_title = ""
+        if from_last and course_note:
+            last_title, _ = self.db.get_course_progress(course_note)
+            last_title = last_title or ""
+
         self.bot = ZhiHuiShuBot(
             base_url=base_url,
             username=username,
@@ -442,7 +577,23 @@ class ZhiHuiShuGUI:
             captcha_event=self.captcha_needed,
             captcha_done_event=self.captcha_done,
             stop_event=self.stop_event,
+            enable_transcription=enable_transcribe and bool(transcribe_dir),
+            transcribe_base_dir=transcribe_dir,
+            course_note=course_note,
+            transcribe_status_queue=self.transcribe_queue,
+            from_last_progress=from_last and bool(last_title),
+            last_video_title=last_title,
         )
+
+        # 更新转录状态标签
+        if enable_transcribe and transcribe_dir:
+            self.transcribe_status_label.config(
+                text="转录: 等待中", foreground="gray"
+            )
+        else:
+            self.transcribe_status_label.config(
+                text="转录: 未启用", foreground="gray"
+            )
 
         # 连接钩子：将视频进度写入数据库
         self._last_recorded_seconds = 0
@@ -471,6 +622,11 @@ class ZhiHuiShuGUI:
         self.bot.on_video_end = _on_video_end
         self.bot.on_bot_stop = _on_bot_stop
 
+        # 课程进度回调（转录完成后自动保存）
+        self.bot._on_course_progress_updated = (
+            lambda cn, vt: self.db.save_course_progress(cn, vt)
+        )
+
         self.bot_thread = threading.Thread(target=self.bot.run, daemon=True)
         self.bot_thread.start()
 
@@ -492,6 +648,11 @@ class ZhiHuiShuGUI:
         self.start_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
         self.captcha_btn.config(state=tk.DISABLED)
+        # 恢复转录状态
+        if self.transcribe_enabled_var.get():
+            self.transcribe_status_label.config(text="转录: 等待中", foreground="gray")
+        else:
+            self.transcribe_status_label.config(text="转录: 未启用", foreground="gray")
 
     # ---------- auto-scheduler ----------
 

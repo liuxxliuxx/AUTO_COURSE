@@ -40,6 +40,13 @@ class Database:
                 watched_seconds INTEGER NOT NULL DEFAULT 0
             )
         """)
+        self.conn.execute("""
+            CREATE TABLE IF NOT EXISTS course_progress (
+                course_note TEXT PRIMARY KEY,
+                last_video_title TEXT NOT NULL,
+                updated_at TEXT DEFAULT (datetime('now'))
+            )
+        """)
         self.conn.commit()
 
         # 兼容旧库：补充可能缺失的字段和约束
@@ -139,6 +146,35 @@ class Database:
             "INSERT INTO daily_progress (date, watched_seconds) VALUES (?, ?) "
             "ON CONFLICT(date) DO UPDATE SET watched_seconds = watched_seconds + ?",
             (date_str, seconds_delta, seconds_delta),
+        )
+        self.conn.commit()
+
+    # ---------- course progress (per-course last completed video) ----------
+
+    def get_course_progress(self, course_note):
+        """获取指定课程的上次完成进度。
+
+        Returns:
+            (last_video_title, updated_at) 或 (None, None)
+        """
+        if not course_note:
+            return None, None
+        cursor = self.conn.execute(
+            "SELECT last_video_title, updated_at FROM course_progress "
+            "WHERE course_note = ?",
+            (course_note,),
+        )
+        row = cursor.fetchone()
+        return (row[0], row[1]) if row else (None, None)
+
+    def save_course_progress(self, course_note, video_title):
+        """保存课程的最后完成视频标题。"""
+        if not course_note or not video_title:
+            return
+        self.conn.execute(
+            "INSERT OR REPLACE INTO course_progress (course_note, last_video_title, updated_at) "
+            "VALUES (?, ?, datetime('now'))",
+            (course_note, video_title),
         )
         self.conn.commit()
 

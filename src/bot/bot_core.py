@@ -17,6 +17,7 @@ from src.bot.login.upc import UPCLogin
 from src.bot.login.zhihuishu import ZhihuishuLogin
 from src.bot.quiz import QuizHandler
 from src.bot.video import VideoController
+from src.transcriber import TranscriberManager
 from src.constants import (
     EXTRA_LONG_SLEEP,
     LONG_SLEEP,
@@ -55,6 +56,12 @@ class ZhiHuiShuBot:
         captcha_event=None,
         captcha_done_event=None,
         stop_event=None,
+        enable_transcription=False,
+        transcribe_base_dir="",
+        course_note="",
+        transcribe_status_queue=None,
+        from_last_progress=False,
+        last_video_title="",
     ):
         self.base_url = base_url
         self.username = username
@@ -71,6 +78,16 @@ class ZhiHuiShuBot:
         self._captcha_done = captcha_done_event
         self._stop_event = stop_event
 
+        # 语音转文字
+        self._enable_transcription = enable_transcription
+        self._transcribe_base_dir = transcribe_base_dir
+        self._course_note = course_note
+        self._transcribe_status_queue = transcribe_status_queue
+
+        # 课程进度（从上次结束位置开始）
+        self._from_last_progress = from_last_progress
+        self._last_video_title = last_video_title
+
         # 子模块实例（run() 中初始化，因为需要先创建 driver）
         self.driver = None
         self.wait = None
@@ -79,6 +96,7 @@ class ZhiHuiShuBot:
         self.video = None
         self.course = None
         self.login_strategy = None
+        self.transcriber = None
 
         # --- Hook 回调（供外部扩展，默认无操作） ---
         self.on_bot_start = lambda *a, **kw: None
@@ -120,8 +138,14 @@ class ZhiHuiShuBot:
             # 3. 导航到课程页面
             self.course.navigate(self.video_url)
 
-            # 4. 获取第一个待处理视频（None 表示从列表头开始）
-            title, video_el = self.course.get_next_video_after(None)
+            # 4. 获取第一个待处理视频
+            # 如果启用了"从上次进度开始"，从上次完成的课后开始找
+            if self._from_last_progress and self._last_video_title:
+                logger.info("从上次进度开始: '%s' 之后", self._last_video_title)
+                title, video_el = self.course.get_next_video_after(self._last_video_title)
+            else:
+                title, video_el = self.course.get_next_video_after(None)
+
             if not title:
                 logger.info("所有课程已完成！")
                 self._show_completion_report(0)
@@ -148,6 +172,10 @@ class ZhiHuiShuBot:
                     if self._should_stop():
                         break
 
+                # 语音转文字：在确认点击成功后开始提取音频 URL
+                if self.transcriber:
+                    self.transcriber.on_video_begin(title)
+
                 # 播放并监控
                 success = self._monitor_single_video(title)
 
@@ -155,6 +183,12 @@ class ZhiHuiShuBot:
                 self._accumulate_duration()
 
                 self.on_video_end(title, success)
+
+                # 语音转文字：等待下载 → 入队转录 → 阻塞等待转录完成
+                if self.transcriber and success:
+                    self.transcriber.on_video_end(title)
+                    # 阻塞等待转录完成后再继续下一课
+                    self.transcriber.wait_for_current_job()
 
                 if success:
                     completed_this_run += 1
@@ -180,6 +214,8 @@ class ZhiHuiShuBot:
             logger.error("脚本运行出错: %s", e, exc_info=True)
         finally:
             self.on_bot_stop()
+            if self.transcriber:
+                self.transcriber.shutdown()
             if self.driver:
                 logger.info("正在关闭浏览器...")
                 self.driver.quit()
@@ -212,6 +248,25 @@ class ZhiHuiShuBot:
             skip_completed=self.skip_completed,
         )
 
+        # 语音转文字模块
+        if self._enable_transcription and self._transcribe_base_dir:
+            self.transcriber = TranscriberManager(
+                self.driver,
+                gui_status_queue=self._transcribe_status_queue,
+                on_progress_saved=self._on_transcribe_saved,
+                should_stop=self._should_stop,
+            )
+            self.transcriber.set_base_dir(self._transcribe_base_dir)
+            if self._course_note:
+                self.transcriber.set_course_name(self._course_note)
+            if self.transcriber.available:
+                logger.info("语音转文字已启用（ffmpeg: 已就绪）")
+            else:
+                logger.warning("语音转文字：未检测到 ffmpeg，已禁用")
+                self.transcriber = None
+        else:
+            self.transcriber = None
+
         # 根据登录方式选择策略
         if self.login_method == "upc":
             self.login_strategy = UPCLogin(
@@ -231,6 +286,11 @@ class ZhiHuiShuBot:
                 self.logged_url,
                 captcha_handler=self.captcha,
             )
+
+    def _on_transcribe_saved(self, course_note, video_title):
+        """转录完成回调：通知外部保存课程进度。"""
+        if hasattr(self, '_on_course_progress_updated'):
+            self._on_course_progress_updated(course_note, video_title)
 
     # ========================================================================
     # 视频处理

@@ -1,17 +1,14 @@
 """
-音频捕获模块 —— 通过浏览器 MediaRecorder API 录制视频音频轨道。
+音频捕获模块 —— 两种方式获取课程视频的音频轨道。
 
-由于智慧树 CDN (wsvideo.zhihuishu.com) 需要浏览器级别的鉴权
-（非简单 Cookie 可过），外部 ffmpeg 下载会返回 403 Forbidden。
-改用浏览器内建 MediaRecorder 录制，录完后通过 CDP 触发浏览器下载
-将 WebM 文件直接写入磁盘。
+方式一：MediaRecorder 浏览器内录
+    通过 video.captureStream() + MediaRecorder API 实时录制浏览器播放的音频，
+    录完后通过 CDP 触发浏览器下载 WebM 文件，再用 ffmpeg 转 WAV。
 
-录制流程：
-    1. 视频开始播放后，注入 JS 启动 MediaRecorder
-    2. 视频播放期间，数据块累积在浏览器内存
-    3. 视频结束时，注入 JS 停止录制 + 创建下载链接 + 点击下载
-    4. CDP Page.downloadBehavior 捕获下载，文件写入指定目录
-    5. ffmpeg 将 WebM 转为 16kHz mono WAV → FunASR 转录
+方式二：直接下载视频提取音轨（类似 IDM）
+    从 Selenium 提取浏览器 cookies 和 Referer，用 requests 直接下载
+    CDN 上的 mp4 视频文件，然后用 ffmpeg 提取音频轨道。
+    无需 1x 实时播放，下载速度取决于网速（比实时播放快很多）。
 """
 
 import logging
@@ -727,3 +724,150 @@ class AudioRecorder:
     @property
     def output_path(self) -> str | None:
         return self._output_wav
+
+
+# ============================================================================
+# 直接下载视频提取音轨（类似 IDM 的工作方式）
+# ============================================================================
+
+
+def download_video_audio(driver, video_url: str, output_wav: str, ffmpeg_path: str) -> bool:
+    """从浏览器提取 cookies，用 requests 直接下载视频，ffmpeg 提取音轨。
+
+    模仿 IDM 的工作原理：带上浏览器会话的 cookies 和 Referer，
+    绕过 CDN 的 403 鉴权检查。
+
+    Args:
+        driver: Selenium WebDriver（用于提取 cookies 和 User-Agent）
+        video_url: 视频资源 URL（从 video.src 获取）
+        output_wav: 输出 WAV 文件的绝对路径
+        ffmpeg_path: ffmpeg 可执行文件路径
+
+    Returns:
+        True 表示 WAV 已成功生成
+    """
+    import requests
+
+    if not video_url or not video_url.startswith("http"):
+        logger.error("无效的视频 URL: %s", video_url)
+        return False
+
+    # 1. 从浏览器提取 cookies
+    try:
+        selenium_cookies = driver.get_cookies()
+    except Exception as e:
+        logger.error("无法获取浏览器 cookies: %s", e)
+        return False
+
+    # 转换为 requests 可用的 dict
+    cookies_dict = {}
+    for c in selenium_cookies:
+        # 只保留和 video URL 域名匹配的 cookie（或全部保留让 requests 自行匹配）
+        cookies_dict[c["name"]] = c["value"]
+
+    # 2. 构造请求头（模拟浏览器）
+    user_agent = driver.execute_script("return navigator.userAgent;") or (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    )
+    current_page = driver.execute_script("return window.location.href;") or ""
+    headers = {
+        "User-Agent": user_agent,
+        "Referer": current_page or "https://studyvideoh5.zhihuishu.com/",
+        "Origin": (
+            current_page.rsplit("/", 2)[0] if current_page
+            else "https://studyvideoh5.zhihuishu.com"
+        ),
+        "Accept": "*/*",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+        "Range": "bytes=0-",  # 部分 CDN 需要 Range 头
+    }
+
+    logger.info("开始下载视频: %s", video_url[:100])
+
+    # 3. 下载视频（流式写入临时文件）
+    tmp_video = output_wav + ".mp4.tmp"
+    try:
+        resp = requests.get(
+            video_url,
+            headers=headers,
+            cookies=cookies_dict,
+            stream=True,
+            timeout=(30, 600),  # (connect, read) 超时
+        )
+        resp.raise_for_status()
+
+        total = int(resp.headers.get("Content-Length", 0))
+        downloaded = 0
+        last_log = 0
+        with open(tmp_video, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=1024 * 1024):  # 1MB
+                f.write(chunk)
+                downloaded += len(chunk)
+                # 每 10MB 输出一次进度
+                if downloaded - last_log >= 10 * 1024 * 1024:
+                    last_log = downloaded
+                    if total:
+                        pct = downloaded / total * 100
+                        logger.info(
+                            "下载进度: %.1fMB / %.1fMB (%.0f%%)",
+                            downloaded / 1048576, total / 1048576, pct,
+                        )
+                    else:
+                        logger.info("下载进度: %.1fMB", downloaded / 1048576)
+
+        file_size = os.path.getsize(tmp_video)
+        if file_size < 1024 * 1024:  # < 1MB 可能不是视频
+            logger.error("下载文件过小 (%d bytes)，可能鉴权失败", file_size)
+            os.remove(tmp_video)
+            return False
+
+        logger.info("视频下载完成: %.1fMB", file_size / 1048576)
+
+    except requests.RequestException as e:
+        logger.error("视频下载失败: %s", e)
+        if os.path.exists(tmp_video):
+            os.remove(tmp_video)
+        return False
+
+    # 4. ffmpeg 提取音轨 → 16kHz mono WAV
+    logger.info("提取音轨: %s → %s", os.path.basename(tmp_video), os.path.basename(output_wav))
+    os.makedirs(os.path.dirname(output_wav), exist_ok=True)
+
+    cmd = [
+        ffmpeg_path, "-y",
+        "-i", tmp_video,
+        "-vn",                     # 丢弃视频流
+        "-acodec", "pcm_s16le",    # 16-bit PCM
+        "-ar", "16000",            # 16kHz
+        "-ac", "1",                # mono
+        "-loglevel", "error",
+        output_wav,
+    ]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        if result.returncode != 0:
+            logger.error("ffmpeg 提取音轨失败: %s", result.stderr[:500])
+            return False
+
+        if os.path.isfile(output_wav) and os.path.getsize(output_wav) > 0:
+            wav_size = os.path.getsize(output_wav)
+            duration = wav_size / 32000  # 16kHz * 16bit * 1ch = 32000 bytes/s
+            logger.info("音轨提取完成: %s (%.2fMB, ~%d:%02d)",
+                        os.path.basename(output_wav),
+                        wav_size / 1048576,
+                        int(duration // 60), int(duration % 60))
+        else:
+            logger.error("WAV 输出为空")
+            return False
+    except subprocess.TimeoutExpired:
+        logger.error("ffmpeg 提取音轨超时（视频可能较大）")
+        return False
+    finally:
+        # 清理临时视频文件
+        try:
+            os.remove(tmp_video)
+        except OSError:
+            pass
+
+    return True

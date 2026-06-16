@@ -23,7 +23,7 @@ from src.constants import (
     TRANSCRIPTION_MIN_WAV_SIZE_BYTES,
     TRANSCRIPTION_ROOT_DIRNAME,
 )
-from src.transcriber.audio_capture import AudioRecorder, find_ffmpeg
+from src.transcriber.audio_capture import AudioRecorder, download_video_audio, find_ffmpeg
 from src.transcriber.transcription_worker import transcription_worker_main
 
 logger = logging.getLogger(__name__)
@@ -63,6 +63,7 @@ class TranscriberManager:
         driver: Selenium WebDriver 实例
         gui_status_queue: 用于向 GUI 推送状态更新（dict: {text, color}）
         on_progress_saved: 转录完成后的回调 (course_note, video_title)
+        use_download: True=直接下载视频提取音轨（仅转录模式），False=MediaRecorder实时录制
     """
 
     def __init__(
@@ -71,19 +72,27 @@ class TranscriberManager:
         gui_status_queue: std_queue.Queue | None = None,
         on_progress_saved=None,
         should_stop=None,
+        use_download: bool = False,
     ):
         self._driver = driver
         self._gui_queue = gui_status_queue
         self._on_progress_saved = on_progress_saved
         self._should_stop = should_stop or (lambda: False)
+        self._use_download = use_download
 
         # ---- ffmpeg ----
         self._ffmpeg_path = find_ffmpeg()
-        self._recorder = (
-            AudioRecorder(driver, self._ffmpeg_path)
-            if self._ffmpeg_path
-            else None
-        )
+        self._has_ffmpeg = self._ffmpeg_path is not None
+
+        # 仅在实时录制模式需要 AudioRecorder；下载模式不需要
+        if use_download:
+            self._recorder = None  # 不使用 MediaRecorder
+        else:
+            self._recorder = (
+                AudioRecorder(driver, self._ffmpeg_path)
+                if self._has_ffmpeg
+                else None
+            )
 
         # ---- 路径配置 ----
         self._base_dir: str = ""
@@ -113,7 +122,7 @@ class TranscriberManager:
         self._current_job_done: bool = False
 
         # ---- 启动 Worker ----
-        if self._recorder is not None:
+        if self._has_ffmpeg:
             self._start_worker()
 
     # ======================================================================
@@ -122,7 +131,13 @@ class TranscriberManager:
 
     @property
     def available(self) -> bool:
-        """ffmpeg 是否可用，且 worker 是否健康。"""
+        """转录是否可用。
+
+        下载模式：需要 ffmpeg + worker 健康。
+        实时录制模式：需要 AudioRecorder + worker 健康。
+        """
+        if self._use_download:
+            return self._has_ffmpeg and self._worker_healthy
         return self._recorder is not None and self._worker_healthy
 
     @property
@@ -345,6 +360,97 @@ class TranscriberManager:
             text = f"转录: 准备录音 [{title[:20]}]"
 
         self._push_status(text, "blue")
+
+    # ======================================================================
+    # 直接下载视频提取音轨（类似 IDM，用于仅转录模式）
+    # ======================================================================
+
+    def transcribe_via_download(self, title: str) -> bool:
+        """下载视频 → 提取音轨 → 入队转录 → 阻塞等待完成。
+
+        无需 1x 实时播放，下载速度取决于网速。
+        用于仅转录模式——跳过视频监控，直接获取音频。
+
+        Returns:
+            True 表示转录已入队并完成
+        """
+        if not self.available:
+            return False
+
+        self._ensure_dirs()
+
+        # 1. 获取当前视频的媒体 URL（重试等待视频元素加载 src）
+        video_url = ""
+        for attempt in range(10):
+            try:
+                video_url = self._driver.execute_script(
+                    "var v=document.querySelector('video');"
+                    "return v&&(v.src||v.currentSrc)||'';"
+                ) or ""
+            except Exception as e:
+                logger.error("获取视频 URL 失败: %s", e)
+                break
+            if video_url and video_url.startswith("http"):
+                break
+            time.sleep(2)
+
+        if not video_url or not video_url.startswith("http"):
+            logger.error("视频 URL 无效（%d次重试后）: %s", attempt + 1, video_url[:120])
+            self._push_status(f"转录: URL无效 [{title[:20]}]", "red")
+            self._failed_count += 1
+            self._current_job_done = True
+            return False
+
+        logger.info("准备下载视频音频: %s", title)
+
+        # 2. 下载 + 提取音轨
+        wav_path = os.path.join(self._temp_dir, f"{uuid.uuid4().hex}.wav")
+        self._push_status(
+            f"转录: 下载中 [{title[:20]}]", "blue"
+        )
+
+        ok = download_video_audio(
+            self._driver, video_url, wav_path, self._ffmpeg_path,
+        )
+
+        if not ok:
+            logger.error("下载/提取音轨失败: %s", title)
+            self._failed_count += 1
+            self._current_job_done = True
+            self._push_status(
+                f"转录: {self._completed_count} 完成 {self._failed_count} 失败", "red"
+            )
+            self._cleanup_temp(wav_path)
+            return False
+
+        # 检查文件大小
+        if os.path.getsize(wav_path) < TRANSCRIPTION_MIN_WAV_SIZE_BYTES:
+            logger.warning("音频文件过小，跳过转录: %s", title)
+            self._failed_count += 1
+            self._current_job_done = True
+            self._cleanup_temp(wav_path)
+            return False
+
+        # 3. 入队转录 + 等待完成
+        safe_title = sanitize_filename(title)
+        txt_path = os.path.join(self._course_dir, f"{safe_title}.txt")
+        metadata = {
+            "course_name": self._course_name,
+            "video_title": title,
+            "output_txt": txt_path,
+        }
+
+        self._input_queue.put((wav_path, metadata))
+        self._pending_jobs[wav_path] = metadata
+        self._current_job_wav = wav_path
+        self._current_job_done = False
+        self._push_status(
+            f"转录: 转文字中 [{title[:20]}]", "blue"
+        )
+
+        # 阻塞等待转录完成
+        self.wait_for_current_job()
+        return True
 
     # ======================================================================
     # 阻塞等待转录完成

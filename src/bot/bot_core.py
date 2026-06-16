@@ -62,6 +62,7 @@ class ZhiHuiShuBot:
         transcribe_status_queue=None,
         from_last_progress=False,
         last_video_title="",
+        transcribe_only=False,
     ):
         self.base_url = base_url
         self.username = username
@@ -87,6 +88,9 @@ class ZhiHuiShuBot:
         # 课程进度（从上次结束位置开始）
         self._from_last_progress = from_last_progress
         self._last_video_title = last_video_title
+
+        # 仅转录模式：只录音转文字，不累计刷课时长
+        self._transcribe_only = transcribe_only
 
         # 子模块实例（run() 中初始化，因为需要先创建 driver）
         self.driver = None
@@ -120,8 +124,9 @@ class ZhiHuiShuBot:
 
         流程：启动浏览器 → 登录 → 导航到课程页 → 逐个播放视频 → 清理
         """
+        mode_desc = "仅转录" if self._transcribe_only else "自动刷课"
         logger.info("=" * 50)
-        logger.info("智慧树自动刷课脚本启动")
+        logger.info("智慧树%s脚本启动", mode_desc)
         logger.info("=" * 50)
 
         try:
@@ -173,32 +178,57 @@ class ZhiHuiShuBot:
                         break
 
                 # 语音转文字：在确认点击成功后开始提取音频 URL
-                if self.transcriber:
+                if self.transcriber and not self._transcribe_only:
                     self.transcriber.on_video_begin(title)
 
-                # 播放并监控
-                success = self._monitor_single_video(title)
+                if self._transcribe_only:
+                    # ---- 仅转录模式：下载视频提取音轨（无需实时播放）----
+                    # 等待视频元素加载出 src
+                    time.sleep(LONG_SLEEP)
 
-                # 累计时长
-                self._accumulate_duration()
+                    # 处理可能出现的弹题（点击课程后自动弹出）
+                    quiz_dialog = self.quiz.find_dialog()
+                    if quiz_dialog:
+                        logger.info("检测到弹题测验")
+                        self.quiz.handle(quiz_dialog)
+                        time.sleep(LONG_SLEEP)
 
-                self.on_video_end(title, success)
+                    if self.transcriber:
+                        success = self.transcriber.transcribe_via_download(title)
+                    else:
+                        logger.warning("转录不可用，跳过: %s", title)
+                        success = False
 
-                # 语音转文字：等待下载 → 入队转录 → 阻塞等待转录完成
-                if self.transcriber and success:
-                    self.transcriber.on_video_end(title)
-                    # 阻塞等待转录完成后再继续下一课
-                    self.transcriber.wait_for_current_job()
+                    self.on_video_end(title, success)
+                else:
+                    # ---- 正常刷课模式：播放并监控视频 ----
+                    success = self._monitor_single_video(title)
+
+                    # 累计时长
+                    self._accumulate_duration()
+
+                    self.on_video_end(title, success)
+
+                    # 语音转文字：等待下载 → 入队转录 → 阻塞等待转录完成
+                    if self.transcriber and success:
+                        self.transcriber.on_video_end(title)
+                        self.transcriber.wait_for_current_job()
 
                 if success:
                     completed_this_run += 1
-                    logger.info("已完成课程: %s", title)
+                    if self._transcribe_only:
+                        logger.info("已完成转录: %s", title)
+                    else:
+                        logger.info("已完成课程: %s", title)
                 else:
-                    logger.warning("课程超时，仍计入完成: %s", title)
-                    completed_this_run += 1
+                    if self._transcribe_only:
+                        logger.warning("转录失败: %s", title)
+                    else:
+                        logger.warning("课程超时，仍计入完成: %s", title)
+                        completed_this_run += 1
 
-                # 检查时长限制
-                if self._time_limit_reached():
+                # 检查时长限制（仅刷课模式）
+                if not self._transcribe_only and self._time_limit_reached():
                     break
 
                 time.sleep(EXTRA_LONG_SLEEP)
@@ -255,12 +285,14 @@ class ZhiHuiShuBot:
                 gui_status_queue=self._transcribe_status_queue,
                 on_progress_saved=self._on_transcribe_saved,
                 should_stop=self._should_stop,
+                use_download=self._transcribe_only,
             )
             self.transcriber.set_base_dir(self._transcribe_base_dir)
             if self._course_note:
                 self.transcriber.set_course_name(self._course_note)
             if self.transcriber.available:
-                logger.info("语音转文字已启用（ffmpeg: 已就绪）")
+                mode = "下载模式" if self._transcribe_only else "实时录制"
+                logger.info("语音转文字已启用（ffmpeg: 已就绪, %s）", mode)
             else:
                 logger.warning("语音转文字：未检测到 ffmpeg，已禁用")
                 self.transcriber = None
@@ -316,7 +348,10 @@ class ZhiHuiShuBot:
 
         在循环中同时处理弹题、验证码、暂停恢复、结束检测。
         """
-        logger.info("开始监控视频播放: %s", title)
+        if self._transcribe_only:
+            logger.info("开始录音转录: %s", title)
+        else:
+            logger.info("开始监控视频播放: %s", title)
 
         elapsed = 0
         last_captcha_check = -VIDEO_MONITOR_CAPTCHA_INTERVAL
@@ -374,12 +409,18 @@ class ZhiHuiShuBot:
             # 定期日志
             if elapsed % 30 == 0:
                 current, duration = self.video.get_progress()
-                logger.info("进度: %s/%s (已监控 %ds)", current, duration, elapsed)
+                if self._transcribe_only:
+                    logger.info("录音: %s/%s (已录 %ds)", current, duration, elapsed)
+                else:
+                    logger.info("进度: %s/%s (已监控 %ds)", current, duration, elapsed)
 
             time.sleep(VIDEO_MONITOR_CHECK_INTERVAL)
             elapsed += VIDEO_MONITOR_CHECK_INTERVAL
 
-        logger.warning("视频监控超时: %s", title)
+        if self._transcribe_only:
+            logger.warning("录音超时: %s", title)
+        else:
+            logger.warning("视频监控超时: %s", title)
         self._last_monitor_elapsed = elapsed
         return False
 
@@ -416,5 +457,8 @@ class ZhiHuiShuBot:
 
     def _show_completion_report(self, count):
         logger.info("=" * 50)
-        logger.info("本次运行完成 %d 个课程视频", count)
+        if self._transcribe_only:
+            logger.info("本次运行转录完成 %d 个课程视频", count)
+        else:
+            logger.info("本次运行完成 %d 个课程视频", count)
         logger.info("=" * 50)

@@ -123,6 +123,11 @@ class ZhiHuiShuGUI:
         if saved_transcribe_dir:
             self.transcribe_dir_var.set(saved_transcribe_dir)
 
+        # 加载"开启刷课"设置
+        self.brush_enabled_var.set(
+            self.db.get_setting("brush_enabled", "1") == "1"
+        )
+
         # 加载"从上次进度开始"设置
         self.from_last_progress_var.set(
             self.db.get_setting("from_last_progress", "0") == "1"
@@ -132,6 +137,7 @@ class ZhiHuiShuGUI:
         self._today_date = time.strftime("%Y-%m-%d")
         self._todays_watched_seconds = self.db.get_daily_progress(self._today_date)
         self._update_progress_label()
+        self._on_brush_mode_toggled()  # 同步初始状态
         self._auto_scheduler_tick()
 
     def _save_all_values(self):
@@ -166,6 +172,11 @@ class ZhiHuiShuGUI:
         transcribe_dir = self.transcribe_dir_var.get().strip()
         if transcribe_dir:
             self.db.set_setting("transcribe_base_dir", transcribe_dir)
+
+        # 保存"开启刷课"
+        self.db.set_setting(
+            "brush_enabled", "1" if self.brush_enabled_var.get() else "0"
+        )
 
         # 保存"从上次进度开始"
         self.db.set_setting(
@@ -214,6 +225,19 @@ class ZhiHuiShuGUI:
             self.last_progress_label.config(text=label_text, foreground="blue")
         else:
             self.last_progress_label.config(text="无进度记录", foreground="gray")
+
+    def _on_brush_mode_toggled(self):
+        """开启刷课复选框切换时更新启动按钮状态。"""
+        self._update_start_button_state()
+
+    def _update_start_button_state(self):
+        """根据复选框组合更新启动按钮状态。两个都不勾选时禁用。"""
+        brush_on = self.brush_enabled_var.get()
+        transcribe_on = self.transcribe_enabled_var.get()
+        if not brush_on and not transcribe_on:
+            self.start_btn.config(state=tk.DISABLED)
+        else:
+            self.start_btn.config(state=tk.NORMAL)
 
     def _on_from_last_progress_toggled(self):
         """从上次进度开始复选框切换时保存设置。"""
@@ -292,12 +316,21 @@ class ZhiHuiShuGUI:
         )
         self.auto_progress_label.pack(side=tk.RIGHT)
 
+        # 开启刷课复选框（控制是否完整观看视频刷课时）
+        self.brush_enabled_var = tk.BooleanVar(value=True)
+        self.brush_enabled_cb = ttk.Checkbutton(
+            url_frame, text="开启刷课（取消后仅转录，不刷课时）",
+            variable=self.brush_enabled_var,
+            command=self._on_brush_mode_toggled,
+        )
+        self.brush_enabled_cb.grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=(5, 0))
+
         # 跳过已学课程复选框
         self.skip_completed_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             url_frame, text="跳过已学课程（取消勾选后将依次学习全部课程）",
             variable=self.skip_completed_var,
-        ).grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=(5, 0))
+        ).grid(row=6, column=0, columnspan=2, sticky=tk.W, pady=(5, 0))
 
         # 从上次进度开始
         self.from_last_progress_var = tk.BooleanVar(value=False)
@@ -307,13 +340,13 @@ class ZhiHuiShuGUI:
             command=self._on_from_last_progress_toggled,
         )
         self.from_last_progress_cb.grid(
-            row=6, column=0, columnspan=2, sticky=tk.W, pady=(5, 0)
+            row=7, column=0, columnspan=2, sticky=tk.W, pady=(5, 0)
         )
         self.last_progress_label = ttk.Label(
             url_frame, text="", foreground="gray"
         )
         self.last_progress_label.grid(
-            row=6, column=1, sticky=tk.E, pady=(5, 0)
+            row=7, column=1, sticky=tk.E, pady=(5, 0)
         )
 
         url_frame.columnconfigure(1, weight=1)
@@ -326,6 +359,7 @@ class ZhiHuiShuGUI:
         ttk.Checkbutton(
             transcribe_frame, text="启用语音转文字（需安装 ffmpeg 和 FunASR）",
             variable=self.transcribe_enabled_var,
+            command=self._update_start_button_state,
         ).grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=(0, 5))
 
         ttk.Label(transcribe_frame, text="保存路径:").grid(
@@ -500,14 +534,24 @@ class ZhiHuiShuGUI:
         return True, ""
 
     def _on_start_clicked(self):
-        """启动按钮回调。自动模式下固定 UPC 登录。"""
+        """启动按钮回调。检查刷课/转录复选框组合后启动。"""
+        brush_on = self.brush_enabled_var.get()
+        transcribe_on = self.transcribe_enabled_var.get()
+
+        # 两个都不勾选 → 无法启动
+        if not brush_on and not transcribe_on:
+            self.status_label.config(
+                text='⚠ 请至少勾选「开启刷课」或「启用语音转文字」', foreground="red"
+            )
+            return
+
         if self.auto_mode_var.get():
-            self._start_bot("upc", auto_start=True)
+            self._start_bot("upc", auto_start=True, transcribe_only=not brush_on)
         else:
             method = "upc" if self.login_method_var.get() == "数字石大" else "zhihuishu"
-            self._start_bot(method)
+            self._start_bot(method, transcribe_only=not brush_on)
 
-    def _start_bot(self, login_method, auto_start=False):
+    def _start_bot(self, login_method, auto_start=False, transcribe_only=False):
         if self.running:
             return
 
@@ -518,6 +562,14 @@ class ZhiHuiShuGUI:
                 text=f"⚠ {error_msg}", foreground="red"
             )
             return
+
+        # 仅转录模式：必须有保存路径
+        if transcribe_only:
+            if not self.transcribe_dir_var.get().strip():
+                self.status_label.config(
+                    text="⚠ 仅转录模式需要先设置保存路径", foreground="red"
+                )
+                return
 
         self.running = True
         self.stop_event.clear()
@@ -533,8 +585,9 @@ class ZhiHuiShuGUI:
             base_url = ZHIHUISHU_BASE_URL
             login_label = "智慧树"
 
+        mode_label = "仅转录" if transcribe_only else "刷课"
         self.status_label.config(
-            text=f"● 正在初始化（{login_label}）...", foreground="green",
+            text=f"● 正在初始化（{login_label} · {mode_label}）...", foreground="green",
         )
 
         username = self.username_var.get().strip()
@@ -542,8 +595,8 @@ class ZhiHuiShuGUI:
         logged_url = self.logged_url_var.get().strip()
         video_url = self.video_url_var.get().strip()
 
-        # 自动模式：由调度器管理停止时机，不设单次时长上限
-        if auto_start:
+        # 自动模式 / 仅转录模式：不设单次时长上限
+        if auto_start or transcribe_only:
             time_limit = 0
         else:
             try:
@@ -553,12 +606,12 @@ class ZhiHuiShuGUI:
 
         self._save_all_values()
 
-        # 语音转文字参数
-        enable_transcribe = self.transcribe_enabled_var.get()
+        # 语音转文字参数（仅转录模式强制启用）
+        enable_transcribe = self.transcribe_enabled_var.get() or transcribe_only
         transcribe_dir = self.transcribe_dir_var.get().strip()
         course_note = self.course_note_var.get().strip()
 
-        # 课程进度参数
+        # 课程进度参数（仅转录模式也可以从上次进度开始）
         from_last = self.from_last_progress_var.get()
         last_title = ""
         if from_last and course_note:
@@ -583,6 +636,7 @@ class ZhiHuiShuGUI:
             transcribe_status_queue=self.transcribe_queue,
             from_last_progress=from_last and bool(last_title),
             last_video_title=last_title,
+            transcribe_only=transcribe_only,
         )
 
         # 更新转录状态标签
@@ -595,32 +649,42 @@ class ZhiHuiShuGUI:
                 text="转录: 未启用", foreground="gray"
             )
 
-        # 连接钩子：将视频进度写入数据库
-        self._last_recorded_seconds = 0
-        captured_bot = self.bot
+        # 启动后更新状态（覆盖初始化提示）
+        def _on_bot_start():
+            if transcribe_only:
+                self.status_label.config(text="● 仅转录中", foreground="green")
+            else:
+                self.status_label.config(text="● 正在刷课", foreground="green")
 
-        def _on_video_end(title, success):
-            if captured_bot is None:
-                return
-            delta = captured_bot.total_watched_seconds - self._last_recorded_seconds
-            if delta > 0:
-                self._last_recorded_seconds = captured_bot.total_watched_seconds
-                today = time.strftime("%Y-%m-%d")
-                self.db.add_daily_progress(today, delta)
-                self._todays_watched_seconds += delta
+        self.bot.on_bot_start = _on_bot_start
 
-        def _on_bot_stop():
-            if captured_bot is None:
-                return
-            delta = captured_bot.total_watched_seconds - self._last_recorded_seconds
-            if delta > 0:
-                self._last_recorded_seconds = captured_bot.total_watched_seconds
-                today = time.strftime("%Y-%m-%d")
-                self.db.add_daily_progress(today, delta)
-                self._todays_watched_seconds += delta
+        # 连接钩子（仅刷课模式记录时长进度，仅转录模式跳过）
+        if not transcribe_only:
+            self._last_recorded_seconds = 0
+            captured_bot = self.bot
 
-        self.bot.on_video_end = _on_video_end
-        self.bot.on_bot_stop = _on_bot_stop
+            def _on_video_end(title, success):
+                if captured_bot is None:
+                    return
+                delta = captured_bot.total_watched_seconds - self._last_recorded_seconds
+                if delta > 0:
+                    self._last_recorded_seconds = captured_bot.total_watched_seconds
+                    today = time.strftime("%Y-%m-%d")
+                    self.db.add_daily_progress(today, delta)
+                    self._todays_watched_seconds += delta
+
+            def _on_bot_stop():
+                if captured_bot is None:
+                    return
+                delta = captured_bot.total_watched_seconds - self._last_recorded_seconds
+                if delta > 0:
+                    self._last_recorded_seconds = captured_bot.total_watched_seconds
+                    today = time.strftime("%Y-%m-%d")
+                    self.db.add_daily_progress(today, delta)
+                    self._todays_watched_seconds += delta
+
+            self.bot.on_video_end = _on_video_end
+            self.bot.on_bot_stop = _on_bot_stop
 
         # 课程进度回调（转录完成后自动保存）
         self.bot._on_course_progress_updated = (
@@ -644,7 +708,10 @@ class ZhiHuiShuGUI:
         self.captcha_needed.clear()
         if auto_uncheck:
             self.auto_mode_var.set(False)
-        self.status_label.config(text="● 已停止", foreground="red")
+        if hasattr(self, 'brush_enabled_var') and not self.brush_enabled_var.get():
+            self.status_label.config(text="● 转录已停止", foreground="red")
+        else:
+            self.status_label.config(text="● 已停止", foreground="red")
         self.start_btn.config(state=tk.NORMAL)
         self.stop_btn.config(state=tk.DISABLED)
         self.captcha_btn.config(state=tk.DISABLED)

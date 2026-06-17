@@ -1,14 +1,17 @@
 #!/bin/bash
 set -e
 
+<<<<<<< HEAD
 # Internal name: English only (used for directories, app bundle, DMG).
+=======
+# Internal name: English only (used for directories, app bundle, DMG)
+>>>>>>> 308e2218fc774f0041cb972afcb4ba714612fa1a
 APP_NAME="ZhiHuiShu_AutoCourse"
 DISPLAY_NAME="智慧树自动刷课"
 DIST_APP="dist/${APP_NAME}.app"
 FRAMEWORKS="${DIST_APP}/Contents/Frameworks"
 PYTHON=".venv/bin/python3"
 PYTHON_LIB="$(${PYTHON} -c 'import sys; print(sys.base_prefix)')/lib"
-
 echo "==> Building with py2app..."
 ${PYTHON} scripts/setup_mac.py py2app
 
@@ -53,6 +56,10 @@ DMG_FILE="dist/${APP_NAME}.dmg"
 rm -rf "${DMG_DIR}" "${DMG_FILE}"
 mkdir -p "${DMG_DIR}"
 cp -R "${DIST_APP}" "${DMG_DIR}/"
+<<<<<<< HEAD
+=======
+# Create symlink to /Applications for drag-to-install
+>>>>>>> 308e2218fc774f0041cb972afcb4ba714612fa1a
 ln -s /Applications "${DMG_DIR}/Applications"
 hdiutil create -volname "${DISPLAY_NAME}" -srcfolder "${DMG_DIR}" -ov -format UDZO "${DMG_FILE}"
 rm -rf "${DMG_DIR}"

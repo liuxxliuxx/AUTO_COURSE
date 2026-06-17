@@ -56,6 +56,7 @@ class ZhiHuiShuBot:
         captcha_event=None,
         captcha_done_event=None,
         stop_event=None,
+<<<<<<< HEAD
         enable_transcription=False,
         transcribe_base_dir="",
         course_note="",
@@ -63,6 +64,8 @@ class ZhiHuiShuBot:
         from_last_progress=False,
         last_video_title="",
         transcribe_only=False,
+=======
+>>>>>>> 308e2218fc774f0041cb972afcb4ba714612fa1a
         chrome_binary=None,
         chromedriver_binary=None,
     ):
@@ -74,6 +77,8 @@ class ZhiHuiShuBot:
         self.login_method = login_method
         self.time_limit_seconds = (time_limit_minutes or 0) * 60
         self.skip_completed = skip_completed
+        self.chrome_binary = chrome_binary
+        self.chromedriver_binary = chromedriver_binary
         self.total_watched_seconds = 0
         self._last_monitor_elapsed = 0
 

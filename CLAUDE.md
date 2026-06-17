@@ -18,16 +18,6 @@ No test suite, linter, or type checker is configured.
 
 ## Building
 
-### Prerequisites
-
-Before the first build, download Chrome for Testing (bundled into the package so target PCs don't need Chrome):
-
-```bash
-python scripts/download_chrome.py
-```
-
-This downloads ~150MB of Chrome + ChromeDriver into `bin/`.
-
 ### Windows
 
 ```powershell
@@ -41,8 +31,10 @@ Build script auto-runs `download_chrome.py` if `bin/` is missing. Output is an E
 ### macOS
 
 ```bash
-./scripts/build_mac.sh        # py2app, outputs dist/智慧树自动刷课.app
+./scripts/build_mac.sh        # py2app, outputs dist/ZhiHuiShu_AutoCourse.app + DMG
 ```
+
+Uses `setup_mac.py` (project root, py2app config). Script auto-downloads Chrome for Testing and copies root-level modules into the bundle.
 
 ## Architecture
 

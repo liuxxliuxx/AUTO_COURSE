@@ -11,6 +11,8 @@ from selenium.webdriver.common.by import By
 from src.constants import (
     EXTRA_LONG_SLEEP,
     INITIAL_DIALOG_MAX_ATTEMPTS,
+    LEARNING_PROGRESS_POPUP_CSS,
+    LEARNING_PROGRESS_POPUP_KEYWORDS,
     LONG_SLEEP,
     MEDIUM_SLEEP,
     PRESCHOOL_CLOSE_CSS,
@@ -81,6 +83,11 @@ class CourseNavigator:
                     self.quiz.handle(quiz_dialog)
                     time.sleep(MEDIUM_SLEEP)
 
+            if self._close_learning_progress_popup():
+                found_any = True
+                logger.info("Detected learning-progress reminder (attempt %d)", attempt + 1)
+                time.sleep(MEDIUM_SLEEP)
+
             if not found_any:
                 logger.debug("初始弹窗已全部处理完毕（经过%d次检查）", attempt + 1)
                 break
@@ -111,6 +118,83 @@ class CourseNavigator:
             logger.debug("未检测到'学前必读'弹窗")
         except Exception as e:
             logger.debug("处理'学前必读'弹窗时出错（可能不存在）: %s", e)
+
+    def _close_learning_progress_popup(self):
+        """Close or remove the learning-progress reminder card if it blocks clicks."""
+        script = """
+            const selectors = arguments[0] || [];
+            const keywords = arguments[1] || [];
+            const seen = new Set();
+            let closed = 0;
+
+            function textOf(node) {
+                return ((node && (node.innerText || node.textContent)) || "").trim();
+            }
+
+            function hasKeyword(node) {
+                const text = textOf(node);
+                return keywords.some(keyword => text.indexOf(keyword) >= 0);
+            }
+
+            function findPanel(card) {
+                let panel = card;
+                for (let node = card; node && node !== document.body; node = node.parentElement) {
+                    if (
+                        node.classList &&
+                        node.classList.contains("main") &&
+                        node.querySelector(".head") &&
+                        node.querySelector(".box") &&
+                        hasKeyword(node)
+                    ) {
+                        panel = node;
+                        break;
+                    }
+                }
+                return panel;
+            }
+
+            for (const selector of selectors) {
+                for (const node of document.querySelectorAll(selector)) {
+                    if (!node || seen.has(node) || !hasKeyword(node)) {
+                        continue;
+                    }
+                    seen.add(node);
+
+                    const card = node.closest(".ss2077-msg-custom") || node;
+                    const item = card.closest(".item");
+                    const panel = findPanel(card);
+                    const root = panel || item || card;
+                    const closeButton = root.querySelector(
+                        "[class*='close'],[class*='guanbi'],.el-dialog__close,.el-dialog__headerbtn,button[aria-label='Close']"
+                    );
+
+                    if (closeButton) {
+                        closeButton.click();
+                    } else if (root && root.parentElement) {
+                        root.remove();
+                    } else if (root) {
+                        root.style.display = "none";
+                        root.style.pointerEvents = "none";
+                    }
+                    closed += 1;
+                }
+            }
+
+            return closed;
+        """
+        try:
+            closed = self.driver.execute_script(
+                script,
+                LEARNING_PROGRESS_POPUP_CSS,
+                LEARNING_PROGRESS_POPUP_KEYWORDS,
+            )
+            if closed:
+                logger.info("Closed learning-progress reminder (%d)", closed)
+                time.sleep(LONG_SLEEP)
+                return True
+        except Exception as e:
+            logger.debug("Learning-progress reminder cleanup skipped: %s", e)
+        return False
 
     def get_unfinished_videos(self):
         """获取课程页面中的视频列表。

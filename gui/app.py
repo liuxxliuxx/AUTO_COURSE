@@ -19,6 +19,8 @@ if conda_prefix:
     if os.path.isdir(qt_bin):
         os.environ["PATH"] = qt_bin + os.pathsep + os.environ.get("PATH", "")
 
+os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
+
 from PySide6.QtCore import QUrl
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtWidgets import QApplication

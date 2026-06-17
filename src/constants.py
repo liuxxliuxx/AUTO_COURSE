@@ -105,6 +105,17 @@ PRESCHOOL_CLOSE_CSS = [
     ".dialog-read .el-dialog__header i",
 ]
 
+# Course page progress/reminder popup.
+LEARNING_PROGRESS_POPUP_CSS = [
+    ".ss2077-msg-custom",
+    ".ss2077-msg-bg",
+]
+LEARNING_PROGRESS_POPUP_KEYWORDS = [
+    "当前时间计划学习进度",
+    "学习进度",
+    "班级平均学习进度",
+]
+
 # ============================================================================
 # 课程视频列表 — 选择器
 # ============================================================================

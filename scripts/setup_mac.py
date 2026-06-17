@@ -1,10 +1,5 @@
 import os
 import sys
-<<<<<<< HEAD
-=======
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
->>>>>>> 308e2218fc774f0041cb972afcb4ba714612fa1a
 
 from setuptools import setup
 
@@ -15,7 +10,6 @@ APP = ["main.py"]
 OPTIONS = {
     "argv_emulation": False,
     "iconfile": "assets/icon.icns",
-<<<<<<< HEAD
     "packages": [
         "certifi",
         "keyring",
@@ -58,13 +52,6 @@ OPTIONS = {
     "resources": [
         "assets/icon.png",
         "gui/qml",
-=======
-    "packages": ["selenium", "webdriver_manager", "keyring", "certifi"],
-    "includes": [
-        "src", "src.constants", "src.db", "src.bot", "src.bot.login",
-        "src.ui", "src.utils",
-        "config", "database",
->>>>>>> 308e2218fc774f0041cb972afcb4ba714612fa1a
     ],
     "plist": {
         "CFBundleName": "ZhiHuiShu_AutoCourse",

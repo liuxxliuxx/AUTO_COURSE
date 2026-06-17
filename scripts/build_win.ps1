@@ -12,6 +12,22 @@ pip install --upgrade pip
 pip install -r requirements.txt
 pip install pyinstaller
 
+# Check and download Chrome for Testing
+$BIN_DIR = "bin"
+$CHROME_EXE = "$BIN_DIR\chrome-win64\chrome.exe"
+$CHROMEDRIVER_EXE = "$BIN_DIR\chromedriver-win64\chromedriver.exe"
+
+if (-not (Test-Path $CHROME_EXE) -or -not (Test-Path $CHROMEDRIVER_EXE)) {
+    Write-Host "==> Chrome for Testing not found, downloading..." -ForegroundColor Cyan
+    python scripts/download_chrome.py
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "ERROR: Chrome for Testing download failed" -ForegroundColor Red
+        exit 1
+    }
+} else {
+    Write-Host "==> Chrome for Testing already exists, skipping download" -ForegroundColor Cyan
+}
+
 # Clean previous output
 if (Test-Path $DIST_DIR) {
     Remove-Item -Recurse -Force $DIST_DIR
@@ -30,10 +46,7 @@ pyinstaller `
     --clean `
     --noconfirm `
     --icon assets/icon.ico `
-<<<<<<< HEAD
     --add-data "${BIN_DIR};${BIN_DIR}" `
-=======
->>>>>>> 308e2218fc774f0041cb972afcb4ba714612fa1a
     --hidden-import keyring.backends.Windows `
     --hidden-import keyring.backends.null `
     --hidden-import keyring.backends.chainer `

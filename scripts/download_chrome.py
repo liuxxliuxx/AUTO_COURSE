@@ -15,40 +15,6 @@ VERSION_API_URL = (
     "last-known-good-versions.json"
 )
 DOWNLOAD_BASE = "https://storage.googleapis.com/chrome-for-testing-public"
-<<<<<<< HEAD
-=======
-
-_PLATFORM_MAP = {
-    "darwin": {
-        "chrome_zip": "{version}/mac-arm64/chrome-mac-arm64.zip",
-        "chromedriver_zip": "{version}/mac-arm64/chromedriver-mac-arm64.zip",
-        "chrome_dir": "chrome-mac-arm64",
-        "chromedriver_dir": "chromedriver-mac-arm64",
-        "chrome_exe": "Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-        "chromedriver_exe": "chromedriver",
-    },
-    "win32": {
-        "chrome_zip": "{version}/win64/chrome-win64.zip",
-        "chromedriver_zip": "{version}/win64/chromedriver-win64.zip",
-        "chrome_dir": "chrome-win64",
-        "chromedriver_dir": "chromedriver-win64",
-        "chrome_exe": "chrome.exe",
-        "chromedriver_exe": "chromedriver.exe",
-    },
-}
-
-_platform = _PLATFORM_MAP.get(sys.platform)
-if _platform is None:
-    print(f"不支持的操作系统: {sys.platform}")
-    sys.exit(1)
-
-CHROME_ZIP = _platform["chrome_zip"]
-CHROMEDRIVER_ZIP = _platform["chromedriver_zip"]
-CHROME_DIR = _platform["chrome_dir"]
-CHROMEDRIVER_DIR = _platform["chromedriver_dir"]
-CHROME_EXE = _platform["chrome_exe"]
-CHROMEDRIVER_EXE = _platform["chromedriver_exe"]
->>>>>>> 308e2218fc774f0041cb972afcb4ba714612fa1a
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN_DIR = os.path.join(PROJECT_ROOT, "bin")
@@ -138,7 +104,6 @@ def _make_executable(path):
 
 
 def verify_bin():
-<<<<<<< HEAD
     chrome_path = os.path.join(BIN_DIR, PLATFORM["chrome_dir"], PLATFORM["chrome_exe"])
     driver_path = os.path.join(BIN_DIR, PLATFORM["driver_dir"], PLATFORM["driver_exe"])
 
@@ -153,27 +118,6 @@ def verify_bin():
         else:
             print(f"  [FAIL] {label} not found: {path}")
             ok = False
-=======
-    """检查 bin/ 目录中的关键文件是否存在。"""
-    chrome_exe = os.path.join(BIN_DIR, CHROME_DIR, CHROME_EXE)
-    chromedriver_exe = os.path.join(BIN_DIR, CHROMEDRIVER_DIR, CHROMEDRIVER_EXE)
-
-    ok = True
-    if os.path.exists(chrome_exe):
-        size_mb = os.path.getsize(chrome_exe) / (1024 * 1024)
-        print(f"  [OK] {CHROME_EXE} ({size_mb:.1f} MB)")
-    else:
-        print(f"  [FAIL] {CHROME_EXE} 未找到")
-        ok = False
-
-    if os.path.exists(chromedriver_exe):
-        size_mb = os.path.getsize(chromedriver_exe) / (1024 * 1024)
-        print(f"  [OK] {CHROMEDRIVER_EXE} ({size_mb:.1f} MB)")
-    else:
-        print(f"  [FAIL] {CHROMEDRIVER_EXE} 未找到")
-        ok = False
-
->>>>>>> 308e2218fc774f0041cb972afcb4ba714612fa1a
     return ok
 
 
@@ -192,7 +136,6 @@ def main():
         shutil.rmtree(BIN_DIR)
     os.makedirs(BIN_DIR, exist_ok=True)
 
-<<<<<<< HEAD
     chrome_url = f"{DOWNLOAD_BASE}/{PLATFORM['chrome_zip'].format(version=version)}"
     chrome_zip = os.path.join(BIN_DIR, f"{PLATFORM['chrome_dir']}.zip")
     print(f"\n[1/2] Download Chrome for Testing v{version} ({PLATFORM['label']})")
@@ -204,21 +147,6 @@ def main():
     print(f"\n[2/2] Download ChromeDriver v{version} ({PLATFORM['label']})")
     download_file(driver_url, driver_zip)
     extract_zip(driver_zip, BIN_DIR)
-=======
-    # 下载 Chrome
-    chrome_url = f"{DOWNLOAD_BASE}/{CHROME_ZIP.format(version=version)}"
-    chrome_zip = os.path.join(BIN_DIR, f"{CHROME_DIR}.zip")
-    print(f"\n[1/2] 下载 Chrome for Testing v{version} ({sys.platform})")
-    download_file(chrome_url, chrome_zip)
-    extract_zip(chrome_zip, BIN_DIR)
-
-    # 下载 ChromeDriver
-    chromedriver_url = f"{DOWNLOAD_BASE}/{CHROMEDRIVER_ZIP.format(version=version)}"
-    chromedriver_zip = os.path.join(BIN_DIR, f"{CHROMEDRIVER_DIR}.zip")
-    print(f"\n[2/2] 下载 ChromeDriver v{version} ({sys.platform})")
-    download_file(chromedriver_url, chromedriver_zip)
-    extract_zip(chromedriver_zip, BIN_DIR)
->>>>>>> 308e2218fc774f0041cb972afcb4ba714612fa1a
 
     print("\nVerifying bin/...")
     if verify_bin():

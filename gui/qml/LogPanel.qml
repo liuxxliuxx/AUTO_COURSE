@@ -92,7 +92,7 @@ GlassPanel {
                 selectedTextColor: "#FFFFFF"
                 selectionColor: "#5B8DEF"
                 font {
-                    family: "Cascadia Mono, Consolas"
+                    family: Qt.platform.os === "osx" ? "Menlo" : (Qt.platform.os === "windows" ? "Consolas" : "monospace")
                     pixelSize: 11
                 }
                 background: null

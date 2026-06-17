@@ -85,8 +85,27 @@ pyinstaller `
     --hidden-import src.ui.log_handler `
     --hidden-import src.utils `
     --hidden-import src.utils.element_finder `
+    --hidden-import src.transcriber `
+    --hidden-import src.transcriber.audio_capture `
+    --hidden-import src.transcriber.transcription_worker `
+    --hidden-import src.transcriber.transcription_manager `
+    --hidden-import requests `
+    --hidden-import sounddevice `
+    --hidden-import numpy `
+    --hidden-import gui `
+    --hidden-import gui.app `
+    --hidden-import gui.bridge `
+    --add-data "gui/qml;gui/qml" `
+    --hidden-import PySide6 `
+    --hidden-import PySide6.QtCore `
+    --hidden-import PySide6.QtGui `
+    --hidden-import PySide6.QtWidgets `
+    --hidden-import PIL `
+    --hidden-import PIL.Image `
+    --hidden-import PIL.ImageFilter `
     --collect-submodules webdriver_manager `
     --collect-submodules selenium `
+    --collect-submodules PySide6 `
     main.py
 
 # Clean up work dir and .spec file

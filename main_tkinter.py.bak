@@ -1,0 +1,878 @@
+"""
+智慧树自动刷课 GUI 入口。
+
+负责 Tkinter 主窗口、用户配置管理、Bot 线程生命周期、
+以及日志/验证码事件的跨线程轮询。不包含任何刷课业务逻辑。
+"""
+
+import logging
+import queue
+import threading
+import time
+from datetime import datetime, time as dt_time
+
+import tkinter as tk
+from tkinter import filedialog, scrolledtext, ttk
+
+import keyring
+
+from config import KEYRING_PASSWORD_KEY, KEYRING_SERVICE, KEYRING_USERNAME_KEY
+from database import Database
+from src.bot.bot_core import ZhiHuiShuBot
+from src.constants import (
+    AUTO_SCHEDULER_INTERVAL_MS,
+    GUI_CAPTCHA_POLL_MS,
+    GUI_LOG_POLL_MS,
+    UPC_BASE_URL,
+    ZHIHUISHU_BASE_URL,
+)
+from src.ui.log_handler import QueueLogHandler
+
+logger = logging.getLogger(__name__)
+
+
+class ZhiHuiShuGUI:
+    """智慧树自动刷课主窗口。"""
+
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.title("智慧树自动刷课")
+        self.root.geometry("720x680")
+        self.root.resizable(True, True)
+
+        self.db = Database()
+        self._video_history_data = []
+
+        self.log_queue = queue.Queue()
+        self.captcha_needed = threading.Event()
+        self.captcha_done = threading.Event()
+        self.stop_event = threading.Event()
+        self.bot = None
+        self.bot_thread = None
+        self.running = False
+
+        # 语音转文字
+        self.transcribe_queue = queue.Queue()
+
+        # 自动调度器状态
+        self._last_recorded_seconds = 0
+        self._todays_watched_seconds = 0
+        self._today_date = ""
+
+        self._queue_handler = QueueLogHandler(self.log_queue)
+        logging.getLogger().addHandler(self._queue_handler)
+
+        self._build_ui()
+        self._load_saved_values()
+        self._poll_log_queue()
+        self._check_captcha_status()
+        self._poll_transcribe_queue()
+
+    # ---------- keyring ----------
+
+    @staticmethod
+    def _keyring_get(key):
+        try:
+            return keyring.get_password(KEYRING_SERVICE, key) or ""
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _keyring_set(key, value):
+        try:
+            keyring.set_password(KEYRING_SERVICE, key, value)
+        except Exception:
+            pass
+
+    # ---------- load / save ----------
+
+    def _load_saved_values(self):
+        self._refresh_url_history()
+
+        logged_history = self.db.get_url_history("logged")
+        if logged_history:
+            self.logged_url_var.set(logged_history[0][0])
+
+        video_history = self.db.get_url_history("video")
+        if video_history:
+            self.video_url_var.set(video_history[0][0])
+            self.course_note_var.set(video_history[0][1])
+
+        self.username_var.set(self._keyring_get(KEYRING_USERNAME_KEY))
+        self.password_var.set(self._keyring_get(KEYRING_PASSWORD_KEY))
+
+        saved_limit = self.db.get_setting("time_limit", "")
+        self.time_limit_var.set(saved_limit)
+
+        # 加载登录方式
+        saved_method = self.db.get_setting("login_method", "zhihuishu")
+        self.login_method_var.set(
+            "数字石大" if saved_method == "upc" else "智慧树"
+        )
+
+        # 加载自动调度器设置（自动模式默认不勾选，每次启动重置）
+        self.auto_start_var.set(self.db.get_setting("auto_start_time", "06:00"))
+        self.auto_end_var.set(self.db.get_setting("auto_end_time", "23:00"))
+        self.auto_allday_var.set(self.db.get_setting("auto_allday", "0") == "1")
+
+        # 加载语音转文字设置
+        self.transcribe_enabled_var.set(
+            self.db.get_setting("transcribe_enabled", "0") == "1"
+        )
+        saved_transcribe_dir = self.db.get_setting("transcribe_base_dir", "")
+        if saved_transcribe_dir:
+            self.transcribe_dir_var.set(saved_transcribe_dir)
+
+        # 加载"开启刷课"设置
+        self.brush_enabled_var.set(
+            self.db.get_setting("brush_enabled", "1") == "1"
+        )
+
+        # 加载"从上次进度开始"设置
+        self.from_last_progress_var.set(
+            self.db.get_setting("from_last_progress", "0") == "1"
+        )
+
+        # 加载今日进度并启动调度器轮询
+        self._today_date = time.strftime("%Y-%m-%d")
+        self._todays_watched_seconds = self.db.get_daily_progress(self._today_date)
+        self._update_progress_label()
+        self._on_brush_mode_toggled()  # 同步初始状态
+        self._auto_scheduler_tick()
+
+    def _save_all_values(self):
+        username = self.username_var.get()
+        password = self.password_var.get()
+        logged_url = self.logged_url_var.get()
+        video_url = self.video_url_var.get()
+        time_limit = self.time_limit_var.get()
+
+        if username:
+            self._keyring_set(KEYRING_USERNAME_KEY, username)
+        if password:
+            self._keyring_set(KEYRING_PASSWORD_KEY, password)
+        self.db.set_setting("time_limit", time_limit)
+        self.db.save_url_history("logged", logged_url)
+        self.db.save_url_history("video", video_url, self.course_note_var.get())
+
+        # 保存登录方式
+        method_val = "upc" if self.login_method_var.get() == "数字石大" else "zhihuishu"
+        self.db.set_setting("login_method", method_val)
+
+        # 保存自动调度器设置
+        self.db.set_setting("auto_mode", "1" if self.auto_mode_var.get() else "0")
+        self.db.set_setting("auto_start_time", self.auto_start_var.get().strip() or "06:00")
+        self.db.set_setting("auto_end_time", self.auto_end_var.get().strip() or "23:00")
+        self.db.set_setting("auto_allday", "1" if self.auto_allday_var.get() else "0")
+
+        # 保存语音转文字设置
+        self.db.set_setting(
+            "transcribe_enabled", "1" if self.transcribe_enabled_var.get() else "0"
+        )
+        transcribe_dir = self.transcribe_dir_var.get().strip()
+        if transcribe_dir:
+            self.db.set_setting("transcribe_base_dir", transcribe_dir)
+
+        # 保存"开启刷课"
+        self.db.set_setting(
+            "brush_enabled", "1" if self.brush_enabled_var.get() else "0"
+        )
+
+        # 保存"从上次进度开始"
+        self.db.set_setting(
+            "from_last_progress",
+            "1" if self.from_last_progress_var.get() else "0",
+        )
+
+        self._refresh_url_history()
+
+    def _refresh_url_history(self):
+        logged_data = self.db.get_url_history("logged")
+        self.logged_url_combo["values"] = [url for url, _ in logged_data]
+
+        video_data = self.db.get_url_history("video")
+        self._video_history_data = video_data
+        self.video_url_combo["values"] = [
+            f"（{note}）{url}" if note else url
+            for url, note in video_data
+        ]
+
+    def _on_video_url_selected(self, event):
+        idx = self.video_url_combo.current()
+        if 0 <= idx < len(self._video_history_data):
+            url, note = self._video_history_data[idx]
+            self.video_url_var.set(url)
+            self.course_note_var.set(note)
+            self._update_last_progress_display()
+
+    def _on_video_url_changed(self, *args):
+        current_url = self.video_url_var.get().strip()
+        note = self.db.get_note_for_url(current_url)
+        self.course_note_var.set(note)
+        self._update_last_progress_display()
+
+    def _update_last_progress_display(self):
+        """根据当前课程备注查询上次进度并更新显示。"""
+        note = self.course_note_var.get().strip()
+        if not note:
+            self.last_progress_label.config(text="")
+            return
+        last_title, updated_at = self.db.get_course_progress(note)
+        if last_title:
+            label_text = f"上次已完成: {last_title}"
+            if updated_at:
+                label_text += f" ({updated_at})"
+            self.last_progress_label.config(text=label_text, foreground="blue")
+        else:
+            self.last_progress_label.config(text="无进度记录", foreground="gray")
+
+    def _on_brush_mode_toggled(self):
+        """开启刷课复选框切换时更新启动按钮状态。"""
+        self._update_start_button_state()
+
+    def _update_start_button_state(self):
+        """根据复选框组合更新启动按钮状态。两个都不勾选时禁用。"""
+        brush_on = self.brush_enabled_var.get()
+        transcribe_on = self.transcribe_enabled_var.get()
+        if not brush_on and not transcribe_on:
+            self.start_btn.config(state=tk.DISABLED)
+        else:
+            self.start_btn.config(state=tk.NORMAL)
+
+    def _on_from_last_progress_toggled(self):
+        """从上次进度开始复选框切换时保存设置。"""
+        self.db.set_setting(
+            "from_last_progress",
+            "1" if self.from_last_progress_var.get() else "0",
+        )
+
+    # ---------- UI ----------
+
+    def _build_ui(self):
+        # 账号配置
+        acct_frame = ttk.LabelFrame(self.root, text="账号配置", padding=10)
+        acct_frame.pack(fill=tk.X, padx=10, pady=(10, 5))
+
+        ttk.Label(acct_frame, text="账号:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        self.username_var = tk.StringVar()
+        self.username_entry = ttk.Entry(acct_frame, textvariable=self.username_var, width=60)
+        self.username_entry.grid(row=0, column=1, sticky=tk.EW, pady=2, padx=(0, 5))
+
+        ttk.Label(acct_frame, text="密码:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        self.password_var = tk.StringVar()
+        self.password_entry = ttk.Entry(acct_frame, textvariable=self.password_var, show="●", width=60)
+        self.password_entry.grid(row=1, column=1, sticky=tk.EW, pady=2, padx=(0, 5))
+        self.show_pwd_var = tk.BooleanVar(value=False)
+        self.show_pwd_cb = ttk.Checkbutton(
+            acct_frame, text="显示", variable=self.show_pwd_var,
+            command=self._toggle_pwd_visibility,
+        )
+        self.show_pwd_cb.grid(row=1, column=2, pady=2)
+        acct_frame.columnconfigure(1, weight=1)
+
+        # 课程配置
+        url_frame = ttk.LabelFrame(self.root, text="课程配置", padding=10)
+        url_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        ttk.Label(url_frame, text="登录跳转URL:").grid(row=0, column=0, sticky=tk.W, pady=2)
+        self.logged_url_var = tk.StringVar()
+        self.logged_url_combo = ttk.Combobox(url_frame, textvariable=self.logged_url_var, width=77)
+        self.logged_url_combo.grid(row=0, column=1, sticky=tk.EW, pady=2)
+
+        ttk.Label(url_frame, text="登录方式:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        self.login_method_var = tk.StringVar(value="zhihuishu")
+        self.login_method_combo = ttk.Combobox(
+            url_frame, textvariable=self.login_method_var,
+            values=["智慧树", "数字石大"], state="readonly", width=15,
+        )
+        self.login_method_combo.grid(row=1, column=1, sticky=tk.W, pady=2)
+
+        ttk.Label(url_frame, text="课程视频URL:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        self.video_url_var = tk.StringVar()
+        self.video_url_combo = ttk.Combobox(url_frame, textvariable=self.video_url_var, width=77)
+        self.video_url_combo.grid(row=2, column=1, sticky=tk.EW, pady=2)
+        self.video_url_combo.bind("<<ComboboxSelected>>", self._on_video_url_selected)
+        self.video_url_var.trace_add("write", self._on_video_url_changed)
+
+        ttk.Label(url_frame, text="课程备注:").grid(row=3, column=0, sticky=tk.W, pady=2)
+        self.course_note_var = tk.StringVar()
+        ttk.Entry(url_frame, textvariable=self.course_note_var, width=60).grid(
+            row=3, column=1, sticky=tk.EW, pady=2
+        )
+
+        # 刷课时长行（使用子 Frame 排布 Entry + 提示 + 今日进度）
+        time_row = ttk.Frame(url_frame)
+        time_row.grid(row=4, column=0, columnspan=2, sticky=tk.EW, pady=2)
+        ttk.Label(time_row, text="刷课时长(分钟):").pack(side=tk.LEFT)
+        self.time_limit_var = tk.StringVar(value="0")
+        ttk.Entry(time_row, textvariable=self.time_limit_var, width=7).pack(
+            side=tk.LEFT, padx=(5, 0)
+        )
+        ttk.Label(time_row, text="（0=不限）", foreground="gray").pack(
+            side=tk.LEFT, padx=(2, 0)
+        )
+        self.auto_progress_label = ttk.Label(
+            time_row, text="今日已刷课时长：0 分钟", foreground="blue"
+        )
+        self.auto_progress_label.pack(side=tk.RIGHT)
+
+        # 开启刷课复选框（控制是否完整观看视频刷课时）
+        self.brush_enabled_var = tk.BooleanVar(value=True)
+        self.brush_enabled_cb = ttk.Checkbutton(
+            url_frame, text="开启刷课（取消后仅转录，不刷课时）",
+            variable=self.brush_enabled_var,
+            command=self._on_brush_mode_toggled,
+        )
+        self.brush_enabled_cb.grid(row=5, column=0, columnspan=2, sticky=tk.W, pady=(5, 0))
+
+        # 跳过已学课程复选框
+        self.skip_completed_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            url_frame, text="跳过已学课程（取消勾选后将依次学习全部课程）",
+            variable=self.skip_completed_var,
+        ).grid(row=6, column=0, columnspan=2, sticky=tk.W, pady=(5, 0))
+
+        # 从上次进度开始
+        self.from_last_progress_var = tk.BooleanVar(value=False)
+        self.from_last_progress_cb = ttk.Checkbutton(
+            url_frame, text="从上次进度开始",
+            variable=self.from_last_progress_var,
+            command=self._on_from_last_progress_toggled,
+        )
+        self.from_last_progress_cb.grid(
+            row=7, column=0, columnspan=2, sticky=tk.W, pady=(5, 0)
+        )
+        self.last_progress_label = ttk.Label(
+            url_frame, text="", foreground="gray"
+        )
+        self.last_progress_label.grid(
+            row=7, column=1, sticky=tk.E, pady=(5, 0)
+        )
+
+        url_frame.columnconfigure(1, weight=1)
+
+        # 语音转文字设置
+        transcribe_frame = ttk.LabelFrame(self.root, text="语音转文字", padding=10)
+        transcribe_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        self.transcribe_enabled_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            transcribe_frame, text="启用语音转文字（需安装 ffmpeg 和 FunASR）",
+            variable=self.transcribe_enabled_var,
+            command=self._update_start_button_state,
+        ).grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=(0, 5))
+
+        ttk.Label(transcribe_frame, text="保存路径:").grid(
+            row=1, column=0, sticky=tk.W, pady=2
+        )
+        self.transcribe_dir_var = tk.StringVar()
+        self.transcribe_dir_entry = ttk.Entry(
+            transcribe_frame, textvariable=self.transcribe_dir_var, width=55,
+            state="readonly",
+        )
+        self.transcribe_dir_entry.grid(row=1, column=1, sticky=tk.EW, pady=2, padx=(0, 5))
+        self.transcribe_browse_btn = ttk.Button(
+            transcribe_frame, text="浏览", command=self._on_browse_transcribe_dir,
+            width=8,
+        )
+        self.transcribe_browse_btn.grid(row=1, column=2, pady=2)
+        transcribe_frame.columnconfigure(1, weight=1)
+
+        # 自动设置
+        auto_frame = ttk.LabelFrame(self.root, text="自动设置", padding=10)
+        auto_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        self.auto_mode_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            auto_frame, text="自动使用数字石大登录",
+            variable=self.auto_mode_var,
+            command=self._on_auto_mode_toggled,
+        ).grid(row=0, column=0, columnspan=5, sticky=tk.W, pady=(0, 5))
+
+        ttk.Label(auto_frame, text="允许运行时间:").grid(
+            row=1, column=0, sticky=tk.W, pady=2
+        )
+        self.auto_start_var = tk.StringVar(value="06:00")
+        self.auto_start_entry = ttk.Entry(
+            auto_frame, textvariable=self.auto_start_var, width=7,
+        )
+        self.auto_start_entry.grid(row=1, column=1, sticky=tk.W, pady=2)
+        ttk.Label(auto_frame, text="至").grid(row=1, column=2, pady=2)
+        self.auto_end_var = tk.StringVar(value="23:00")
+        self.auto_end_entry = ttk.Entry(
+            auto_frame, textvariable=self.auto_end_var, width=7,
+        )
+        self.auto_end_entry.grid(row=1, column=3, sticky=tk.W, pady=2)
+
+        self.auto_allday_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            auto_frame, text="全天", variable=self.auto_allday_var,
+            command=self._on_allday_toggled,
+        ).grid(row=1, column=4, sticky=tk.W, pady=2, padx=(10, 0))
+
+        auto_frame.columnconfigure(4, weight=1)
+
+        # 操作按钮
+        btn_frame = ttk.Frame(self.root)
+        btn_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        self.start_btn = ttk.Button(
+            btn_frame, text="启动", command=self._on_start_clicked,
+        )
+        self.start_btn.pack(side=tk.LEFT, padx=(0, 10))
+
+        self.stop_btn = ttk.Button(btn_frame, text="停止", command=self._stop_bot, state=tk.DISABLED)
+        self.stop_btn.pack(side=tk.LEFT)
+
+        # 运行状态
+        status_frame = ttk.LabelFrame(self.root, text="运行状态", padding=10)
+        status_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        self.status_label = ttk.Label(
+            status_frame, text="● 就绪", foreground="gray"
+        )
+        self.status_label.pack(side=tk.LEFT, padx=(0, 20))
+
+        self.transcribe_status_label = ttk.Label(
+            status_frame, text="转录: 未启用", foreground="gray"
+        )
+        self.transcribe_status_label.pack(side=tk.LEFT, padx=(0, 20))
+
+        self.captcha_btn = ttk.Button(
+            status_frame, text="没有需确认的验证码",
+            command=self._on_confirm_captcha, state=tk.DISABLED,
+        )
+        self.captcha_btn.pack(side=tk.RIGHT)
+
+        self.captcha_hint = ttk.Label(status_frame, text="", foreground="red", wraplength=400)
+        self.captcha_hint.pack(side=tk.RIGHT, padx=(0, 10))
+
+        # 日志区域
+        log_frame = ttk.LabelFrame(self.root, text="运行日志", padding=5)
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(5, 10))
+
+        self.log_area = scrolledtext.ScrolledText(
+            log_frame, wrap=tk.WORD, state=tk.DISABLED, font=("Consolas", 9),
+        )
+        self.log_area.pack(fill=tk.BOTH, expand=True)
+
+    def _toggle_pwd_visibility(self):
+        self.password_entry.config(show="" if self.show_pwd_var.get() else "●")
+
+    # ---------- transcription ----------
+
+    def _on_browse_transcribe_dir(self):
+        """打开目录选择对话框，设置转录保存路径。"""
+        path = filedialog.askdirectory(title="选择语音转文字保存目录")
+        if path:
+            self.transcribe_dir_var.set(path)
+
+    def _poll_transcribe_queue(self):
+        """轮询转录状态队列，更新 GUI 标签。"""
+        try:
+            while True:
+                status = self.transcribe_queue.get_nowait()
+                self.transcribe_status_label.config(
+                    text=status["text"], foreground=status["color"]
+                )
+        except queue.Empty:
+            pass
+        self.root.after(500, self._poll_transcribe_queue)
+
+    # ---------- log polling ----------
+
+    def _poll_log_queue(self):
+        try:
+            while True:
+                msg = self.log_queue.get_nowait()
+                self.log_area.config(state=tk.NORMAL)
+                self.log_area.insert(tk.END, msg + "\n")
+                self.log_area.see(tk.END)
+                self.log_area.config(state=tk.DISABLED)
+        except queue.Empty:
+            pass
+        self.root.after(GUI_LOG_POLL_MS, self._poll_log_queue)
+
+    # ---------- CAPTCHA ----------
+
+    def _check_captcha_status(self):
+        if self.running and self.captcha_needed.is_set():
+            self.status_label.config(
+                text="⚠ 检测到验证码 — 请在浏览器中完成验证", foreground="red"
+            )
+            self.captcha_btn.config(state=tk.NORMAL)
+        self.root.after(GUI_CAPTCHA_POLL_MS, self._check_captcha_status)
+
+    def _on_confirm_captcha(self):
+        self.captcha_done.set()
+        self.captcha_needed.clear()
+        self.captcha_btn.config(state=tk.DISABLED)
+        self.captcha_hint.config(text="")
+        self.status_label.config(text="● 正在刷课", foreground="green")
+
+    # ---------- Bot lifecycle ----------
+
+    def _validate_inputs(self, login_method):
+        """校验启动前必填字段，返回 (is_valid, error_message)。"""
+        username = self.username_var.get().strip()
+        password = self.password_var.get()
+        video_url = self.video_url_var.get().strip()
+
+        if not username:
+            return False, "账号不能为空"
+        if not password:
+            return False, "密码不能为空"
+        if not video_url:
+            return False, "课程视频URL不能为空"
+
+        # UPC 登录需要 logged_url 用于跳转检测
+        if login_method == "upc":
+            logged_url = self.logged_url_var.get().strip()
+            if not logged_url:
+                return False, "数字石大登录需要填写'登录跳转URL'"
+
+        return True, ""
+
+    def _on_start_clicked(self):
+        """启动按钮回调。检查刷课/转录复选框组合后启动。"""
+        brush_on = self.brush_enabled_var.get()
+        transcribe_on = self.transcribe_enabled_var.get()
+
+        # 两个都不勾选 → 无法启动
+        if not brush_on and not transcribe_on:
+            self.status_label.config(
+                text='⚠ 请至少勾选「开启刷课」或「启用语音转文字」', foreground="red"
+            )
+            return
+
+        if self.auto_mode_var.get():
+            self._start_bot("upc", auto_start=True, transcribe_only=not brush_on)
+        else:
+            method = "upc" if self.login_method_var.get() == "数字石大" else "zhihuishu"
+            self._start_bot(method, transcribe_only=not brush_on)
+
+    def _start_bot(self, login_method, auto_start=False, transcribe_only=False):
+        if self.running:
+            return
+
+        # 启动前校验
+        valid, error_msg = self._validate_inputs(login_method)
+        if not valid:
+            self.status_label.config(
+                text=f"⚠ {error_msg}", foreground="red"
+            )
+            return
+
+        # 仅转录模式：必须有保存路径
+        if transcribe_only:
+            if not self.transcribe_dir_var.get().strip():
+                self.status_label.config(
+                    text="⚠ 仅转录模式需要先设置保存路径", foreground="red"
+                )
+                return
+
+        self.running = True
+        self.stop_event.clear()
+        self.captcha_needed.clear()
+        self.captcha_done.clear()
+        self.start_btn.config(state=tk.DISABLED)
+        self.stop_btn.config(state=tk.NORMAL)
+
+        if login_method == "upc":
+            base_url = UPC_BASE_URL
+            login_label = "数字石大"
+        else:
+            base_url = ZHIHUISHU_BASE_URL
+            login_label = "智慧树"
+
+        mode_label = "仅转录" if transcribe_only else "刷课"
+        self.status_label.config(
+            text=f"● 正在初始化（{login_label} · {mode_label}）...", foreground="green",
+        )
+
+        username = self.username_var.get().strip()
+        password = self.password_var.get()
+        logged_url = self.logged_url_var.get().strip()
+        video_url = self.video_url_var.get().strip()
+
+        # 自动模式 / 仅转录模式：不设单次时长上限
+        if auto_start or transcribe_only:
+            time_limit = 0
+        else:
+            try:
+                time_limit = int(self.time_limit_var.get() or "0")
+            except ValueError:
+                time_limit = 0
+
+        self._save_all_values()
+
+        # 语音转文字参数（仅转录模式强制启用）
+        enable_transcribe = self.transcribe_enabled_var.get() or transcribe_only
+        transcribe_dir = self.transcribe_dir_var.get().strip()
+        course_note = self.course_note_var.get().strip()
+
+        # 课程进度参数（仅转录模式也可以从上次进度开始）
+        from_last = self.from_last_progress_var.get()
+        last_title = ""
+        if from_last and course_note:
+            last_title, _ = self.db.get_course_progress(course_note)
+            last_title = last_title or ""
+
+        self.bot = ZhiHuiShuBot(
+            base_url=base_url,
+            username=username,
+            password=password,
+            logged_url=logged_url,
+            video_url=video_url,
+            login_method=login_method,
+            time_limit_minutes=time_limit,
+            skip_completed=self.skip_completed_var.get(),
+            captcha_event=self.captcha_needed,
+            captcha_done_event=self.captcha_done,
+            stop_event=self.stop_event,
+            enable_transcription=enable_transcribe and bool(transcribe_dir),
+            transcribe_base_dir=transcribe_dir,
+            course_note=course_note,
+            transcribe_status_queue=self.transcribe_queue,
+            from_last_progress=from_last and bool(last_title),
+            last_video_title=last_title,
+            transcribe_only=transcribe_only,
+        )
+
+        # 更新转录状态标签
+        if enable_transcribe and transcribe_dir:
+            self.transcribe_status_label.config(
+                text="转录: 等待中", foreground="gray"
+            )
+        else:
+            self.transcribe_status_label.config(
+                text="转录: 未启用", foreground="gray"
+            )
+
+        # 启动后更新状态（覆盖初始化提示）
+        def _on_bot_start():
+            if transcribe_only:
+                self.status_label.config(text="● 仅转录中", foreground="green")
+            else:
+                self.status_label.config(text="● 正在刷课", foreground="green")
+
+        self.bot.on_bot_start = _on_bot_start
+
+        # 连接钩子（仅刷课模式记录时长进度，仅转录模式跳过）
+        if not transcribe_only:
+            self._last_recorded_seconds = 0
+            captured_bot = self.bot
+
+            def _on_video_end(title, success):
+                if captured_bot is None:
+                    return
+                delta = captured_bot.total_watched_seconds - self._last_recorded_seconds
+                if delta > 0:
+                    self._last_recorded_seconds = captured_bot.total_watched_seconds
+                    today = time.strftime("%Y-%m-%d")
+                    self.db.add_daily_progress(today, delta)
+                    self._todays_watched_seconds += delta
+
+            def _on_bot_stop():
+                if captured_bot is None:
+                    return
+                delta = captured_bot.total_watched_seconds - self._last_recorded_seconds
+                if delta > 0:
+                    self._last_recorded_seconds = captured_bot.total_watched_seconds
+                    today = time.strftime("%Y-%m-%d")
+                    self.db.add_daily_progress(today, delta)
+                    self._todays_watched_seconds += delta
+
+            self.bot.on_video_end = _on_video_end
+            self.bot.on_bot_stop = _on_bot_stop
+
+        # 课程进度回调（转录完成后自动保存）
+        self.bot._on_course_progress_updated = (
+            lambda cn, vt: self.db.save_course_progress(cn, vt)
+        )
+
+        self.bot_thread = threading.Thread(target=self.bot.run, daemon=True)
+        self.bot_thread.start()
+
+    def _stop_bot(self, auto_uncheck=True):
+        """停止 Bot。
+
+        auto_uncheck: 是否同时取消勾选"自动使用数字石大登录"。
+                      用户手动停止 / 课程全部学完 → True；
+                      调度器因时间/目标临时停止 → False。
+        """
+        self.running = False
+        self.stop_event.set()
+        # 注意：不能同时 set captcha_done，否则验证码等待循环会误判为"用户已确认"
+        # 只设 stop_event，让 CaptchaHandler._notify_and_wait 通过 _should_stop 自行退出
+        self.captcha_needed.clear()
+        if auto_uncheck:
+            self.auto_mode_var.set(False)
+        if hasattr(self, 'brush_enabled_var') and not self.brush_enabled_var.get():
+            self.status_label.config(text="● 转录已停止", foreground="red")
+        else:
+            self.status_label.config(text="● 已停止", foreground="red")
+        self.start_btn.config(state=tk.NORMAL)
+        self.stop_btn.config(state=tk.DISABLED)
+        self.captcha_btn.config(state=tk.DISABLED)
+        # 恢复转录状态
+        if self.transcribe_enabled_var.get():
+            self.transcribe_status_label.config(text="转录: 等待中", foreground="gray")
+        else:
+            self.transcribe_status_label.config(text="转录: 未启用", foreground="gray")
+
+    # ---------- auto-scheduler ----------
+
+    def _on_auto_mode_toggled(self):
+        """自动模式切换：勾选时灰掉登录方式下拉，取消时停止刷课。"""
+        if self.auto_mode_var.get():
+            self.login_method_combo.config(state=tk.DISABLED)
+        else:
+            self.login_method_combo.config(state="readonly")
+            if self.running:
+                logger.info("自动设置：已取消自动模式，停止当前刷课")
+                self._stop_bot(auto_uncheck=False)
+
+    def _on_allday_toggled(self):
+        """全天复选框切换：勾选时灰掉时间输入框。"""
+        if self.auto_allday_var.get():
+            self.auto_start_entry.config(state=tk.DISABLED)
+            self.auto_end_entry.config(state=tk.DISABLED)
+        else:
+            self.auto_start_entry.config(state=tk.NORMAL)
+            self.auto_end_entry.config(state=tk.NORMAL)
+
+    def _update_progress_label(self):
+        """刷新'今日已刷课时长'标签。"""
+        minutes = self._todays_watched_seconds // 60
+        self.auto_progress_label.config(
+            text=f"今日已刷课时长：{minutes} 分钟"
+        )
+
+    @staticmethod
+    def _time_in_range(now, start_str, end_str):
+        """判断当前时间是否在允许范围内，支持跨夜窗口（如 22:00-02:00）。"""
+        try:
+            sh, sm = map(int, start_str.strip().split(":"))
+            eh, em = map(int, end_str.strip().split(":"))
+        except (ValueError, AttributeError):
+            return True  # 格式异常时默认允许运行
+
+        start = dt_time(sh, sm)
+        end = dt_time(eh, em)
+
+        if start <= end:
+            return start <= now <= end
+        else:
+            return now >= start or now <= end
+
+    def _auto_scheduler_tick(self):
+        """调度器入口，每 30 秒由 root.after 触发。"""
+        try:
+            self._auto_scheduler_evaluate()
+        finally:
+            self.root.after(AUTO_SCHEDULER_INTERVAL_MS, self._auto_scheduler_tick)
+
+    def _auto_scheduler_evaluate(self):
+        """核心调度逻辑（仅在主线程执行）。"""
+        now = datetime.now()
+        today = now.strftime("%Y-%m-%d")
+        now_time = now.time()
+
+        # 跨天：重新加载今日进度
+        if self._today_date != today:
+            self._today_date = today
+            self._todays_watched_seconds = self.db.get_daily_progress(today)
+
+        bot_alive = self.bot_thread is not None and self.bot_thread.is_alive()
+
+        # 检测 Bot 自然结束（线程已退出但 running 仍为 True）
+        if self.running and not bot_alive:
+            self.running = False
+            self.start_btn.config(state=tk.NORMAL)
+            self.stop_btn.config(state=tk.DISABLED)
+            self.captcha_btn.config(state=tk.DISABLED)
+            # 如果本轮几乎没有进度，说明课程已学完，取消自动模式
+            if self._last_recorded_seconds < 60:
+                self.auto_mode_var.set(False)
+                logger.info("自动调度：本轮进度不足 60 秒，课程已学完，取消自动模式")
+
+        # 刷新今日进度（捕获钩子写入的增量）
+        self._todays_watched_seconds = self.db.get_daily_progress(today)
+        self._update_progress_label()
+
+        if not self.auto_mode_var.get():
+            return
+
+        # 解析参数（读取统一的刷课时长）
+        try:
+            target_min = int(self.time_limit_var.get() or "0")
+        except ValueError:
+            target_min = 0
+        target_seconds = target_min * 60
+
+        if self.auto_allday_var.get():
+            in_range = True
+        else:
+            in_range = self._time_in_range(
+                now_time,
+                self.auto_start_var.get(),
+                self.auto_end_var.get(),
+            )
+
+        if bot_alive:
+            # 更新运行状态（仅在非验证码状态下覆盖初始化提示）
+            if not self.captcha_needed.is_set():
+                cur = self.status_label.cget("text")
+                if "初始化" in cur or "就绪" in cur or "运行" in cur:
+                    self.status_label.config(
+                        text="● 正在刷课", foreground="green"
+                    )
+
+            # 正在运行 → 评估是否需要停止
+            if not in_range:
+                logger.info(
+                    "自动调度：当前时间 %s 超出允许范围，停止刷课",
+                    now.strftime("%H:%M"),
+                )
+                self._stop_bot(auto_uncheck=False)
+                self.status_label.config(
+                    text="● 不在允许运行时间内", foreground="orange"
+                )
+            elif target_seconds > 0 and self._todays_watched_seconds >= target_seconds:
+                logger.info(
+                    "自动调度：今日已刷 %d/%d 分钟，已达到目标，停止刷课",
+                    self._todays_watched_seconds // 60, target_min,
+                )
+                self._stop_bot(auto_uncheck=False)
+                self.status_label.config(
+                    text="● 今日自动刷课已到目标时长", foreground="orange"
+                )
+        else:
+            # 未运行 → 评估是否需要启动
+            if not in_range:
+                return
+            if target_seconds <= 0:
+                return
+            if self._todays_watched_seconds >= target_seconds:
+                return
+
+            logger.info(
+                "自动调度：满足条件，自动启动 UPC 刷课（今日已刷 %d/%d 分钟）",
+                self._todays_watched_seconds // 60, target_min,
+            )
+            self._start_bot("upc", auto_start=True)
+
+    def run(self):
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.root.mainloop()
+
+    def _on_close(self):
+        self._stop_bot()
+        self.db.close()
+        self.root.destroy()
+
+
+if __name__ == "__main__":
+    gui = ZhiHuiShuGUI()
+    gui.run()

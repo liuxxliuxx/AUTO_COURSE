@@ -27,6 +27,7 @@ Item {
                 Layout.preferredHeight: 42
                 text: "返回"
                 onClicked: root.backClicked()
+
                 contentItem: Text {
                     text: backButton.text
                     color: backButton.hovered ? "#FFFFFF" : "#2E5AA7"
@@ -38,6 +39,7 @@ Item {
                         weight: Font.DemiBold
                     }
                 }
+
                 background: Rectangle {
                     radius: 14
                     color: backButton.hovered ? "#5B8DEF" : "#C8FFFFFF"
@@ -101,9 +103,10 @@ Item {
                     model: ListModel {
                         ListElement { name: "账号"; mark: "01" }
                         ListElement { name: "课程"; mark: "02" }
-                        ListElement { name: "语音转文字"; mark: "03" }
-                        ListElement { name: "自动调度器"; mark: "04" }
-                        ListElement { name: "外观"; mark: "05" }
+                        ListElement { name: "浏览器"; mark: "03" }
+                        ListElement { name: "语音转文字"; mark: "04" }
+                        ListElement { name: "自动调度"; mark: "05" }
+                        ListElement { name: "外观"; mark: "06" }
                     }
 
                     delegate: ItemDelegate {
@@ -202,6 +205,10 @@ Item {
                         ]
                     }
 
+                    BrowserSettingsForm {
+                        theme: root.theme
+                    }
+
                     SettingsForm {
                         theme: root.theme
                         title: "语音转文字设置"
@@ -213,7 +220,7 @@ Item {
 
                     SettingsForm {
                         theme: root.theme
-                        title: "自动调度器设置"
+                        title: "自动调度设置"
                         model: [
                             { label: "启用自动刷课", key: "auto_mode", type: "check" },
                             { label: "开始时间", key: "auto_start_time", type: "text" },
@@ -227,7 +234,7 @@ Item {
                         theme: root.theme
                         title: "外观设置"
                         model: [
-                            { label: "背景图片路径", key: "bg_path", type: "browse" },
+                            { label: "背景图片路径", key: "bg_path", type: "file", fileKind: "image" },
                             { label: "玻璃强度", key: "bg_blur_radius", type: "slider", from: 10, to: 80 }
                         ]
                     }

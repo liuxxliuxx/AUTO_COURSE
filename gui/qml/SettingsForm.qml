@@ -136,7 +136,7 @@ ScrollView {
 
                 RowLayout {
                     Layout.fillWidth: true
-                    visible: modelData.type === "browse"
+                    visible: modelData.type === "browse" || modelData.type === "file"
                     spacing: 10
 
                     TextField {
@@ -165,7 +165,12 @@ ScrollView {
                         Layout.preferredHeight: 42
                         text: "选择"
                         onClicked: {
-                            var path = bridge ? bridge.browse_directory() : ""
+                            var path = ""
+                            if (bridge) {
+                                path = modelData.type === "file"
+                                    ? bridge.browse_file(modelData.fileKind || modelData.key)
+                                    : bridge.browse_directory()
+                            }
                             if (path) {
                                 pathField.text = path
                                 bridge.save_setting(modelData.key, path)

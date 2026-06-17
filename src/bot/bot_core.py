@@ -63,6 +63,8 @@ class ZhiHuiShuBot:
         from_last_progress=False,
         last_video_title="",
         transcribe_only=False,
+        chrome_binary=None,
+        chromedriver_binary=None,
     ):
         self.base_url = base_url
         self.username = username
@@ -91,6 +93,10 @@ class ZhiHuiShuBot:
 
         # 仅转录模式：只录音转文字，不累计刷课时长
         self._transcribe_only = transcribe_only
+
+        # Browser path overrides. Empty values fall back to auto-detection.
+        self.chrome_binary = chrome_binary
+        self.chromedriver_binary = chromedriver_binary
 
         # 子模块实例（run() 中初始化，因为需要先创建 driver）
         self.driver = None
@@ -258,7 +264,10 @@ class ZhiHuiShuBot:
     def _init_modules(self):
         """初始化 WebDriver 和各子模块并注入依赖。"""
         logger.info("正在启动浏览器...")
-        self.driver = create_driver()
+        self.driver = create_driver(
+            chrome_binary=self.chrome_binary,
+            chromedriver_binary=self.chromedriver_binary,
+        )
         self.wait = WebDriverWait(self.driver, WAIT_DEFAULT)
         logger.info("浏览器已启动")
 

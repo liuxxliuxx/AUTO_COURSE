@@ -6,6 +6,7 @@ QML 后端桥接器 —— QObject 暴露给 QML 上下文。
 """
 
 import logging
+import os
 import queue
 import threading
 import time as _time
@@ -187,6 +188,55 @@ class ThreadBridge(QObject):
         from PySide6.QtWidgets import QFileDialog
         return QFileDialog.getExistingDirectory(None, "选择目录") or ""
 
+    @Slot(str, result=str)
+    def browse_file(self, kind: str) -> str:
+        from PySide6.QtWidgets import QFileDialog
+
+        if kind == "chromedriver":
+            title = "Select ChromeDriver"
+            file_filter = "ChromeDriver (chromedriver chromedriver.exe);;All files (*)"
+        elif kind == "image":
+            title = "Select image"
+            file_filter = "Images (*.png *.jpg *.jpeg *.bmp *.webp);;All files (*)"
+        else:
+            title = "Select Chrome"
+            file_filter = "Chrome (chrome.exe *.app);;All files (*)"
+
+        path, _ = QFileDialog.getOpenFileName(None, title, "", file_filter)
+        if not path:
+            return ""
+        if kind == "chrome":
+            return self._normalize_chrome_path(path)
+        return path
+
+    @Slot(result="QVariantMap")
+    def auto_detect_chrome(self):
+        from src.bot.browser import (
+            _find_cached_chrome,
+            _find_cached_chromedriver,
+            _find_system_chrome,
+            _find_system_chromedriver,
+        )
+
+        chrome = _find_system_chrome() or _find_cached_chrome() or ""
+        driver = _find_system_chromedriver() or _find_cached_chromedriver() or ""
+
+        if chrome:
+            self.db.set_setting("chrome_binary", chrome)
+        if driver:
+            self.db.set_setting("chromedriver_binary", driver)
+
+        if chrome and driver:
+            status = "Detected Chrome and ChromeDriver"
+        elif chrome:
+            status = "Detected Chrome; ChromeDriver will be resolved on start"
+        elif driver:
+            status = "Detected ChromeDriver; Chrome will be resolved on start"
+        else:
+            status = "No local Chrome/ChromeDriver found; start will try auto-download"
+
+        return {"chrome": chrome, "driver": driver, "status": status}
+
     @Slot(str, str)
     def course_selected(self, url: str, note: str):
         if url:
@@ -215,6 +265,10 @@ class ThreadBridge(QObject):
         time_limit = self._parse_int(self.db.get_setting("time_limit", "0"), 0)
         transcribe_enabled = self.db.get_setting("transcribe_enabled", "0") == "1"
         transcribe_dir = self.db.get_setting("transcribe_base_dir", "")
+        chrome_binary = self.db.get_setting("chrome_binary", "").strip() or None
+        chromedriver_binary = (
+            self.db.get_setting("chromedriver_binary", "").strip() or None
+        )
         brush_enabled = self.db.get_setting("brush_enabled", "1") == "1"
         self._transcribe_only = not brush_enabled
 
@@ -265,6 +319,8 @@ class ThreadBridge(QObject):
             from_last_progress=from_last and bool(last_title),
             last_video_title=last_title,
             transcribe_only=self._transcribe_only,
+            chrome_binary=chrome_binary,
+            chromedriver_binary=chromedriver_binary,
         )
 
         captured = self._bot
@@ -401,6 +457,22 @@ class ThreadBridge(QObject):
     # Helpers
     # ══════════════════════════════════════════════════════════════════
 
+    @staticmethod
+    def _normalize_chrome_path(path: str) -> str:
+        if not path:
+            return ""
+        if path.endswith(".app"):
+            app_name = os.path.splitext(os.path.basename(path))[0]
+            candidates = [
+                os.path.join(path, "Contents", "MacOS", app_name),
+                os.path.join(path, "Contents", "MacOS", "Google Chrome"),
+                os.path.join(path, "Contents", "MacOS", "Google Chrome for Testing"),
+            ]
+            for candidate in candidates:
+                if os.path.exists(candidate):
+                    return candidate
+        return path
+
     def _load_courses(self):
         self.coursesLoaded.emit(self._course_items())
 
@@ -472,6 +544,8 @@ class ThreadBridge(QObject):
             "auto_allday": "0",
             "auto_limit": "0",
             "bg_blur_radius": "40",
+            "chrome_binary": "",
+            "chromedriver_binary": "",
         }
         return defaults.get(key, "")
 

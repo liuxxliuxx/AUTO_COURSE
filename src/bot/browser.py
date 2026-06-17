@@ -1,15 +1,9 @@
-"""
-浏览器工厂模块 —— 负责创建配置好反检测参数的 Chrome WebDriver 实例。
-
-Chrome 选择策略（按优先级）：
-1. 项目 bin/ 目录中的捆绑 Chrome for Testing + ChromeDriver
-2. 系统 PATH 中的 chromedriver
-3. webdriver-manager 自动下载（需系统已安装 Chrome）
-"""
+"""Chrome WebDriver factory with local, system, and cached browser discovery."""
 
 import logging
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 
@@ -21,69 +15,217 @@ from webdriver_manager.chrome import ChromeDriverManager
 logger = logging.getLogger(__name__)
 
 
-def _get_bin_dir():
-    """获取 bin/ 目录的绝对路径。
+def _project_root():
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-    兼容两种运行环境：
-    - 开发模式：项目根目录下的 bin/
-    - PyInstaller 打包后：sys._MEIPASS 下的 bin/
-    """
-    # PyInstaller 打包后的临时目录
-    if getattr(sys, "frozen", False):
-        base = sys._MEIPASS
+
+def _runtime_root():
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return sys._MEIPASS
+    return _project_root()
+
+
+BIN_DIR = os.path.join(_runtime_root(), "bin")
+
+
+def _find_system_chrome():
+    """Return a system Chrome/Chrome for Testing binary path when available."""
+    if sys.platform == "darwin":
+        candidates = [
+            "/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+            os.path.expanduser(
+                "~/Applications/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
+            ),
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            os.path.expanduser("~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+        ]
     else:
-        # 开发模式：从 src/bot/browser.py 向上 3 级到项目根目录
-        base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    return os.path.join(base, "bin")
+        candidates = [
+            os.path.join(
+                os.environ.get("PROGRAMFILES", "C:\\Program Files"),
+                "Google\\Chrome for Testing\\Application\\chrome.exe",
+            ),
+            os.path.join(
+                os.environ.get("LOCALAPPDATA", ""),
+                "Google\\Chrome for Testing\\Application\\chrome.exe",
+            ),
+            os.path.join(
+                os.environ.get("PROGRAMFILES", "C:\\Program Files"),
+                "Google\\Chrome\\Application\\chrome.exe",
+            ),
+            os.path.join(
+                os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)"),
+                "Google\\Chrome\\Application\\chrome.exe",
+            ),
+            os.path.join(
+                os.environ.get("LOCALAPPDATA", ""),
+                "Google\\Chrome\\Application\\chrome.exe",
+            ),
+        ]
+    return next((path for path in candidates if os.path.exists(path)), None)
 
 
-def _get_bundled_chrome_path():
-    """返回捆绑的 chrome.exe 路径，不存在则返回 None。"""
-    chrome_exe = os.path.join(_get_bin_dir(), "chrome-win64", "chrome.exe")
-    if os.path.exists(chrome_exe):
-        return chrome_exe
-    return None
+def _find_cached_chrome():
+    """Return a cached Chrome for Testing binary path from bin/ when available."""
+    if sys.platform == "darwin":
+        candidates = [
+            os.path.join(
+                BIN_DIR,
+                "chrome-mac-arm64",
+                "Google Chrome for Testing.app",
+                "Contents",
+                "MacOS",
+                "Google Chrome for Testing",
+            ),
+            os.path.join(
+                BIN_DIR,
+                "chrome-mac-x64",
+                "Google Chrome for Testing.app",
+                "Contents",
+                "MacOS",
+                "Google Chrome for Testing",
+            ),
+        ]
+    else:
+        candidates = [os.path.join(BIN_DIR, "chrome-win64", "chrome.exe")]
+    return next((path for path in candidates if os.path.exists(path)), None)
 
 
-def _get_bundled_chromedriver_path():
-    """返回捆绑的 chromedriver.exe 路径，不存在则返回 None。"""
-    driver_exe = os.path.join(_get_bin_dir(), "chromedriver-win64", "chromedriver.exe")
-    if os.path.exists(driver_exe):
-        return driver_exe
-    return None
+def _find_system_chromedriver():
+    """Return a system chromedriver path from PATH or common locations."""
+    path = shutil.which("chromedriver")
+    if path:
+        return path
+
+    if sys.platform == "darwin":
+        candidates = [
+            "/opt/homebrew/bin/chromedriver",
+            "/usr/local/bin/chromedriver",
+            "/usr/local/lib/node_modules/chromedriver/bin/chromedriver",
+            os.path.expanduser("~/.npm-global/bin/chromedriver"),
+        ]
+    else:
+        candidates = [
+            os.path.join(
+                os.environ.get("PROGRAMFILES", "C:\\Program Files"),
+                "chromedriver",
+                "chromedriver.exe",
+            ),
+            os.path.join(
+                os.environ.get("PROGRAMFILES(X86)", "C:\\Program Files (x86)"),
+                "chromedriver",
+                "chromedriver.exe",
+            ),
+            os.path.join(
+                os.environ.get("APPDATA", ""),
+                "npm",
+                "node_modules",
+                "chromedriver",
+                "bin",
+                "chromedriver.exe",
+            ),
+        ]
+    return next((path for path in candidates if os.path.isfile(path)), None)
 
 
-def create_driver():
-    """创建配置了反检测参数的 Chrome WebDriver 实例。"""
+def _find_cached_chromedriver():
+    """Return a cached chromedriver path from bin/ when available."""
+    if sys.platform == "darwin":
+        candidates = [
+            os.path.join(BIN_DIR, "chromedriver-mac-arm64", "chromedriver"),
+            os.path.join(BIN_DIR, "chromedriver-mac-x64", "chromedriver"),
+        ]
+    else:
+        candidates = [os.path.join(BIN_DIR, "chromedriver-win64", "chromedriver.exe")]
+    return next((path for path in candidates if os.path.exists(path)), None)
+
+
+def _download_chrome():
+    """Download Chrome for Testing into bin/ when the helper script is available."""
+    script = os.path.join(_project_root(), "scripts", "download_chrome.py")
+    if not os.path.exists(script):
+        logger.warning("Chrome download helper not found: %s", script)
+        return False
+
+    logger.info("Downloading Chrome for Testing, this may take a few minutes...")
+    try:
+        subprocess.run(
+            [sys.executable, script],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        logger.info("Chrome for Testing download finished")
+        return True
+    except subprocess.CalledProcessError as exc:
+        logger.error("Chrome for Testing download failed: %s", exc.stderr or exc)
+        return False
+
+
+def create_driver(chrome_binary=None, chromedriver_binary=None):
+    """Create a Chrome WebDriver using explicit paths, system paths, or cache."""
     options = _build_chrome_options()
+    _add_runtime_chrome_options(options)
 
-    bundled_chrome = _get_bundled_chrome_path()
-    bundled_driver = _get_bundled_chromedriver_path()
+    explicit_chrome = chrome_binary if chrome_binary and os.path.exists(chrome_binary) else None
+    explicit_driver = (
+        chromedriver_binary
+        if chromedriver_binary and os.path.exists(chromedriver_binary)
+        else None
+    )
 
-    # --disable-web-security 要求独立 user-data-dir
+    if chrome_binary and not explicit_chrome:
+        logger.warning("Configured Chrome path does not exist: %s", chrome_binary)
+    if chromedriver_binary and not explicit_driver:
+        logger.warning("Configured ChromeDriver path does not exist: %s", chromedriver_binary)
+
+    if explicit_chrome:
+        logger.info("Using configured Chrome: %s", explicit_chrome)
+        options.binary_location = explicit_chrome
+    if explicit_driver:
+        logger.info("Using configured ChromeDriver: %s", explicit_driver)
+        return _create_driver_instance(options, Service(explicit_driver))
+
+    system_chrome = None if explicit_chrome else _find_system_chrome()
+    system_driver = _find_system_chromedriver()
+    if system_chrome:
+        logger.info("Using system Chrome: %s", system_chrome)
+        options.binary_location = system_chrome
+    if system_driver:
+        logger.info("Using system chromedriver: %s", system_driver)
+        return _create_driver_instance(options, Service(system_driver))
+
+    cached_chrome = None if explicit_chrome else _find_cached_chrome()
+    cached_driver = _find_cached_chromedriver()
+    if cached_chrome and cached_driver:
+        logger.info("Using cached Chrome: %s", cached_chrome)
+        logger.info("Using cached ChromeDriver: %s", cached_driver)
+        options.binary_location = cached_chrome
+        return _create_driver_instance(options, Service(cached_driver))
+
+    logger.info("No matching Chrome/ChromeDriver pair found, trying cached download...")
+    if not getattr(sys, "frozen", False) and _download_chrome():
+        cached_chrome = None if explicit_chrome else _find_cached_chrome()
+        cached_driver = _find_cached_chromedriver()
+        if cached_chrome:
+            logger.info("Using downloaded Chrome: %s", cached_chrome)
+            options.binary_location = cached_chrome
+        if cached_driver:
+            logger.info("Using downloaded ChromeDriver: %s", cached_driver)
+            return _create_driver_instance(options, Service(cached_driver))
+
+    logger.info("Using webdriver-manager for ChromeDriver")
+    return _create_driver_instance(options, Service(ChromeDriverManager().install()))
+
+
+def _add_runtime_chrome_options(options):
     user_data_dir = tempfile.mkdtemp(prefix="chrome_zhs_")
     options.add_argument(f"--user-data-dir={user_data_dir}")
     logger.info("Chrome user-data-dir: %s", user_data_dir)
 
-    if bundled_chrome and bundled_driver:
-        # ---- 优先使用捆绑的 Chrome for Testing ----
-        logger.info("使用捆绑的 Chrome: %s", bundled_chrome)
-        logger.info("使用捆绑的 ChromeDriver: %s", bundled_driver)
-        options.binary_location = bundled_chrome
-        service = Service(bundled_driver)
-    else:
-        # ---- Fallback: 系统 chromedriver 或 webdriver-manager ----
-        chromedriver_path = shutil.which("chromedriver")
-        if chromedriver_path:
-            logger.info("使用系统 chromedriver: %s", chromedriver_path)
-            service = Service(chromedriver_path)
-        else:
-            logger.info("使用 webdriver-manager 自动管理 ChromeDriver")
-            service = Service(ChromeDriverManager().install())
 
+def _create_driver_instance(options, service):
     driver = webdriver.Chrome(options=options, service=service)
-
-    # 覆盖 navigator.webdriver 属性，防止被检测为自动化工具
     driver.execute_script(
         "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
     )
@@ -91,28 +233,22 @@ def create_driver():
 
 
 def _build_chrome_options():
-    """构建 Chrome Options 配置。"""
     options = Options()
 
-    # 允许跨域视频 captureStream()（MediaRecorder 录音需要）
+    # MediaRecorder/captureStream needs an isolated profile with disabled web security.
     options.add_argument("--disable-web-security")
 
-    # 反检测参数
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--disable-infobars")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
     options.add_argument("--start-maximized")
 
-    # 稳定性参数
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-gpu")
     options.add_argument("--disable-dev-shm-usage")
-
-    # 禁用 Chrome 自动更新（对捆绑的 Chrome for Testing 是双保险）
     options.add_argument("--disable-background-networking")
 
-    # 禁用浏览器的密码保存提示
     prefs = {
         "credentials_enable_service": False,
         "profile.password_manager_enabled": False,

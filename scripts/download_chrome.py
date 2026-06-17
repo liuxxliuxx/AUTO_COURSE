@@ -1,145 +1,159 @@
-"""
-Chrome for Testing 下载脚本。
-
-从 Google 官方源下载指定版本（或最新稳定版）的 Chrome 和 ChromeDriver，
-解压到项目的 bin/ 目录供打包使用。
-
-用法：
-    python scripts/download_chrome.py              # 下载最新稳定版
-    python scripts/download_chrome.py --version 120.0.6099.109  # 下载指定版本
-"""
+"""Download Chrome for Testing and ChromeDriver into the project bin/ folder."""
 
 import argparse
 import json
 import os
+import platform
 import shutil
+import stat
 import sys
 import urllib.request
 import zipfile
 
-# Chrome for Testing 版本查询 API
 VERSION_API_URL = (
     "https://googlechromelabs.github.io/chrome-for-testing/"
     "last-known-good-versions.json"
 )
-
-# 下载 URL 模板
 DOWNLOAD_BASE = "https://storage.googleapis.com/chrome-for-testing-public"
-CHROME_ZIP = "{version}/win64/chrome-win64.zip"
-CHROMEDRIVER_ZIP = "{version}/win64/chromedriver-win64.zip"
 
-# 项目根目录（脚本所在目录的上一级）
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN_DIR = os.path.join(PROJECT_ROOT, "bin")
 
 
+def _platform_config():
+    if sys.platform == "win32":
+        label = "win64"
+    elif sys.platform == "darwin":
+        machine = platform.machine().lower()
+        label = "mac-arm64" if machine in ("arm64", "aarch64") else "mac-x64"
+    else:
+        raise RuntimeError(f"Unsupported platform: {sys.platform}")
+
+    chrome_dir = f"chrome-{label}"
+    driver_dir = f"chromedriver-{label}"
+    if sys.platform == "darwin":
+        chrome_exe = (
+            "Google Chrome for Testing.app/Contents/MacOS/"
+            "Google Chrome for Testing"
+        )
+        driver_exe = "chromedriver"
+    else:
+        chrome_exe = "chrome.exe"
+        driver_exe = "chromedriver.exe"
+
+    return {
+        "label": label,
+        "chrome_zip": f"{{version}}/{label}/{chrome_dir}.zip",
+        "driver_zip": f"{{version}}/{label}/{driver_dir}.zip",
+        "chrome_dir": chrome_dir,
+        "driver_dir": driver_dir,
+        "chrome_exe": chrome_exe,
+        "driver_exe": driver_exe,
+    }
+
+
+PLATFORM = _platform_config()
+
+
 def fetch_latest_stable_version():
-    """从 Chrome for Testing API 获取最新稳定版号。"""
-    print(f"正在查询最新稳定版本...")
+    print("Querying latest stable Chrome for Testing version...")
     try:
-        with urllib.request.urlopen(VERSION_API_URL) as resp:
-            data = json.loads(resp.read().decode())
+        with urllib.request.urlopen(VERSION_API_URL) as response:
+            data = json.loads(response.read().decode("utf-8"))
         version = data["channels"]["Stable"]["version"]
-        print(f"最新稳定版: {version}")
+        print(f"Latest stable version: {version}")
         return version
-    except Exception as e:
-        print(f"查询版本失败: {e}")
-        print("请手动指定版本号: python scripts/download_chrome.py --version <版本号>")
+    except Exception as exc:
+        print(f"Failed to query version: {exc}")
+        print("Pass --version <version> to download a specific version.")
         sys.exit(1)
 
 
 def download_file(url, dest_path):
-    """下载文件并显示进度。"""
-    print(f"  下载: {url}")
-    print(f"  保存到: {dest_path}")
+    print(f"  Download: {url}")
+    print(f"  Save to : {dest_path}")
 
     def _progress(block_count, block_size, total_size):
         downloaded = block_count * block_size
         if total_size > 0:
-            pct = min(100, downloaded * 100 // total_size)
+            percent = min(100, downloaded * 100 // total_size)
             mb_down = downloaded / (1024 * 1024)
             mb_total = total_size / (1024 * 1024)
-            print(f"\r  进度: {pct}% ({mb_down:.1f}/{mb_total:.1f} MB)", end="")
+            print(f"\r  Progress: {percent}% ({mb_down:.1f}/{mb_total:.1f} MB)", end="")
 
     try:
         urllib.request.urlretrieve(url, dest_path, _progress)
-        print()  # 换行
-    except Exception as e:
-        print(f"\n下载失败: {e}")
+        print()
+    except Exception as exc:
+        print(f"\nDownload failed: {exc}")
         sys.exit(1)
 
 
 def extract_zip(zip_path, extract_to):
-    """解压 zip 文件到目标目录。"""
-    print(f"  解压: {os.path.basename(zip_path)} -> {extract_to}")
+    print(f"  Extract: {os.path.basename(zip_path)} -> {extract_to}")
     os.makedirs(extract_to, exist_ok=True)
-    with zipfile.ZipFile(zip_path, "r") as zf:
-        zf.extractall(extract_to)
-    # 清理 zip 文件
+    with zipfile.ZipFile(zip_path, "r") as archive:
+        archive.extractall(extract_to)
     os.remove(zip_path)
 
 
+def _make_executable(path):
+    if os.path.exists(path) and sys.platform != "win32":
+        mode = os.stat(path).st_mode
+        os.chmod(path, mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
 def verify_bin():
-    """检查 bin/ 目录中的关键文件是否存在。"""
-    chrome_exe = os.path.join(BIN_DIR, "chrome-win64", "chrome.exe")
-    chromedriver_exe = os.path.join(BIN_DIR, "chromedriver-win64", "chromedriver.exe")
+    chrome_path = os.path.join(BIN_DIR, PLATFORM["chrome_dir"], PLATFORM["chrome_exe"])
+    driver_path = os.path.join(BIN_DIR, PLATFORM["driver_dir"], PLATFORM["driver_exe"])
+
+    _make_executable(chrome_path)
+    _make_executable(driver_path)
 
     ok = True
-    if os.path.exists(chrome_exe):
-        size_mb = os.path.getsize(chrome_exe) / (1024 * 1024)
-        print(f"  [OK] chrome.exe ({size_mb:.1f} MB)")
-    else:
-        print(f"  [FAIL] chrome.exe 未找到")
-        ok = False
-
-    if os.path.exists(chromedriver_exe):
-        size_mb = os.path.getsize(chromedriver_exe) / (1024 * 1024)
-        print(f"  [OK] chromedriver.exe ({size_mb:.1f} MB)")
-    else:
-        print(f"  [FAIL] chromedriver.exe 未找到")
-        ok = False
-
+    for label, path in (("Chrome", chrome_path), ("ChromeDriver", driver_path)):
+        if os.path.exists(path):
+            size_mb = os.path.getsize(path) / (1024 * 1024)
+            print(f"  [OK] {label}: {path} ({size_mb:.1f} MB)")
+        else:
+            print(f"  [FAIL] {label} not found: {path}")
+            ok = False
     return ok
 
 
 def main():
-    parser = argparse.ArgumentParser(description="下载 Chrome for Testing")
+    parser = argparse.ArgumentParser(description="Download Chrome for Testing")
     parser.add_argument(
-        "--version", "-v",
-        help="指定 Chrome 版本号，不指定则下载最新稳定版",
+        "--version",
+        "-v",
+        help="Chrome version to download. Defaults to latest stable.",
     )
     args = parser.parse_args()
-
     version = args.version or fetch_latest_stable_version()
 
-    # 清理旧版本
     if os.path.exists(BIN_DIR):
-        print(f"清理旧版本: {BIN_DIR}")
+        print(f"Cleaning old cache: {BIN_DIR}")
         shutil.rmtree(BIN_DIR)
-
     os.makedirs(BIN_DIR, exist_ok=True)
 
-    # 下载 Chrome
-    chrome_url = f"{DOWNLOAD_BASE}/{CHROME_ZIP.format(version=version)}"
-    chrome_zip = os.path.join(BIN_DIR, "chrome-win64.zip")
-    print(f"\n[1/2] 下载 Chrome for Testing v{version}")
+    chrome_url = f"{DOWNLOAD_BASE}/{PLATFORM['chrome_zip'].format(version=version)}"
+    chrome_zip = os.path.join(BIN_DIR, f"{PLATFORM['chrome_dir']}.zip")
+    print(f"\n[1/2] Download Chrome for Testing v{version} ({PLATFORM['label']})")
     download_file(chrome_url, chrome_zip)
     extract_zip(chrome_zip, BIN_DIR)
 
-    # 下载 ChromeDriver
-    chromedriver_url = f"{DOWNLOAD_BASE}/{CHROMEDRIVER_ZIP.format(version=version)}"
-    chromedriver_zip = os.path.join(BIN_DIR, "chromedriver-win64.zip")
-    print(f"\n[2/2] 下载 ChromeDriver v{version}")
-    download_file(chromedriver_url, chromedriver_zip)
-    extract_zip(chromedriver_zip, BIN_DIR)
+    driver_url = f"{DOWNLOAD_BASE}/{PLATFORM['driver_zip'].format(version=version)}"
+    driver_zip = os.path.join(BIN_DIR, f"{PLATFORM['driver_dir']}.zip")
+    print(f"\n[2/2] Download ChromeDriver v{version} ({PLATFORM['label']})")
+    download_file(driver_url, driver_zip)
+    extract_zip(driver_zip, BIN_DIR)
 
-    # 验证
-    print(f"\n验证 bin/ 目录...")
+    print("\nVerifying bin/...")
     if verify_bin():
-        print(f"\nChrome for Testing v{version} 下载完成！")
-        print(f"位置: {BIN_DIR}")
+        print(f"\nChrome for Testing v{version} is ready.")
+        print(f"Location: {BIN_DIR}")
     else:
-        print(f"\n下载验证失败，请重试。")
+        print("\nDownload verification failed.")
         sys.exit(1)
 
 

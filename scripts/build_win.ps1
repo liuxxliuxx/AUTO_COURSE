@@ -45,6 +45,7 @@ pyinstaller `
     --workpath $WORK_DIR `
     --clean `
     --noconfirm `
+    --icon assets/icon.ico `
     --add-data "${BIN_DIR};${BIN_DIR}" `
     --hidden-import keyring.backends.Windows `
     --hidden-import keyring.backends.null `

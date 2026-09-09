@@ -270,7 +270,8 @@ class ThreadBridge(QObject):
             self.db.get_setting("chromedriver_binary", "").strip() or None
         )
         brush_enabled = self.db.get_setting("brush_enabled", "1") == "1"
-        self._transcribe_only = not brush_enabled
+        map_mode = self.db.get_setting("map_mode", "0") == "1"
+        self._transcribe_only = (not brush_enabled) and not map_mode
 
         error = self._validate_start(
             login_method=login_method,
@@ -282,6 +283,7 @@ class ThreadBridge(QObject):
             transcribe_dir=transcribe_dir,
             brush_enabled=brush_enabled,
             transcribe_enabled=transcribe_enabled,
+            map_mode=map_mode,
         )
         if error:
             self.statusChanged.emit("⚠ " + error, "danger")
@@ -319,6 +321,8 @@ class ThreadBridge(QObject):
             from_last_progress=from_last and bool(last_title),
             last_video_title=last_title,
             transcribe_only=self._transcribe_only,
+            map_mode=map_mode,
+            map_course_url=video_url,
             chrome_binary=chrome_binary,
             chromedriver_binary=chromedriver_binary,
         )
@@ -326,7 +330,12 @@ class ThreadBridge(QObject):
         captured = self._bot
 
         def _on_start():
-            mode = "仅转录" if self._transcribe_only else "刷课"
+            if map_mode:
+                mode = "图谱刷课"
+            elif self._transcribe_only:
+                mode = "仅转录"
+            else:
+                mode = "刷课"
             self.botStarted.emit(mode)
 
         def _on_video_end(title, success):
@@ -363,7 +372,10 @@ class ThreadBridge(QObject):
         self._running = False
         self.stop_event.set()
         self.captcha_needed.clear()
-        label = "转录已停止" if self._transcribe_only else "已停止"
+        if self.db.get_setting("map_mode", "0") == "1":
+            label = "图谱刷课已停止"
+        else:
+            label = "转录已停止" if self._transcribe_only else "已停止"
         self.botStopped.emit(label)
 
     # ══════════════════════════════════════════════════════════════════
@@ -535,6 +547,7 @@ class ThreadBridge(QObject):
     def _default_setting(key):
         defaults = {
             "brush_enabled": "1",
+            "map_mode": "0",
             "skip_completed": "1",
             "from_last_progress": "0",
             "transcribe_enabled": "0",
@@ -567,8 +580,9 @@ class ThreadBridge(QObject):
         transcribe_dir,
         brush_enabled,
         transcribe_enabled,
+        map_mode=False,
     ):
-        if not brush_enabled and not transcribe_enabled:
+        if not brush_enabled and not transcribe_enabled and not map_mode:
             return "请至少开启刷课或语音转文字"
         if not username.strip():
             return "账号不能为空"
@@ -576,6 +590,8 @@ class ThreadBridge(QObject):
             return "密码不能为空"
         if not video_url.strip():
             return "课程视频 URL 不能为空"
+        if map_mode and "ai-smart-course-student-pro" not in video_url:
+            return "图谱刷课需要填写图谱课 URL（ai-smart-course-student-pro.zhihuishu.com）"
         if login_method == "upc" and not logged_url.strip():
             return "数字石大登录需要填写登录跳转 URL"
         if transcribe_only and not transcribe_dir.strip():

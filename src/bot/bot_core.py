@@ -14,6 +14,7 @@ from src.bot.browser import create_driver
 from src.bot.captcha import CaptchaHandler
 from src.bot.course import CourseNavigator
 from src.bot.login.upc import UPCLogin
+from src.bot.map_course import MapCourseBot
 from src.bot.login.zhihuishu import ZhihuishuLogin
 from src.bot.quiz import QuizHandler
 from src.bot.video import VideoController
@@ -63,6 +64,8 @@ class ZhiHuiShuBot:
         from_last_progress=False,
         last_video_title="",
         transcribe_only=False,
+        map_mode=False,
+        map_course_url="",
         chrome_binary=None,
         chromedriver_binary=None,
     ):
@@ -93,6 +96,10 @@ class ZhiHuiShuBot:
 
         # 仅转录模式：只录音转文字，不累计刷课时长
         self._transcribe_only = transcribe_only
+
+        # 图谱刷课模式：AI 新形态课程（知识图谱）
+        self._map_mode = map_mode
+        self._map_course_url = map_course_url
 
         # Browser path overrides. Empty values fall back to auto-detection.
         self.chrome_binary = chrome_binary
@@ -130,13 +137,18 @@ class ZhiHuiShuBot:
 
         流程：启动浏览器 → 登录 → 导航到课程页 → 逐个播放视频 → 清理
         """
-        mode_desc = "仅转录" if self._transcribe_only else "自动刷课"
+        mode_desc = "图谱刷课" if self._map_mode else ("仅转录" if self._transcribe_only else "自动刷课")
         logger.info("=" * 50)
         logger.info("智慧树%s脚本启动", mode_desc)
         logger.info("=" * 50)
 
         try:
             self.on_bot_start()
+
+            # 图谱刷课模式：直接走 MapCourseBot
+            if self._map_mode:
+                self._run_map_mode()
+                return
 
             # 1. 启动浏览器并初始化各子模块
             self._init_modules()
@@ -260,6 +272,39 @@ class ZhiHuiShuBot:
     # ========================================================================
     # 初始化
     # ========================================================================
+
+
+    def _run_map_mode(self):
+        """图谱刷课模式入口。
+
+        流程：启动浏览器 → 登录（数字石大/智慧树）→
+              解析图谱页 → 遍历知识项（视频看完、非视频停留5秒）
+        """
+        logger.info("图谱刷课模式启动")
+        try:
+            # 1. 启动浏览器并初始化各子模块（复用现有登录模块）
+            self._init_modules()
+
+            # 2. 登录（复用现有登录策略，数字石大或智慧树）
+            if not self.login_strategy.check_already_logged_in():
+                self.login_strategy.do_login()
+            self.on_login_success()
+
+            # 3. 图谱刷课
+            bot = MapCourseBot(self.driver, stop_event=self._stop_event)
+            done, total = bot.run(self._map_course_url, skip_completed=self.skip_completed)
+            self.on_bot_stop()
+            logger.info("图谱刷课完成: %d/%d", done, total)
+        except Exception as e:
+            logger.error("图谱刷课异常: %s", e, exc_info=True)
+            self.on_bot_stop()
+        finally:
+            if self.driver:
+                try:
+                    self.driver.quit()
+                except Exception:
+                    pass
+            logger.info("图谱刷课已退出")
 
     def _init_modules(self):
         """初始化 WebDriver 和各子模块并注入依赖。"""

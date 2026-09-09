@@ -290,6 +290,7 @@ ApplicationWindow {
                 onStartStopClicked: bridge.toggle_running()
                 onBrushToggled: function(checked) { bridge.save_setting("brush_enabled", checked ? "1" : "0") }
                 onTranscribeToggled: function(checked) { bridge.save_setting("transcribe_enabled", checked ? "1" : "0") }
+                onMapModeToggled: function(checked) { bridge.save_setting("map_mode", checked ? "1" : "0") }
                 onCourseSelected: function(url, note) { bridge.course_selected(url, note) }
                 onCaptchaConfirmClicked: bridge.confirm_captcha()
 
@@ -335,7 +336,13 @@ ApplicationWindow {
 
         function onBotStarted(mode) {
             mainPageItem.setRunning(true)
-            var label = mode === "仅转录" ? "● 仅转录中" : "● 正在刷课"
+            var label = ""
+            if (mode === "仅转录")
+                label = "● 仅转录中"
+            else if (mode === "图谱刷课")
+                label = "● 图谱刷课中"
+            else
+                label = "● 正在刷课"
             mainPageItem.setStatus(label, mainWindow.theme.success)
         }
 

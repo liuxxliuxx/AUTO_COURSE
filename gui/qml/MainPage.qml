@@ -14,6 +14,7 @@ Item {
     signal startStopClicked()
     signal brushToggled(bool checked)
     signal transcribeToggled(bool checked)
+    signal mapModeToggled(bool checked)
     signal courseSelected(string url, string note)
     signal captchaConfirmClicked()
 
@@ -148,7 +149,7 @@ Item {
                         id: powerBtn
                         anchors.centerIn: parent
                         running: false
-                        enabled: brushSwitch.checked || transcribeSwitch.checked
+                        enabled: brushSwitch.checked || transcribeSwitch.checked || mapSwitch.checked
                         onClicked: root.startStopClicked()
                     }
                 }
@@ -301,6 +302,22 @@ Item {
                         }
                         onToggled: function(value) {
                             root.transcribeToggled(value)
+                        }
+                    }
+
+                    SwitchControl {
+                        id: mapSwitch
+                        Layout.fillWidth: true
+                        title: "图谱刷课"
+                        subtitle: "AI 新形态课程知识图谱自动学习"
+                        accentColor: "#8B5CF6"
+                        activeBackground: "#F3EEFC"
+                        checked: false
+                        Component.onCompleted: {
+                            checked = bridge ? bridge.get_setting("map_mode") === "1" : false
+                        }
+                        onToggled: function(value) {
+                            root.mapModeToggled(value)
                         }
                     }
                 }

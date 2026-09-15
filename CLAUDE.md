@@ -4,15 +4,19 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
 
 ## 当前状态
 
-本仓库正在做 **v1 → v2 架构迁移**，分支 `rewrite/electron`。
+本仓库是 **v2**（v1 → v2 迁移已完成），分支 `rewrite/electron`。
 
 - **v2（当前唯一入口）**：Electron + Vue 3 + TypeScript + Playwright
-- **v1（冻结参考）**：PySide6 + QML + Selenium，tag `v1-pyside-final`
-- v1 为什么还在仓库里、什么条件下才能删 → 见 `LEGACY.md`
-- v1 → v2 的每一处行为变化 → 见 `docs/MIGRATION.md`
+- **v1（已删除，只留在 git 历史里）**：PySide6 + QML + Selenium，tag `v1-pyside-final`
 
-**改代码前先确认改的是哪一套。** `src/bot/`、`gui/`、`database.py` 是 v1，
-v2 的业务代码在 `src/main/`。
+需要对照 v1 行为时用 git 取出来，不要往工作区里拷：
+
+```bash
+git worktree add /tmp/v1 v1-pyside-final
+```
+
+仓库里**唯一**保留的 Python runtime 是 `python/transcriber/`（SenseVoice STT worker）。
+- v1 → v2 的每一处行为变化 → 见 `docs/MIGRATION.md`
 
 ## 运行
 

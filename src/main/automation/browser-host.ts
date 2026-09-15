@@ -42,10 +42,24 @@ function downloadDir(): string {
   return join(tmpdir(), 'auto-course-browser-host', 'downloads')
 }
 
+/**
+ * 宿主 profile 目录（cookie / localStorage / 登录态都在这儿）。
+ *
+ * 由主进程传进来，落在应用数据目录下 —— 这样**会话能跨应用重启保留**，
+ * 不用每次开课都重新登录。以前用的是系统临时目录，macOS 会定期清理，
+ * 用户第二天打开就得重登一次。
+ * 没传时退回临时目录（只在手工直连宿主调试时发生）。
+ */
+function profileDir(): string {
+  const arg = process.argv.find((a) => a.startsWith('--profile-dir='))
+  if (arg) return arg.slice('--profile-dir='.length)
+  return join(tmpdir(), 'auto-course-browser-host')
+}
+
 export async function startBrowserHost(): Promise<void> {
   // 必须换一个 userData 目录：Electron 对 userData 有排他锁，
   // 沿用主应用的目录会让宿主起不来。
-  app.setPath('userData', join(tmpdir(), 'auto-course-browser-host'))
+  app.setPath('userData', profileDir())
 
   app.commandLine.appendSwitch('disable-features', 'MediaRouter')
 

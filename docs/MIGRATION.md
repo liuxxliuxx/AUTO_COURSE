@@ -252,28 +252,35 @@ v1 的 keyring 数据保持不动，可随时回退到 v1。
 
 ---
 
-## 六、Legacy 保留与删除
+## 六、Legacy 已删除
 
-按 handoff §24，v1 实现**暂时全部保留**：
+按 handoff §24/§25：v1 先与 v2 并存，**核心功能在真实账号上验证通过后**再删。
+2026-09-15 用户确认 mac / win 构建、传统课、图谱课、数字石大登录均正常
+（智慧树账号密码登录因站点改版失效，但按用户要求「先不管」，反正要按新 UI 重写），
+删除条件达成，v1 已从工作区移除：
 
 ```
-src/                      Python 业务层（Selenium）
-gui/                      PySide6 + QML
-main.py / database.py / config.py
-src/transcriber/          旧转录三件套（1600+ 行）
-scripts/build_win.ps1     PyInstaller / NSIS
-scripts/build_mac.sh      py2app
+删除  src/bot/ src/transcriber/ src/ui/ src/utils/ src/db/ src/constants.py src/__init__.py
+      gui/  main.py  database.py  config.py  main_tkinter.py.bak
+      scripts/build_win.ps1  scripts/build_mac.sh  scripts/create_installer.ps1
+      scripts/generate_nsi.py  scripts/setup_mac.py  scripts/download_chrome.py
+      scripts/fix_ps1_encoding.py  requirements.txt
+      app/ init/ page/ proxy/ sql/ events/（只剩 __pycache__ 的空壳目录）
+保留  python/transcriber/  —— v2 唯一保留的 Python runtime（SenseVoice worker）
 ```
 
-删除条件（handoff §25 Phase 9）：上面表格中标 ⚠️ 的项全部通过端到端验证之后，
-执行 `refactor: remove selenium browser backend` 与
-`refactor: remove pyside and qml application` 两个提交。
+删掉的是**代码**，v1 的行为对照仍可随时取回：
 
-**唯一确定可以删除的是 `src/transcriber/`** —— v2 的转录链路已端到端跑通，
-它的行为已被 `python/transcriber/worker.py` + `services/media.ts` +
-`services/transcription-service.ts` 取代。之所以留着，是因为
-`audio_capture.py` 里记着 v1 踩过的坑（MediaRecorder 不传 mimeType/timeslice、
-WASAPI 回环设备选择），在打包环境复验之前仍是有价值的参考。
+```bash
+git worktree add /tmp/v1 v1-pyside-final     # v1 冻结 tag
+```
+
+v1 的 keyring 凭据与 `~/Library/Application Support/zhihuishu_auto_course/` 下的
+数据库没有被 v2 改动，回退到 v1 仍然可用。
+
+**未删除**：`dist/`、`build/`（v1 的 py2app / PyInstaller 产物，已在 `.gitignore` 里）
+与仓库根目录的 `course_progress.db`。它们是本机遗留物、不入版本控制，
+如需清理直接删即可；`course_progress.db` 是数据不是代码，故保留待确认。
 
 ---
 
@@ -316,3 +323,224 @@ v1 用的是 Selenium 的 `is_displayed()`，它会跳过这类容器；
 **已知局限**：真实站点的课程页需要登录才能到达，
 所以这次修复**没有在你的实际场景里复现验证过**，
 依据是"对齐 v1 已验证过的 `is_displayed()` 语义"。
+
+### 2026-09-15 传统课实测
+
+- 旧 macOS 应用包尚未包含上述可见性修复；Chrome 实测腾讯验证码容器
+  `#tcaptcha_transform_dy` 为 `opacity:0; top:-1000000px`。重新打包后，
+  同一课程已通过初始化并进入视频监控，没有再因休眠容器暂停。
+- 传统课监控内部按毫秒累计等待时间，但 `elapsedSeconds` 原样返回该值，
+  导致每日进度与单次时长限制放大 1000 倍。现在在返回及日志显示时换算成秒。
+  停止测试新增「上报秒数不得大于实际运行秒数」断言。
+- 验证：传统课 DOM 与主循环共 38 项通过；计时修复后的停止回归单独通过，
+  类型检查及 arm64 应用打包通过。两次线上运行均在短暂启动播放后跳回
+  `https://www.zhihuishu.com/`，持续播放尚未通过 —— 跳转原因已定位并修复，
+  见下一节。
+
+### 传统课跳回首页：「检测到异常脚本」（已定位并修复）
+
+**现象**：真实课程点进去、播放几秒后弹出
+「检测到异常脚本，为保证您的正常学习进度，请您关闭插件后，回到学堂重新进入视频学习页正常学习」，
+再过 3 秒页面 `location.replace('https://www.zhihuishu.com')` 跳回学堂首页，刷课中断。
+
+**站点侧的依据**：把线上 bundle（`studyvideoh5` 的
+`app.<hash>.js` / `stuStudy.<hash>.js`，javascript-obfuscator 混淆，字符串数组
+解码后）读出来，会跳首页的只有三条路径，两条与播放有关：
+
+```js
+// ① 播放器容器上的守卫：任何**不可信**（合成）点击
+document.getElementById('container').addEventListener('click', function (e) {
+  e.preventDefault()
+  if (e instanceof Event && !e.isTrusted) {
+    $alert('检测到异常脚本，…', '提示', { showConfirmButton: false, … })
+    ablePlayerX('container').pause()
+    setTimeout(function () { window.location.replace('https://www.zhihuishu.com') }, 3000)
+  }
+})
+
+// ② Vue 的 videoClick：最后一个参数是事件对象
+if (lastArg instanceof PointerEvent && false === lastArg.isTrusted) this['notTrustScript']()
+
+// ③ onTime：倍速播放
+if (1.8 < document.querySelector('#container video').playbackRate) { …同上… }
+```
+
+另外还有一个每 60s 跑一次的 `checkout()`，检查
+`XMLHttpRequest`、`XMLHttpRequest.prototype.open`、
+`Element.prototype.addEventListener` 是否原生、`window.OCS` 是否存在。
+四项在 v2 的 Electron 宿主里**实测全部通过**，所以它不是本次的原因；
+③ 也不适用（v2 从不碰 `playbackRate`）。
+
+**根因**：点击被遮罩挡住时，v2 的 `VideoController.tryClick()` 退回了
+`element.click()`（`page.evaluate` 里的合成点击）。合成点击的
+`isTrusted === false`，正好命中 ① / ② —— 于是弹框、暂停、3 秒后跳首页，
+表现就是「刚开始播放就跳回去」。
+v1 的 4 级播放策略全是真实的 WebDriver 点击（ActionChains / `element.click()`），
+没有合成点击，所以 v1 时代踩不到这条守卫。
+
+**验证**（都不依赖真实账号）：
+
+| 检查 | 结果 |
+|---|---|
+| 打包产物（Electron 宿主）四项信任条件 | `xhrNative`/`xhrOpenNative`/`addELNative` 全为 `true`，`window.OCS` 不存在 → `checkout()` 不成立 |
+| 宿主其它指纹（记录备查） | `navigator.webdriver === true`、UA 带 `Electron/44.3.0`（站点侧当前未检查这两项） |
+| 夹具 `tests/fixtures/anti-script-guard.html` | 复刻 ① 的守卫 + 播放器点击捕获层（播放按钮被压住，普通 click 必然失败） |
+| `tests/integration/anti-script-guard.test.ts` | `play()` 全程无不可信点击；把 `tryClick` 改回旧的 JS 兜底时该用例失败（`scriptDetected === true`），改回修复版即通过 |
+
+**修复**：自动化代码不再派发任何合成点击。
+
+- `locators.ts::safeClick`：`click()` → `click({ force: true })`。`force` 跳过的只是
+  「遮挡 / 可见性 / 稳定性」这些前置检查，点击仍由浏览器输入管线发出，
+  `isTrusted === true`，与真人点击等价。
+- `video-controller.ts::tryClick`、`quiz.ts` 选项兜底、`map/navigator.ts::openResource`
+  统一走 `safeClick`。
+- `classic/navigator.ts`：学习进度卡片的关闭按钮改为「evaluate 里取按钮中心坐标 →
+  `page.mouse.click()`」；没有可点的关闭按钮时仍然直接移除节点（不派发事件）。
+  「学前必读」弹窗在找不到可见关闭按钮时改为移除 DOM，不再 JS 点击。
+
+**用户可见**：不再弹「检测到异常脚本」，视频连续播放，不再跳回首页。
+
+### 恢复播放 / 点击"反应很慢"（已修）
+
+**现象**（用户反馈）：
+- 视频暂停后（刚开始播放时、或刚关掉一个弹窗后）再次开播，中间要等很久；
+- 其它有些点击也半天没反应。
+
+**实测基线**（DOM 夹具，`VideoController.play()` 端到端耗时）：
+
+| 场景 | 修复前 | 修复后 |
+|---|---|---|
+| 大播放按钮可见，首次开播 | 3 065 ms | 43 ms |
+| 视频播过一段被暂停，恢复播放 | **18 044 ms** | 29 ms |
+| 大播放按钮被遮罩挡住 | 7 053 ms | 1 323 ms |
+
+**原因**（三处叠加）：
+1. `play()` 开头固定 `SLEEP.long`（2 秒）；
+2. `firstVisible(page, PLAY_BTN_CSS, TIMEOUT.medium)` 是**每个候选各等一个超时**：
+   3 个候选 × 5 秒 = 15 秒，只因为播放器在暂停时把大播放按钮藏了起来；
+3. 每级策略点完固定睡 1 秒再读状态；被遮罩挡住时 Playwright 的 `click()`
+   还会先重试到超时才失败。
+
+**修复**：
+- `video-controller.ts` 增加**策略 0：原生恢复** —— 视频已经播过一段
+  （`currentTime > 0`）又被暂停时直接调 `video.play()`，毫秒级返回，
+  且完全**不产生点击事件**（顺带绕开上一节的防脚本守卫）。
+- 可见性探测改成 `firstVisibleWithin(..., 预算)`：预算是整个策略共享的，
+  预算内轮询、命中即返回（`PLAY_PROBE`，`constants.ts`）。
+- 点击后的等待改成 `waitForPlaying()` 自适应轮询，不再固定睡 1 秒。
+- `locators.ts` 的 `safeClick` 先做一次 `elementFromPoint` 遮挡判断：
+  被遮住就直接按坐标点击，不再先白等一个 timeout。
+
+**回归测试**：`classic-dom.test.ts`「暂停后恢复走原生快路径，1 秒内完成」、
+`anti-script-guard.test.ts` 里 `safeClick` 的"被遮挡时 500 ms 内返回"断言。
+
+### 第一个课程被跳过（已修）
+
+**现象**（用户反馈）：多个课时从第二个开始播放，第一个永远不刷。
+
+**原因**：课程页一加载，站点就把列表**第一项**标成 `current_play`（自动选中并载入
+播放器）。而起点用的是 `firstPlayable()` = `nextVideoAfter(null)` ——
+`nextVideoAfter` 的语义是"当前项**之后**的下一项"，于是直接跳过了第一个视频。
+（v1 的 `_run` 也是这么取起点的，属于同源缺陷。）
+
+**修复**（`classic/navigator.ts::firstPlayable`）：起点只看列表顺序，
+取第一个"可播放"（有标题、非小章节、按配置跳过已完成）的项，**不看 `current_play`**。
+`nextVideoAfter()` 保持原语义不动（循环里靠它推进）。
+
+**回归测试**：`classic-dom.test.ts` 三条 —— `firstPlayable` 在
+`current_play` 指向当前项时不跳到下一项；跳过已完成的 1.1 但不越到 1.3；
+`skipCompleted=false` 时从列表第一项开始。
+
+**连带修掉的第二处**（同一根因）：`nextVideoAfter()` 定位"当前位置"的顺序
+从「`current_play` 优先」改成「**传入标题优先**，找不到再退回 `current_play`」。
+v1 是前者，而站点一加载就把第一项标成 `current_play`，于是「从上次进度继续」
+也会被带跑 —— 明明该从上次那节之后开始，却从第一项之后开始。
+循环里机器人自己知道刚处理完哪一节，标题比 DOM 可信；`current_play` 保留为兜底
+（列表改版、标题被改写时仍能找到位置）。这是**有意偏离 v1** 的一处，
+`runner-loop.test.ts` 的「从上次进度继续」用例现在真的走 lastVideoTitle 这条路径。
+
+### 登录会话复用与持久化（新增）
+
+**现象**（用户反馈）：课程窗口里已经是登录状态，一点开始还是跳回登录页重登一次；
+每次开课都要重新登录。
+
+**原因**：
+1. 两个登录提供方的 `alreadyLoggedIn()` 都是"导航到站点首页，然后判断当前 URL
+   是否包含 `settings.loggedUrl`" —— 首页 URL 永远不会包含那个工作台地址，
+   所以检查恒为 false，等于每次必登；v1 的 `check_already_logged_in()` 同病。
+2. Browser Host 的 profile 放在系统临时目录（`<tmpdir>/auto-course-browser-host`），
+   macOS 会定期清理，会话根本留不住。
+
+**修复**：
+- 新增 `automation/login/session-check.ts`：
+  - `checkCourseSession()`：**直接导航到课程页**看最终落在哪。
+    智慧树学习页是 SPA，未登录时 HTTP 依然 200、没有 `Location` 头，
+    跳登录页是前端 JS 干的（实测 `page.request` 拿不到信号），所以只能用最终 URL 判断；
+    会话里连该站点的 cookie 都没有时先短路，省掉这次导航。
+  - `isUpcPortalSessionAlive()`：这个**纯请求**就能判断（实测未登录时
+    `i.upc.edu.cn` 302 到 `cas.upc.edu.cn/cas/login`），走 `page.request`（浏览器自身的
+    请求能力，与页面共享 cookie）。
+  - `isLoginUrl()`：认智慧树 `login./passport.` 与 CAS `/cas/login` 等形态。
+- 两个登录提供方都改成：**课程页会话还在 → 直接复用，一步都不多做**；
+  数字石大再退一步：门户会话还在就不必再注入账号密码（CAS 表单根本不会出现，
+  旧实现在这里会弹"请手动登录"并干等用户）。
+- Host profile 落到 `<userData>/browser-profile`（`browser-host.ts` 的
+  `--profile-dir`），**跨应用重启保留**；首次启动会把旧临时目录里的会话搬过来。
+- `ClassicCourseNavigator.navigate()` 在已经在目标 URL 时跳过重复导航
+  （登录态检查刚把我们带过去）。
+
+**回归测试**：`tests/unit/session-check.test.ts`（`isLoginUrl` 的正反例、
+`hasCookiesFor` 的父域/空会话）。
+
+**实测**（打包产物，`--profile-dir` 指向新目录）：
+
+| 步骤 | 结果 |
+|---|---|
+| 宿主 A：打开 `www.zhihuishu.com` | 写入 4 个 cookie，`Cookies` 文件落盘 |
+| 宿主 B：**同一个 profile 目录重新启动宿主进程** | cookie 仍在（会话跨进程/跨重启保留） |
+
+（应用层"是否真的把 `--profile-dir` 指向 `<userData>/browser-profile`"一处
+只做了代码核对：验证时本机已有一个 dev 实例占着单实例锁，起不来第二个；
+宿主侧对 `--profile-dir` 的行为已由上面两步实测确认。）
+
+### 顺带修掉：下载取消时的未捕获异常
+
+全量测试偶发以 1 退出，报 `Unhandled Errors: ENOENT .../cancel.bin`：
+`media.ts::downloadMedia` 在 `shouldStop` 取消时用 `stream.close()` 关掉 fd，
+但缓冲里还可能残留写入，之后以 ENOENT 冒成未捕获异常带崩进程/测试。
+另外写入期间一旦 stream 报错，主循环里没有 error 监听，同样会变成未捕获异常。
+
+**修复**：常驻一个 `error` 监听并把错误记下来，循环里检查；
+等落盘改成 `once('finish')` / `once('error')`；取消时用 `stream.destroy()`
+而不是 `close()`。`tests/unit/media.test.ts` 连跑 3 次都是 11/11 通过。
+
+### 智慧树登录：被弹到登录页之后登不进去、也不重试（已修）
+
+**现象**（用户反馈）：课程页一旦把未登录的会话重定向到登录页，程序就卡住 ——
+不会自动重新登录，也没有任何提示，不会重试。
+
+**两个原因**：
+1. **登录页换了。** 2026-09 智慧树把登录搬到独立的「登录中心」
+   `https://login.zhihuishu.com/`（Element UI 单页应用，被重定向去的也是这里）；
+   我们的流程还在打 v1 的老入口 `onlineweb.zhihuishu.com` + 老选择器
+   （`#lUsername` / `.wall-sub-btn`）—— 那边表单已经藏进弹窗、**不可见**，
+   所有候选都等超时也命中不到（实测：老页面上 4 个 input 全部 `visible=false`）。
+2. **兜底提示用错了 API。** `captcha.checkAndHandle()` 在屏幕上没有验证码时
+   立刻返回 false，而"找不到输入框就请人工登录"这条兜底用的正是它 ——
+   所以既不弹提示也不等待，直接返回失败：用户看到的就是"停在登录页不动了"。
+
+**修复**：
+
+| 位置 | 改动 |
+|---|---|
+| `constants.ts` | 登录入口 → `ZHIHUISHU_LOGIN_URL = https://login.zhihuishu.com/`；选择器换成新 UI：`input[name=mobile]`、`input[type=password]`、`[class*="btn-block__grandient_login"]`、`.el-tabs__item`（老选择器保留为后续候选） |
+| `zhihuishu.ts` | 登录改成**最多 3 轮**，每轮重新进登录页；成功判据从"URL 含 `loggedUrl`"（那是数字石大工作台，智慧树登录永远跳不过去）改成"**离开登录页**"；滑块只在最后一轮请人工 |
+| `captcha.ts` | 新增 `requestManualHelp()`（不检测验证码，直接请求人工），`checkAndHandle()` 复用它 |
+| `upc.ts` | "CAS 表单注入失败"的兜底同样改用 `requestManualHelp` |
+
+**验证**（局部，未跑全量）：真实登录中心上四个主选择器全部命中**可见**元素
+（`input[name=mobile]` / `input[type=password]` / `.btn-block__grandient_login`（文本"登录"）
+/ `//div[contains(@class,'el-tabs__item')][contains(text(),'账号登录')]`）；
+新夹具 `tests/fixtures/login/center.html` + `tests/integration/zhs-login.test.ts`
+三条用例：填表并判定成功、第一轮没表单会重来第二轮成功、点了登录仍停在登录页时
+重试用完才请人工。

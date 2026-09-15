@@ -100,6 +100,32 @@ describe('VideoController', () => {
     expect(progress.current).toMatch(/^\d+:\d{2}$/)
   })
 
+  /**
+   * 「暂停后恢复」的延迟回归。
+   *
+   * 旧实现里 play() 会先固定睡 2 秒，再逐个候选各等 5 秒可见性超时，
+   * 实测恢复一次要 18 秒（用户反馈"点半天没反应"）。
+   * 现在走原生 play() 快路径 + 预算内轮询，应该是毫秒级。
+   */
+  it('暂停后恢复走原生快路径，1 秒内完成', async () => {
+    await waitForMedia()
+    await page.evaluate(() => {
+      const v = document.querySelector('#courseVideo') as HTMLVideoElement
+      v.currentTime = 0.4
+      // 模拟真实播放器：播放过之后大播放按钮就不再显示了
+      ;(document.getElementById('bigPlay') as HTMLElement).style.display = 'none'
+      return v.play()
+    })
+    await page.waitForTimeout(300)
+    await page.evaluate(() => (document.querySelector('#courseVideo') as HTMLVideoElement).pause())
+
+    const video = new VideoController(page, silentLog)
+    const startedAt = Date.now()
+    expect(await video.play()).toBe(true)
+    expect(await video.isPlaying()).toBe(true)
+    expect(Date.now() - startedAt).toBeLessThan(1_000)
+  })
+
   it('getMediaUrl 能取到直链与 Cookie（blob 流返回空串）', async () => {
     await waitForMedia()
     const video = new VideoController(page, silentLog)
@@ -378,9 +404,8 @@ describe('ClassicCourseNavigator', () => {
   /**
    * 把 current_play 挪到指定标题上。
    *
-   * 真实流程里这是"点了某个视频"的结果；`nextVideoAfter` 与 v1 一样
-   * **优先用 DOM 的 current_play 定位当前位置**，其次才用传入的标题。
-   * 所以测试必须先摆好 current_play，否则测的是回退分支。
+   * 真实流程里这是"点了某个视频"的结果；`nextVideoAfter` 按传入标题定位，
+   * 找不到才回退到 current_play —— 所以这些用例大多需要先摆好 DOM。
    */
   const setCurrentPlay = async (title: string): Promise<void> => {
     await page.locator('li.video').evaluateAll((nodes, wanted) => {
@@ -399,13 +424,53 @@ describe('ClassicCourseNavigator', () => {
     expect(next?.title).toBe('1.3 审美与形式')
   })
 
-  it('DOM current_play 优先于传入的标题（与 v1 一致）', async () => {
+  /**
+   * 起点（firstPlayable）不能参考 current_play。
+   *
+   * 课程页一加载，站点就把列表第一项标成 current_play（自动选中并载入播放器）。
+   * 早期实现用 `nextVideoAfter(null)` 取起点 —— 它返回的是"当前项的下一项"，
+   * 于是第一个视频永远刷不到，用户看到的是"有多个课时从第二个开始播放"。
+   */
+  it('firstPlayable 不会被 current_play 带跑：仍从第一个未完成项开始', async () => {
     const nav = makeNavigator(true)
-    // 用户手动点了 1.1，但调用方传的是 1.2。
-    // 以 DOM 为准 → 下一个是 1.2；若以标题为准则会得到 1.3。
+    // 夹具默认 current_play = 1.2（真实站点是第一个视频，这里两者等价于"当前项"）
+    const start = await nav.firstPlayable()
+    expect(start?.title).toBe('1.2 艺术的起源')
+  })
+
+  it('firstPlayable 跳过已完成的 1.1，但不会跳到 1.3', async () => {
+    await setCurrentPlay('1.1 绪论')
+    const nav = makeNavigator(true)
+    const start = await nav.firstPlayable()
+    expect(start?.title).toBe('1.2 艺术的起源')
+  })
+
+  it('firstPlayable 在 skipCompleted=false 时从列表第一项开始', async () => {
+    await setCurrentPlay('1.2 艺术的起源')
+    const nav = makeNavigator(false)
+    const start = await nav.firstPlayable()
+    expect(start?.title).toBe('1.1 绪论')
+  })
+
+  /**
+   * 定位当前位置时**标题优先于 DOM 的 current_play**（与 v1 相反，见 nav 注释）。
+   *
+   * 站点一加载就把第一项标成 current_play，若以它为准，
+   * 「从上次进度继续」会从第一项之后开始而不是上次那节之后。
+   */
+  it('传入标题优先于 DOM current_play', async () => {
+    const nav = makeNavigator(true)
+    // DOM 停留在 1.1（站点自动选中），调用方说"刚处理完 1.2"
     await setCurrentPlay('1.1 绪论')
     const next = await nav.nextVideoAfter('1.2 艺术的起源')
-    expect(next?.title).toBe('1.2 艺术的起源')
+    expect(next?.title).toBe('1.3 审美与形式')
+  })
+
+  it('标题不在列表里（改版/改名）时退回 current_play 定位', async () => {
+    const nav = makeNavigator(true)
+    await setCurrentPlay('1.2 艺术的起源')
+    const next = await nav.nextVideoAfter('已被改名的旧标题')
+    expect(next?.title).toBe('1.3 审美与形式')
   })
 
   it('找不到 current_play 时回退到传入标题', async () => {

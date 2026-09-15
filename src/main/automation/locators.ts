@@ -59,18 +59,85 @@ export async function isVisible(locator: Locator | null): Promise<boolean> {
   }
 }
 
-/** 安全点击：元素不可交互时退回 JS click（v1 对登录按钮就是这么做的）。 */
+/**
+ * 在预算内轮询「第一个可见的候选」，命中就立刻返回。
+ *
+ * 与 `firstVisible` 的差别：预算是**整个策略**共享的，而不是每个选择器各等一遍
+ * 超时。播放器按钮在暂停/播放之间的显隐会来回切，用 `firstVisible` 时
+ * 3 个候选各等 5 秒，用户看到的就是"点了半天没反应"（实测恢复播放要 18 秒）。
+ */
+export async function firstVisibleWithin(
+  scope: Scope,
+  selectors: readonly string[],
+  budgetMs: number,
+  pollMs = 120
+): Promise<Locator | null> {
+  const deadline = Date.now() + Math.max(0, budgetMs)
+  for (;;) {
+    for (const selector of selectors) {
+      const locator = scope.locator(selector).first()
+      if (await isVisible(locator)) return locator
+    }
+    if (Date.now() >= deadline) return null
+    await new Promise((resolve) => setTimeout(resolve, pollMs))
+  }
+}
+
+/**
+ * 元素中心是否被别的元素盖住 —— 真人点下去会点在那个元素上。
+ *
+ * 用来提前识别"普通 click 一定会以 element intercepts pointer events 超时"，
+ * 直接改走坐标点击；否则每次被遮罩的点击都要白等一个 timeout。
+ */
+async function isCovered(locator: Locator): Promise<boolean> {
+  try {
+    return await locator.evaluate((el) => {
+      const rect = el.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) return false
+      const x = rect.left + rect.width / 2
+      const y = rect.top + rect.height / 2
+      if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) return false
+      const top = document.elementFromPoint(x, y)
+      if (!top) return false
+      return top !== el && !el.contains(top) && !top.contains(el)
+    })
+  } catch {
+    return false
+  }
+}
+
+/** 按元素中心坐标点击（`force: true`）：跳过遮挡/稳定性检查，事件仍然可信。 */
+async function clickAtCenter(locator: Locator, timeoutMs: number): Promise<boolean> {
+  try {
+    await locator.click({ force: true, timeout: timeoutMs })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 可信点击：先正常点，失败（被遮罩挡住 / 元素不稳定）再退回 `force: true`。
+ *
+ * **绝对不要退回 `element.click()`。** 那会派发 `isTrusted === false` 的合成
+ * 事件，而智慧树学习页在 `#container` 上挂了防脚本守卫：只要收到一个不可信
+ * 点击就弹「检测到异常脚本…」、暂停播放，并在 3 秒后
+ * `location.replace('https://www.zhihuishu.com')` —— 表现就是刷课刚开始就
+ * 跳回学堂首页（详见 docs/MIGRATION.md）。
+ *
+ * `force: true` 跳过的只是「遮挡 / 可见性 / 稳定性」这些前置检查，点击本身
+ * 仍由浏览器输入管线发出，`isTrusted === true`，与真人点击等价。
+ *
+ * 被遮罩挡住时**不再先等一个 timeout**：直接走坐标点击，省掉每次 3 秒的空转。
+ */
 export async function safeClick(locator: Locator, timeoutMs = 5_000): Promise<boolean> {
+  if (await isCovered(locator)) return clickAtCenter(locator, timeoutMs)
+
   try {
     await locator.click({ timeout: timeoutMs })
     return true
   } catch {
-    try {
-      await locator.evaluate((el) => (el as HTMLElement).click())
-      return true
-    } catch {
-      return false
-    }
+    return clickAtCenter(locator, timeoutMs)
   }
 }
 

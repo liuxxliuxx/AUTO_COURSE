@@ -182,15 +182,25 @@ export async function downloadMedia(options: DownloadOptions): Promise<{ ok: boo
 
   const totalBytes = Number(response.headers.get('content-length') ?? 0)
   const stream = createWriteStream(outputPath)
+  // 必须常驻一个 error 监听：写入期间出错（磁盘满、文件被删、取消后残留写入）
+  // 会让 stream 抛 'error' 事件，没人接就是未捕获异常 —— 会直接带崩进程/测试。
+  let streamError: Error | null = null
+  stream.on('error', (error: Error) => {
+    streamError = error
+  })
   let downloaded = 0
   let lastLogged = 0
 
   try {
     const reader = response.body.getReader()
     for (;;) {
+      if (streamError) throw streamError
+
       if (shouldStop?.()) {
         await reader.cancel().catch(() => undefined)
-        stream.close()
+        // 用 destroy 而不是 close：缓冲里可能还有没落盘的块，
+        // 关掉 fd 之后那些写入会以 ENOENT 之类的错误冒出来。
+        stream.destroy()
         return { ok: false, bytes: downloaded, error: '已取消' }
       }
 
@@ -211,12 +221,15 @@ export async function downloadMedia(options: DownloadOptions): Promise<{ ok: boo
       }
     }
 
+    // 之前出错过就不再等 'finish'（它不会再触发），直接抛给外层
+    if (streamError) throw streamError
     await new Promise<void>((resolve, reject) => {
-      stream.end(() => resolve())
-      stream.on('error', reject)
+      stream.once('finish', () => resolve())
+      stream.once('error', reject)
+      stream.end()
     })
   } catch (error) {
-    stream.close()
+    stream.destroy()
     return { ok: false, bytes: downloaded, error: `下载中断: ${String(error)}` }
   }
 

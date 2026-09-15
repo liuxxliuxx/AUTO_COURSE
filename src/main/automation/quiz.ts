@@ -22,7 +22,7 @@ import {
   QUIZ_OPTION_CSS,
   SLEEP
 } from './constants'
-import { isVisible, textOf } from './locators'
+import { isVisible, safeClick, textOf } from './locators'
 import type { Logger } from '../services/logger'
 
 // ============================================================================
@@ -188,17 +188,11 @@ export class QuizService {
       choice.locator('div').first()
     ]
 
+    // 只发可信点击：合成点击（element.click()）会被学习页的防脚本守卫抓到，
+    // 见 docs/MIGRATION.md 与 locators.ts::safeClick。
     const clickChoice = async (): Promise<boolean> => {
       for (const target of targets) {
-        const clicked = await target
-          .click({ timeout: 2_000 })
-          .then(() => true)
-          .catch(() => false)
-        if (clicked) return true
-        const viaJs = await target
-          .evaluate((el) => ((el as HTMLElement).click(), true))
-          .catch(() => false)
-        if (viaJs) return true
+        if (await safeClick(target, 2_000)) return true
       }
       return false
     }

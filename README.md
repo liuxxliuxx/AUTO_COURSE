@@ -4,8 +4,9 @@
 验证码人工介入、语音转文字、自动调度与每日进度统计。
 
 > **当前分支 `rewrite/electron` 是 v2 重写版**（Electron + Vue 3 + TypeScript + Playwright）。
-> v1（PySide6 + Selenium）冻结在 tag `v1-pyside-final`，仍在仓库里作为行为对照，
-> 详见 [docs/MIGRATION.md](docs/MIGRATION.md)。
+> v1（PySide6 + Selenium）已从工作区删除，冻结在 tag `v1-pyside-final`；
+> 需要对照行为时 `git worktree add /tmp/v1 v1-pyside-final`。
+> 迁移过程与每一处行为变化见 [docs/MIGRATION.md](docs/MIGRATION.md)。
 
 ---
 

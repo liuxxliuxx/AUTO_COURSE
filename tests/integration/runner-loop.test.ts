@@ -215,12 +215,17 @@ describe('ClassicCourseRunner 主循环', () => {
     // 点击约 3.5s，20 秒素材的监控至少要跑十几秒，9 秒必然落在监控循环里
     const timer = setTimeout(() => harness.stop(), 9000)
 
+    const startedAt = performance.now()
     const outcome = await run(harness)
+    const wallSeconds = (performance.now() - startedAt) / 1000
     clearTimeout(timer)
 
     expect(outcome.reason).toBe('user')
     expect(harness.watched.length).toBeGreaterThan(0)
     expect(harness.watched.reduce((a, b) => a + b, 0)).toBeGreaterThan(0)
+    // 上报单位必须是秒：毫秒误传会把几秒播放放大成数千秒。
+    expect(outcome.watchedSeconds).toBeLessThanOrEqual(wallSeconds + 1)
+    expect(harness.watched.reduce((a, b) => a + b, 0)).toBe(outcome.watchedSeconds)
 
     await harness.page.close()
   }, 300_000)
@@ -236,14 +241,22 @@ describe('ClassicCourseRunner 主循环', () => {
     await harness.page.close()
   }, 120_000)
 
-  it('从上次进度继续：不从列表最前面开始', async () => {
-    const harness = await makeHarness({ skipCompleted: true }, (page) =>
-      setCurrentPlay(page, '1.3 审美与形式')
+  /**
+   * 「从上次进度继续」的起点必须由 lastVideoTitle 决定，不能被 DOM 的
+   * current_play 带跑：站点一加载就把列表第一项标成 current_play，
+   * 以它为准的话会从第一项之后开始，而不是"上次那节之后"。
+   */
+  it('从上次进度继续：从 lastVideoTitle 之后开始，而不是从列表最前面', async () => {
+    const harness = await makeHarness(
+      { skipCompleted: true, fromLastProgress: true },
+      // 站点自动选中第一项（已完成），这是真实页面加载后的样子
+      (page) => setCurrentPlay(page, '1.1 绪论')
     )
+    ;(harness.context as { lastVideoTitle: string }).lastVideoTitle = '1.3 审美与形式'
     const outcome = await run(harness)
 
     expect(harness.completed.length).toBeGreaterThan(0)
-    // current_play 在 1.3，起点从它之后算，所以不该先处理 1.1 / 1.2
+    // 上次完成的是 1.3 → 从它之后开始；1.1 已完成、1.2 在它前面，都不该先处理
     expect(harness.completed[0]).not.toBe('1.1 绪论')
     expect(harness.completed[0]).not.toBe('1.2 艺术的起源')
     expect(outcome.reason).toBe('completed')

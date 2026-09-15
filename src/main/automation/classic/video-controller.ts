@@ -6,11 +6,32 @@
  *   2. 控制栏播放按钮
  *   3. 点击 <video> 本体
  *   4. 直接调 video.play()
+ *
+ * 另外加了一步**原生恢复**（放在最前面）：视频已经播过一段（`currentTime > 0`）
+ * 又被暂停时，直接调 `video.play()` 是毫秒级、且不产生任何点击事件 ——
+ * "暂停后恢复"（刚开始/刚关掉弹题）走这条路，不再去点按钮。
+ *
+ * **所有点击都必须是可信事件**：v1 的四个策略全是真实的 WebDriver 点击
+ * （ActionChains / element.click），而学习页在 `#container` 上装了防脚本守卫，
+ * 收到 `isTrusted === false` 的点击就弹「检测到异常脚本…」并在 3 秒后跳回学堂
+ * 首页。v2 早期版本在这里兜底用了 `element.click()`，正是刷课跑几秒就跳首页的
+ * 原因（详见 docs/MIGRATION.md）。现在兜底统一走 `safeClick`（`force: true`），
+ * 依然不派发合成点击。
+ *
+ * 等待策略：可见性探测与播放态判定都改成**预算内轮询**（`firstVisibleWithin` /
+ * `waitForPlaying`），命中即返回。旧实现里"每个候选各等一个超时 + 每级策略后固定
+ * 睡 1 秒"，实测让"恢复播放"要 18 秒；现在同样的路径是毫秒级。
  */
 
 import type { Locator, Page } from 'playwright-core'
-import { PLAY_BTN_CSS, PLAY_CONTROL_BTN_CSS, SLEEP, TIMEOUT, VIDEO_ELEMENT_CSS, VIDEO_SRC_EXTRACTION_JS } from '../constants'
-import { firstVisible, isVisible } from '../locators'
+import {
+  PLAY_BTN_CSS,
+  PLAY_CONTROL_BTN_CSS,
+  PLAY_PROBE,
+  VIDEO_ELEMENT_CSS,
+  VIDEO_SRC_EXTRACTION_JS
+} from '../constants'
+import { firstVisibleWithin, isVisible, safeClick } from '../locators'
 import type { Logger } from '../../services/logger'
 
 export interface VideoProgress {
@@ -37,39 +58,35 @@ export class VideoController {
    * 每级策略后都读一次真实播放状态，不做"点了就算成功"的假设。
    */
   async play(): Promise<boolean> {
-    await this.page.waitForTimeout(SLEEP.long)
+    if (await this.isPlaying()) return true
+
+    // 策略 0：暂停后恢复 —— 原生 play() 最快，且完全不产生点击事件
+    if (await this.tryNativeResume()) return true
 
     // 策略 1：大播放按钮
-    const bigPlay = await firstVisible(this.page, PLAY_BTN_CSS, TIMEOUT.medium)
-    if (bigPlay && (await this.tryClick(bigPlay))) {
-      if (await this.isPlaying()) {
-        this.log.info('已通过大播放按钮开始播放')
-        return true
-      }
+    const bigPlay = await firstVisibleWithin(this.page, PLAY_BTN_CSS, PLAY_PROBE.bigButton)
+    if (bigPlay && (await this.tryClick(bigPlay)) && (await this.waitForPlaying())) {
+      this.log.info('已通过大播放按钮开始播放')
+      return true
     }
 
     // 策略 2：控制栏播放按钮
-    const ctrl = await firstVisible(this.page, [PLAY_CONTROL_BTN_CSS], TIMEOUT.short)
-    if (ctrl && (await this.tryClick(ctrl))) {
-      if (await this.isPlaying()) {
-        this.log.info('已通过控制栏播放按钮开始播放')
-        return true
-      }
+    const ctrl = await firstVisibleWithin(this.page, [PLAY_CONTROL_BTN_CSS], PLAY_PROBE.control)
+    if (ctrl && (await this.tryClick(ctrl)) && (await this.waitForPlaying())) {
+      this.log.info('已通过控制栏播放按钮开始播放')
+      return true
     }
 
     // 策略 3：点击 video 本体
-    if (await this.tryClick(this.video)) {
-      if (await this.isPlaying()) {
-        this.log.info('已通过点击 video 元素开始播放')
-        return true
-      }
+    if ((await this.tryClick(this.video)) && (await this.waitForPlaying())) {
+      this.log.info('已通过点击 video 元素开始播放')
+      return true
     }
 
     // 策略 4：直接调 play()
     try {
       await this.video.evaluate((el) => (el as HTMLVideoElement).play())
-      await this.page.waitForTimeout(SLEEP.medium)
-      if (await this.isPlaying()) {
+      if (await this.waitForPlaying()) {
         this.log.info('已通过 video.play() 开始播放')
         return true
       }
@@ -83,18 +100,52 @@ export class VideoController {
 
   private async tryClick(locator: Locator | null): Promise<boolean> {
     if (!(await isVisible(locator))) return false
-    const target = locator as Locator
-    try {
-      await target.click({ timeout: 3_000 })
-    } catch {
-      // 页面常有遮罩层；退回 JS click（v1 也是这么兜底的）
-      const ok = await target
-        .evaluate((el) => ((el as HTMLElement).click(), true))
-        .catch(() => false)
-      if (!ok) return false
+    // 页面常有遮罩层（播放器自己的点击捕获层）；safeClick 会改点同一个坐标，
+    // 但事件仍然可信 —— 合成点击会触发学习页的防脚本守卫。
+    return safeClick(locator as Locator, PLAY_PROBE.click)
+  }
+
+  /**
+   * 等"进入播放态"，命中即返回。
+   * 替代原来"每次点击后固定睡 1 秒" —— 视频起播得快就立刻继续。
+   */
+  private async waitForPlaying(timeoutMs: number = PLAY_PROBE.playing): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs
+    for (;;) {
+      if (await this.isPlaying()) return true
+      if (Date.now() >= deadline) return false
+      await this.page.waitForTimeout(PLAY_PROBE.pollMs)
     }
-    await this.page.waitForTimeout(SLEEP.medium)
-    return true
+  }
+
+  /**
+   * 视频播过一段（currentTime > 0）且处于暂停时，直接调原生 play()。
+   *
+   * 这是"暂停后恢复"最快的路径：一次 evaluate，毫秒级返回；
+   * 而且不产生任何点击事件，天然绕开学习页的防脚本守卫。
+   * 自动播放被拦（play() 返回 rejected promise）时返回 false，
+   * 由调用方继续走点击策略。
+   */
+  private async tryNativeResume(): Promise<boolean> {
+    const state = await this.video
+      .evaluate((el) => {
+        const v = el as HTMLVideoElement
+        return { paused: v.paused, ended: v.ended, currentSeconds: v.currentTime }
+      })
+      .catch(() => null)
+
+    if (!state || !state.paused || state.ended || state.currentSeconds <= 0) return false
+
+    try {
+      await this.video.evaluate((el) => (el as HTMLVideoElement).play())
+    } catch {
+      return false
+    }
+    if (await this.waitForPlaying(PLAY_PROBE.nativeResume)) {
+      this.log.info('已恢复播放（原生 play()）')
+      return true
+    }
+    return false
   }
 
   async isPlaying(): Promise<boolean> {

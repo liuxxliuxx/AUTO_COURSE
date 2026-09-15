@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>学习页防脚本守卫夹具</title>
+    <!--
+      复刻智慧树学习页（studyvideoh5）的「异常脚本」守卫，用于回归测试
+      「刷课跑几秒跳回首页」这个线上问题。真实站点的两份等价代码：
+
+        document.getElementById('container').addEventListener('click', function (e) {
+          e.preventDefault()
+          if (e instanceof Event && !e.isTrusted) { ...弹框 + 暂停 + 3s 后跳首页... }
+        })
+
+        // Vue 的 videoClick：最后一个参数是事件对象
+        if (lastArg instanceof PointerEvent && false === lastArg.isTrusted) this.notTrustScript()
+
+      隐藏的第三份（checkout 每 60s 跑一次）检查 XHR/addEventListener 是否原生，
+      与点击无关，夹具这里不复刻。
+
+      另外按真实站点摆一个盖住播放按钮的「点击捕获层」：真人点视频区域时由它
+      切换播放/暂停；也正因为有它，Playwright 的普通 click 会判定
+      "element intercepts pointer events" 而失败 —— 正是我们踩坑的场景。
+    -->
+  </head>
+  <body>
+    <div id="container" style="position: relative; width: 480px; height: 270px; background: #000">
+      <video
+        id="courseVideo"
+        width="480"
+        height="270"
+        loop
+        muted
+        src="/assets/tiny.webm"
+        style="position: absolute; left: 0; top: 0"
+      ></video>
+
+      <div
+        id="bigPlay"
+        class="vjs-big-play-button"
+        style="position: absolute; left: 200px; top: 105px; z-index: 1"
+      >
+        ▶
+      </div>
+
+      <!-- 播放器的点击捕获层：覆盖整个播放区，压在大播放按钮之上 -->
+      <div
+        id="clickLayer"
+        style="position: absolute; left: 0; top: 0; width: 480px; height: 270px; z-index: 2"
+      ></div>
+    </div>
+
+    <script>
+      window.__clicks = []
+      window.__scriptDetected = false
+      window.__redirected = false
+
+      const video = document.getElementById('courseVideo')
+      const container = document.getElementById('container')
+
+      // ---- 防脚本守卫（与真实站点同语义，并额外记录每次点击）----
+      container.addEventListener(
+        'click',
+        (ev) => {
+          ev.preventDefault()
+          window.__clicks.push({
+            target: ev.target && ev.target.id ? ev.target.id : String(ev.target && ev.target.tagName),
+            trusted: ev.isTrusted,
+            pointer: ev instanceof PointerEvent
+          })
+          if (ev instanceof Event && !ev.isTrusted) {
+            // 真实站点：$alert('检测到异常脚本…') + pause() + 3s 后
+            // window.location.replace('https://www.zhihuishu.com')
+            window.__scriptDetected = true
+            video.pause()
+          }
+        },
+        true
+      )
+
+      // ---- 播放器的点击捕获层：真人/可信点击到这里就是"点视频区域" ----
+      document.getElementById('clickLayer').addEventListener('click', () => {
+        if (video.paused) void video.play()
+        else video.pause()
+      })
+
+      // ---- 大播放按钮（被捕获层压住，Playwright 普通 click 会失败）----
+      document.getElementById('bigPlay').addEventListener('click', () => {
+        void video.play()
+      })
+
+      video.addEventListener('loadedmetadata', () => {
+        window.__mediaReady = true
+      })
+      if (video.readyState >= 1) window.__mediaReady = true
+    </script>
+  </body>
+</html>

@@ -15,7 +15,7 @@
 
 import type { Page } from 'playwright-core'
 import { SLEEP, TIMEOUT } from '../constants'
-import { isVisible } from '../locators'
+import { isVisible, safeClick } from '../locators'
 import type { Logger } from '../../services/logger'
 
 // ============================================================================
@@ -234,18 +234,12 @@ export class MapCourseNavigator {
   /** 打开一个资源卡片。 */
   async openResource(resource: ResourceItem): Promise<boolean> {
     const card = this.page.locator(RESOURCE_CARD_CSS).nth(resource.index)
-    try {
-      await card.scrollIntoViewIfNeeded({ timeout: TIMEOUT.short }).catch(() => undefined)
-      await card.click({ timeout: TIMEOUT.medium })
-      await this.page.waitForTimeout(SLEEP.extraLong)
-      return true
-    } catch {
-      const ok = await card
-        .evaluate((el) => ((el as HTMLElement).click(), true))
-        .catch(() => false)
-      await this.page.waitForTimeout(SLEEP.extraLong)
-      return ok
-    }
+    await card.scrollIntoViewIfNeeded({ timeout: TIMEOUT.short }).catch(() => undefined)
+    // 只发可信点击：卡片刻意贴在学习页容器上，合成点击会触发站点的防脚本守卫
+    // （见 locators.ts::safeClick）。
+    const ok = await safeClick(card, TIMEOUT.medium)
+    await this.page.waitForTimeout(SLEEP.extraLong)
+    return ok
   }
 
   /** 非视频资源：停留若干秒即可。 */

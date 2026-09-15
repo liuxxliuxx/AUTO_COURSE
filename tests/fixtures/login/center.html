@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>登录中心</title>
+    <!--
+      复刻 2026-09 改版后的智慧树「登录中心」（Element UI 单页应用）。
+      结构与线上一致（assets/login-center.html 抓下来核对过）：
+
+        .el-tabs__item      账号登录 / 学号登录 / 工号登录 / 扫码
+        input[name=mobile]  请输入手机号或用户名
+        input[type=password] 请输入密码
+        .base-button-component.btn-block__grandient_login  登录
+
+      两个开关（用 URL 参数控制）：
+        ?slowform=1  第一次加载**不给表单**（模拟"页面还没渲染完/改版又变了"），
+                     第二次加载才给 —— 用来验证"失败会重来"
+        ?fail=1      点了登录也不跳转（模拟密码错/验证码没过）
+    -->
+  </head>
+  <body>
+    <div class="site-root-wrap">
+      <div class="login-tabs el-tabs">
+        <div class="el-tabs__header is-top">
+          <div class="el-tabs__nav">
+            <div class="el-tabs__item is-top is-active">账号登录</div>
+            <div class="el-tabs__item is-top">学号登录</div>
+            <div class="el-tabs__item is-top">工号登录</div>
+            <div class="el-tabs__item is-top">扫码</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="form" class="login-form">
+        <input class="el-input__inner" name="mobile" type="text" placeholder="请输入手机号或用户名" />
+        <input class="el-input__inner" type="password" placeholder="请输入密码" />
+        <div class="info large base-button-component btn-block__grandient_login">登录</div>
+      </div>
+    </div>
+
+    <script>
+      const params = new URLSearchParams(location.search)
+      const attempts = Number(sessionStorage.getItem('zhsAttempts') || '0') + 1
+      sessionStorage.setItem('zhsAttempts', String(attempts))
+      window.__attempt = attempts
+
+      // slowform：第一次不给表单
+      if (params.get('slowform') === '1' && attempts < 2) {
+        document.getElementById('form').remove()
+      }
+
+      const btn = document.querySelector('.btn-block__grandient_login')
+      btn?.addEventListener('click', () => {
+        const mobile = document.querySelector('input[name="mobile"]')
+        const password = document.querySelector('input[type="password"]')
+        window.__submitted = { mobile: mobile?.value ?? '', password: password?.value ?? '' }
+        if (params.get('fail') === '1') return // 停在登录页
+        location.href = '/classic-course.html'
+      })
+    </script>
+  </body>
+</html>

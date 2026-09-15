@@ -13,7 +13,8 @@
 
 import { app } from 'electron'
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright-core'
-import { mkdirSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { BrowserSession } from './browser-session'
 import { createLogger } from '../services/logger'
@@ -26,6 +27,11 @@ const FIRST_WINDOW_TIMEOUT_MS = 40_000
 export interface BrowserServiceOptions {
   /** 宿主把页面下载落到哪里 */
   downloadDir: string
+  /**
+   * 宿主 profile 目录（cookie / 登录态）。
+   * 放在应用数据目录下，跨重启保留 —— 会话能复用就不必重新登录。
+   */
+  profileDir: string
 }
 
 export class BrowserService {
@@ -54,8 +60,13 @@ export class BrowserService {
    */
   private async launchHost(): Promise<ElectronApplication> {
     mkdirSync(this.options.downloadDir, { recursive: true })
+    this.migrateLegacyProfile()
 
-    const args = [`--browser-host`, `--download-dir=${this.options.downloadDir}`]
+    const args = [
+      `--browser-host`,
+      `--download-dir=${this.options.downloadDir}`,
+      `--profile-dir=${this.options.profileDir}`
+    ]
     if (!app.isPackaged) {
       // 未打包时 process.execPath 是 Electron 本体，必须显式告诉它 app 在哪
       args.unshift(app.getAppPath())
@@ -97,6 +108,28 @@ export class BrowserService {
     })
 
     return electronApp
+  }
+
+  /**
+   * 把老版本留在系统临时目录里的会话搬过来（只做一次）。
+   *
+   * 老版本用 `<tmpdir>/auto-course-browser-host` 当 profile，macOS 会定期清理，
+   * 而且用户升级后第一件事就是被要求重新登录。这里在新目录还没有会话时
+   * 拷一份过去，升级体验就是"登录态还在"。
+   */
+  private migrateLegacyProfile(): void {
+    const legacy = join(tmpdir(), 'auto-course-browser-host')
+    if (!existsSync(legacy)) return
+    // 新目录已经建过（不管里面有没有会话）就不要动它
+    if (existsSync(this.options.profileDir)) return
+    if (!existsSync(join(legacy, 'Cookies'))) return
+    try {
+      // 目标目录不存在时 cp 才会把 src **当成** dst（而不是拷进 dst 里面）
+      cpSync(legacy, this.options.profileDir, { recursive: true })
+      logger.info(`已把旧临时目录的浏览器会话搬到 ${this.options.profileDir}`)
+    } catch (error) {
+      logger.warn(`搬迁旧浏览器会话失败（忽略，照常新建会话）：${String(error)}`)
+    }
   }
 
   private async ensureHost(): Promise<ElectronApplication> {

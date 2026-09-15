@@ -50,6 +50,8 @@ export interface AppPaths {
   transcriptionDir: string
   /** Browser Host 的下载落盘目录 */
   downloadDir: string
+  /** Browser Host 的 profile 目录（cookie / 登录态，跨重启保留） */
+  browserProfileDir: string
 }
 
 /** 所有需要转发到 Renderer 的事件 */
@@ -80,7 +82,10 @@ export class ServiceContainer {
       databaseFile: join(userData, 'auto_course.db'),
       credentialsFile: join(userData, 'credentials.bin'),
       transcriptionDir: join(userData, 'transcription'),
-      downloadDir: join(userData, 'downloads')
+      downloadDir: join(userData, 'downloads'),
+      // 刻意放在 userData 下而不是系统临时目录：
+      // 会话要跨应用重启保留，否则每次开课都要重新登录
+      browserProfileDir: join(userData, 'browser-profile')
     }
 
     this.db = new Database(this.paths.databaseFile)
@@ -88,7 +93,10 @@ export class ServiceContainer {
 
     this.credentials = new CredentialStore(this.paths.credentialsFile)
     this.settings = new SettingsService(this.db)
-    this.browser = new BrowserService({ downloadDir: this.paths.downloadDir })
+    this.browser = new BrowserService({
+      downloadDir: this.paths.downloadDir,
+      profileDir: this.paths.browserProfileDir
+    })
     this.transcription = new TranscriptionService({
       bus: this.bus,
       getSettings: () => this.settings.getAll(),

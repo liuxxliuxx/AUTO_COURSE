@@ -19,6 +19,7 @@ import { VideoController } from './video-controller'
 import { CaptchaService } from '../captcha'
 import { QuizService } from '../quiz'
 import { createLoginProvider, type LoginProvider } from '../login/provider'
+import { isLoginUrl } from '../login/session-check'
 import {
   CLICK_VIDEO_MAX_RETRIES,
   INTERVAL,
@@ -84,7 +85,12 @@ export class ClassicCourseRunner implements CourseRunner {
       : await navigator.firstPlayable()
 
     if (!next) {
-      log.info('没有待处理的视频')
+      // 停在登录页说明"登录没成功"，比"没有待处理的视频"有用得多
+      if (isLoginUrl(page.url())) {
+        log.error(`没有待处理的视频：当前停在登录页（${page.url()}），登录可能没有成功`)
+      } else {
+        log.info('没有待处理的视频')
+      }
       return { completedCount: 0, watchedSeconds: 0, reason: 'pool-exhausted' }
     }
 
@@ -279,7 +285,7 @@ export class ClassicCourseRunner implements CourseRunner {
     while (elapsed < TIMEOUT.videoMonitorMax) {
       if (ctx.shouldStop()) {
         log.info('收到停止信号，退出视频监控')
-        return { ended: false, stopped: true, elapsedSeconds: elapsed }
+        return { ended: false, stopped: true, elapsedSeconds: elapsed / 1000 }
       }
 
       // ---- 弹题（高频）----
@@ -315,7 +321,7 @@ export class ClassicCourseRunner implements CourseRunner {
         log.info(
           `视频播放完毕: ${title} (${state.currentSeconds.toFixed(0)}/${state.durationSeconds.toFixed(0)}s)`
         )
-        return { ended: true, stopped: false, elapsedSeconds: elapsed }
+        return { ended: true, stopped: false, elapsedSeconds: elapsed / 1000 }
       }
 
       // ---- 防止自动暂停 ----
@@ -331,7 +337,7 @@ export class ClassicCourseRunner implements CourseRunner {
       if (elapsed - lastProgressLog >= INTERVAL.progressLog) {
         lastProgressLog = elapsed
         log.info(
-          `进度: ${state.currentSeconds.toFixed(0)}/${state.durationSeconds.toFixed(0)}s (已监控 ${elapsed}s)`
+          `进度: ${state.currentSeconds.toFixed(0)}/${state.durationSeconds.toFixed(0)}s (已监控 ${elapsed / 1000}s)`
         )
       }
 
@@ -340,6 +346,6 @@ export class ClassicCourseRunner implements CourseRunner {
     }
 
     log.warn(`视频监控超时: ${title}`)
-    return { ended: false, stopped: false, elapsedSeconds: elapsed }
+    return { ended: false, stopped: false, elapsedSeconds: elapsed / 1000 }
   }
 }

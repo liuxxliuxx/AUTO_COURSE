@@ -12,6 +12,7 @@ import type { LoginContext, LoginProvider, LoginResult } from './provider'
 import type { LoginMethod } from '@shared/types'
 import { SLEEP, TIMEOUT, UPC_BASE_URL, UPC_FORWARD_URL, UPC_LOGIN_IFRAME_CSS } from '../constants'
 import { firstVisible } from '../locators'
+import { checkCourseSession, isLoginUrl, isUpcPortalSessionAlive } from './session-check'
 
 export class UpcLogin implements LoginProvider {
   readonly method: LoginMethod = 'upc'
@@ -20,25 +21,41 @@ export class UpcLogin implements LoginProvider {
     const { session, credentials, settings, captcha, log } = ctx
     const loggedUrl = settings.loggedUrl
 
-    if (await this.alreadyLoggedIn(ctx)) {
-      log.info('已登录，无需重新登录')
-      return { ok: true, alreadyLoggedIn: true, message: '已登录' }
+    // 1. 课程页会话还能用 → 完全跳过登录（一步都不多做）
+    const courseSession = await checkCourseSession(ctx)
+    if (courseSession.loggedIn) {
+      log.info(`复用现有登录会话：${courseSession.detail}`)
+      return { ok: true, alreadyLoggedIn: true, message: '已登录（复用现有会话）' }
     }
+    log.info(`需要登录：${courseSession.detail}`)
 
-    await session.navigate(UPC_BASE_URL)
-    await session.playwrightPage.waitForTimeout(SLEEP.extraLong)
-    log.info(`CAS 页面 URL: ${session.getCurrentUrl()}`)
+    // 2. 门户会话还有效 → 不用再注入账号密码（CAS 表单不会出现）
+    if (await isUpcPortalSessionAlive(session, log)) {
+      log.info('数字石大门户会话仍有效，跳过账号密码注入')
+    } else {
+      await session.navigate(UPC_BASE_URL)
+      await session.playwrightPage.waitForTimeout(SLEEP.extraLong)
+      log.info(`CAS 页面 URL: ${session.getCurrentUrl()}`)
 
-    const injected = await this.injectCredentials(ctx, credentials.username, credentials.password)
-    if (!injected) {
-      // 注入失败时不抛错：退回人工登录，与 v1「找不到表单就走人工」的兜底一致
-      log.error('CAS 登录表单注入失败')
-      const ok = await captcha.checkAndHandle('login', '请在浏览器中手动完成登录')
-      if (!ok) return { ok: false, alreadyLoggedIn: false, message: 'CAS 登录表单不可用' }
+      const injected = await this.injectCredentials(
+        ctx,
+        credentials.username,
+        credentials.password
+      )
+      if (!injected) {
+        // 注入失败时不抛错：退回人工登录，与 v1「找不到表单就走人工」的兜底一致。
+        // 必须用 requestManualHelp（而不是 checkAndHandle）：后者只在屏幕上
+        // 真有验证码时才提示，没有验证码就直接返回 false —— 等于不提示也不等，
+        // 用户看到的就是"停在登录页不动了"。
+        log.error('CAS 登录表单注入失败')
+        const ok = await captcha.requestManualHelp('login', '请在浏览器中手动完成登录')
+        if (!ok) return { ok: false, alreadyLoggedIn: false, message: 'CAS 登录表单不可用' }
+      }
+
+      await session.playwrightPage.waitForTimeout(SLEEP.medium)
     }
 
     // 跳转到课程中心应用
-    await session.playwrightPage.waitForTimeout(SLEEP.medium)
     log.info('正在跳转到应用页面...')
     await session.navigate(UPC_FORWARD_URL)
     await session.playwrightPage.waitForTimeout(SLEEP.medium)
@@ -46,17 +63,11 @@ export class UpcLogin implements LoginProvider {
     await captcha.checkAndHandle('login', '登录时出现验证码，请完成验证')
 
     const ok = await this.waitForRedirect(ctx, loggedUrl)
+    if (isLoginUrl(session.getCurrentUrl())) {
+      // 说清楚，否则后面只会看到"没有待处理的视频"，很难判断是登录没成功
+      log.warn(`登录流程结束后仍停在登录页：${session.getCurrentUrl()}`)
+    }
     return { ok, alreadyLoggedIn: false, message: ok ? '登录成功' : '登录后未检测到目标地址，继续执行' }
-  }
-
-  private async alreadyLoggedIn(ctx: LoginContext): Promise<boolean> {
-    const { session, settings, log } = ctx
-    await session.navigate(UPC_BASE_URL)
-    await session.playwrightPage.waitForTimeout(SLEEP.pageLoad)
-    const current = session.getCurrentUrl()
-    log.info(`当前 URL: ${current}`)
-    if (settings.loggedUrl && current.includes(settings.loggedUrl)) return true
-    return false
   }
 
   /** 在 CAS iframe 内注入凭据并触发登录。 */

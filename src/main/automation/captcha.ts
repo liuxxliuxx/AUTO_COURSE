@@ -173,13 +173,18 @@ export class CaptchaService {
         ] as const
       )
 
-      // 被排除的候选：调试用。误报排查时把日志级别调到 debug 就能看到。
-      if (result.rejected.length) {
-        this.deps.log.debug(`验证码检测排除了 ${result.rejected.length} 个候选：`)
-        for (const line of result.rejected) this.deps.log.debug(`  · ${line}`)
-      }
       if (result.hit) {
-        this.deps.log.debug(`验证码命中：${result.hit.kind} → ${result.hit.detail}`)
+        // 命中时把「命中了什么」和「同时排除了什么」都打到 info ——
+        // 界面上看得见。误报排查全靠这两行：
+        // 命中行说明是谁触发的，排除行说明其它候选为什么没被算进去。
+        this.deps.log.info(`验证码命中：${result.hit.kind} → ${result.hit.detail}`)
+        if (result.rejected.length) {
+          this.deps.log.info(`同时排除了 ${result.rejected.length} 个候选：`)
+          for (const line of result.rejected) this.deps.log.info(`  · ${line}`)
+        }
+      } else if (result.rejected.length) {
+        // 没命中时这些只是噪音（视频监控每 30 秒都会跑一次检测），降到 debug
+        for (const line of result.rejected) this.deps.log.debug(`验证码候选已排除 · ${line}`)
       }
 
       return result.hit
@@ -198,6 +203,19 @@ export class CaptchaService {
     if (!hit) return false
 
     this.deps.log.warn(`检测到验证码（${hit.kind}: ${hit.detail}）`)
+    return this.requestManualHelp(scene, message)
+  }
+
+  /**
+   * 直接请求人工介入，**不检测验证码**。
+   *
+   * 用于"自动登录失败，请手动登录"这类兜底。以前这里用的是 `checkAndHandle`，
+   * 而它在屏幕上没有验证码时立刻返回 false —— 于是既不弹提示也不等待，
+   * 用户看到的就是"被扔在登录页，然后不动了"。
+   */
+  async requestManualHelp(scene: CaptchaScene, message: string): Promise<boolean> {
+    if (this.deps.shouldStop()) return false
+
     const confirmed = await this.deps.requestCaptcha(scene, message)
     if (!confirmed) {
       this.deps.log.info('收到停止请求，放弃等待验证码')

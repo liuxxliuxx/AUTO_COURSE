@@ -12,7 +12,15 @@
 // URL
 // ============================================================================
 
-export const ZHIHUISHU_BASE_URL = 'https://onlineweb.zhihuishu.com/'
+/**
+ * 智慧树登录入口。
+ *
+ * 2026-09 改版：登录搬到了独立的「登录中心」（Element UI 单页应用），
+ * 老的 `onlineweb.zhihuishu.com` 上只剩一个隐藏在弹窗里、不可见的表单 ——
+ * 旧选择器在那儿永远找不到可见输入框，登录流程直接失败。
+ * 课程页未登录时也是被重定向到这里（`?origin=zhs&service=...`）。
+ */
+export const ZHIHUISHU_LOGIN_URL = 'https://login.zhihuishu.com/'
 
 export const UPC_BASE_URL = 'https://i.upc.edu.cn/'
 
@@ -29,22 +37,48 @@ export const DEFAULT_LOGGED_URL =
 // 智慧树登录页
 // ============================================================================
 
-export const LOGIN_TAB_CSS = ['a.cur[href="#signin"]', '#qSignin.cur', 'a.cur']
-export const LOGIN_TAB_XPATH = ["//a[contains(text(),'手机号')]", "//a[@href='#signin']"]
-
-export const LOGIN_USERNAME_CSS = [
-  '#lUsername',
-  'input[name="username"]',
-  'input[placeholder*="手机号"]'
+/**
+ * 登录方式标签页。
+ *
+ * 新版登录中心是 Element UI 的 tabs（账号登录 / 学号登录 / 工号登录 / 扫码），
+ * 默认停在「账号登录」；旧版的 `a.cur` 那套留着兜底。
+ */
+export const LOGIN_TAB_CSS = ['.el-tabs__item', 'a.cur[href="#signin"]', '#qSignin.cur', 'a.cur']
+export const LOGIN_TAB_XPATH = [
+  "//div[contains(@class,'el-tabs__item')][contains(text(),'账号登录')]",
+  "//div[contains(@class,'el-tabs__item')][contains(text(),'密码登录')]",
+  "//a[contains(text(),'手机号')]",
+  "//a[@href='#signin']"
 ]
 
-export const LOGIN_PASSWORD_CSS = ['#lPassword', 'input[name="password"]', 'input[type="password"]']
+export const LOGIN_USERNAME_CSS = [
+  'input[name="mobile"]',
+  'input[placeholder*="手机号"]',
+  'input[placeholder*="用户名"]',
+  '#lUsername',
+  'input[name="username"]'
+]
 
-export const LOGIN_BTN_CSS = ['.wall-sub-btn', 'span.wall-sub-btn']
+export const LOGIN_PASSWORD_CSS = [
+  'input[type="password"]',
+  'input[placeholder*="密码"]',
+  '#lPassword',
+  'input[name="password"]'
+]
+
+export const LOGIN_BTN_CSS = [
+  '[class*="btn-block__grandient_login"]',
+  '.wall-sub-btn',
+  'span.wall-sub-btn'
+]
 export const LOGIN_BTN_XPATH = [
+  "//div[contains(@class,'base-button-component')][contains(text(),'登录')]",
   "//span[contains(@class,'wall-sub-btn')]",
   "//span[contains(text(),'登') and contains(@class,'wall')]"
 ]
+
+/** 账号密码登录的最大尝试次数（失败就重来一遍，而不是直接停） */
+export const LOGIN_MAX_ATTEMPTS = 3
 
 // ============================================================================
 // UPC（数字石大）SSO
@@ -117,6 +151,31 @@ export const PLAY_BTN_CSS = [
 
 export const PLAY_CONTROL_BTN_CSS = 'button.vjs-play-control'
 export const VIDEO_ELEMENT_CSS = 'video'
+
+/**
+ * 播放控制的探测预算（毫秒）。
+ *
+ * 预算是**整个策略**共享的：v1 的 4 级策略逐个选择器各等一个超时，
+ * 播放器按钮在暂停/播放之间又会来回显隐，于是"恢复播放"要等十几秒。
+ * 这里改成"预算内轮询、命中即返回"：按钮已经在就毫秒级返回，
+ * 没渲染完也只在预算内等。
+ */
+export const PLAY_PROBE = {
+  /** 大播放按钮 */
+  bigButton: 1_200,
+  /** 控制栏播放按钮 */
+  control: 800,
+  /** 点击 video 本体前等它可见 */
+  videoElement: 600,
+  /** 单次点击的超时（被遮罩时走坐标点击，不会真的等满） */
+  click: 1_500,
+  /** 点击后等"进入播放态"的上限（自适应轮询，命中即返回） */
+  playing: 1_200,
+  /** 原生 play() 后等播放态（一般立刻就好） */
+  nativeResume: 600,
+  /** 轮询间隔 */
+  pollMs: 120
+} as const
 
 // ============================================================================
 // 弹题

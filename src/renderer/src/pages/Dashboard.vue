@@ -11,6 +11,10 @@ const app = useAppStore()
 
 const transcriptionColor = computed(() => app.toneColor(app.transcription.tone))
 
+async function openCourseWindow(): Promise<void> {
+  await window.appApi.browser.openCourseWindow()
+}
+
 const scheduler = computed(() => app.scheduler)
 const schedulerLabel = computed(() => {
   const s = scheduler.value
@@ -76,6 +80,11 @@ const schedulerLabel = computed(() => {
           </p>
           <p v-if="app.currentCourse" class="block-meta wrap">{{ app.currentCourse.url }}</p>
           <p v-else class="block-value muted">未选择。到「设置 · 课程」里填一个课程地址。</p>
+
+          <!-- 需要人工处理验证码时要把课程窗口拉到前面 -->
+          <button type="button" class="btn-quiet open-window" @click="openCourseWindow">
+            打开课程窗口
+          </button>
         </section>
       </aside>
 
@@ -136,6 +145,11 @@ const schedulerLabel = computed(() => {
   margin-top: 2px;
   font-size: var(--fs-small);
   color: var(--text-3);
+}
+
+.open-window {
+  margin-top: var(--sp-3);
+  width: 100%;
 }
 
 .range-dot {

@@ -63,10 +63,14 @@ export class BrowserService {
 
     logger.info(`启动 Browser Host: ${process.execPath} ${args.join(' ')}`)
 
+    // cwd 必须是**真实目录**：打包后 app.getAppPath() 指向
+    // `.../Contents/Resources/app.asar`，那是个文件，spawn 会直接 ENOTDIR。
+    const cwd = app.isPackaged ? process.resourcesPath : app.getAppPath()
+
     const electronApp = await electron.launch({
       executablePath: process.execPath,
       args,
-      cwd: app.getAppPath(),
+      cwd,
       env: Object.fromEntries(
         Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined)
       )

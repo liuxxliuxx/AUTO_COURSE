@@ -1,0 +1,63 @@
+appId: com.autocourse.zhihuishu
+productName: ZhiHuiShu AutoCourse
+copyright: Copyright © 2026 AUTO_COURSE
+
+directories:
+  output: release
+  buildResources: assets
+
+# 只打包构建产物与应用元数据；源码、夹具、脚本都不进包
+files:
+  - out/**/*
+  - package.json
+  - '!**/*.map'
+  - '!**/{.eslintrc,.editorconfig,.npmrc}'
+
+# 打包后仍然需要以真实文件形式存在的东西
+extraResources:
+  # Python STT worker：Node 侧用 resourcesPath 定位它
+  # （见 services/container.ts::resolveWorkerScript）
+  - from: python/transcriber
+    to: python/transcriber
+    filter:
+      - '**/*'
+      - '!__pycache__/**'
+
+# 原生模块必须解开 asar 才能被 dlopen
+asarUnpack:
+  - '**/node_modules/better-sqlite3/**'
+  - '**/*.node'
+
+# 不做代码签名（本仓库没有证书）；macOS 下用户需右键打开
+mac:
+  category: public.app-category.education
+  icon: assets/icon.icns
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  # 打包后 Playwright 要用 --inspect 接管 Browser Host 进程，
+  # 因此需要保留 Electron 的调试能力（默认即开启，这里显式声明避免被优化掉）
+  hardenedRuntime: false
+  gatekeeperAssess: false
+
+dmg:
+  artifactName: ${productName}-${version}-${arch}.dmg
+
+win:
+  icon: assets/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 智慧树自动刷课
+
+# AppImage/deb 不在本次范围内（handoff §27 明确不支持 Linux）
+linux: null

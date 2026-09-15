@@ -69,8 +69,7 @@ export function createApi(ipcRenderer: IpcRenderer): AppApi {
     },
 
     browser: {
-      openCourseWindow: () => invoke(ipcRenderer, IPC_INVOKE.browserOpenCourseWindow),
-      detectChrome: () => invoke(ipcRenderer, IPC_INVOKE.browserDetectChrome)
+      openCourseWindow: () => invoke(ipcRenderer, IPC_INVOKE.browserOpenCourseWindow)
     },
 
     transcription: {
@@ -86,8 +85,7 @@ export function createApi(ipcRenderer: IpcRenderer): AppApi {
     },
 
     dialog: {
-      pickDirectory: () => invoke(ipcRenderer, IPC_INVOKE.dialogPickDirectory),
-      pickFile: (kind) => invoke(ipcRenderer, IPC_INVOKE.dialogPickFile, { kind })
+      pickDirectory: () => invoke(ipcRenderer, IPC_INVOKE.dialogPickDirectory)
     },
 
     app: {

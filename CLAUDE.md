@@ -1,132 +1,144 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code (claude.ai/code) when working in this repository.
 
-## Project overview
+## 当前状态
 
-智慧树 (ZhiHuiShu) auto-course-watching bot. Automates browser-based video playback on the Zhihuishu online education platform, handling login, quiz popups, and CAPTCHA interruptions. Tkinter GUI for configuration and control.
+本仓库正在做 **v1 → v2 架构迁移**，分支 `rewrite/electron`。
 
-## Running
+- **v2（当前唯一入口）**：Electron + Vue 3 + TypeScript + Playwright
+- **v1（冻结参考）**：PySide6 + QML + Selenium，tag `v1-pyside-final`
+- v1 为什么还在仓库里、什么条件下才能删 → 见 `LEGACY.md`
+- v1 → v2 的每一处行为变化 → 见 `docs/MIGRATION.md`
 
-```bash
-# Activate conda env named "zhihuishu"
-# Use full path to conda python, e.g.:
-/c/Users/liuxx/anaconda3/envs/zhihuishu/python.exe main.py
-```
+**改代码前先确认改的是哪一套。** `src/bot/`、`gui/`、`database.py` 是 v1，
+v2 的业务代码在 `src/main/`。
 
-No test suite, linter, or type checker is configured.
-
-## Building
-
-### Windows
-
-```powershell
-.\scripts\build_win.ps1        # pyinstaller --onedir, outputs dist/ZhiHuiShu_AutoCourse/
-.\scripts\create_installer.ps1           # NSIS installer (requires NSIS installed)
-.\scripts\create_installer.ps1 -Portable # Portable zip with shortcut script
-```
-
-Build script auto-runs `download_chrome.py` if `bin/` is missing. Output is an English-named directory (Chinese paths break NSIS).
-
-### macOS
+## 运行
 
 ```bash
-./scripts/build_mac.sh        # py2app, outputs dist/ZhiHuiShu_AutoCourse.app + DMG
+npm install        # postinstall 会为新 Electron 重建 better-sqlite3
+npm run dev        # 开发模式
+npm run build      # 类型检查 + 三段构建
+npm start          # 预览构建产物
 ```
 
-Uses `setup_mac.py` (project root, py2app config). Script auto-downloads Chrome for Testing and copies root-level modules into the bundle.
+## 测试
 
-## Architecture
-
-```
-main.py                         # Tkinter GUI + auto-scheduler (ZhiHuiShuGUI, ~600 lines)
-database.py                     # SQLite wrapper (root level, not src/db/)
-config.py                       # Platform DB path resolver + keyring keys
-src/
-├── constants.py                # All CSS selectors, timeouts, URLs, polling intervals
-├── bot/
-│   ├── bot_core.py             # ZhiHuiShuBot orchestrator (main loop, 8 hooks)
-│   ├── browser.py              # Chrome driver factory (3-tier priority)
-│   ├── video.py                # VideoController: play/pause/progress
-│   ├── quiz.py                 # QuizHandler + AnswerStrategy protocol
-│   ├── captcha.py              # CaptchaHandler: detect + notify GUI via Event
-│   ├── course.py               # CourseNavigator + get_next_video_after()
-│   └── login/
-│       ├── base.py             # LoginStrategy ABC
-│       ├── zhihuishu.py        # Direct phone-number login
-│       └── upc.py              # UPC SSO login (Vue JS injection)
-└── ui/
-    └── log_handler.py          # QueueLogHandler (logging → Tkinter queue)
+```bash
+npm test                     # 单元 + DOM 夹具（169 项）
+npx vitest run tests/unit    # 只跑单元测试（不需要浏览器）
 ```
 
-## Key mechanisms
+三层测试，见 `docs/MIGRATION.md` 与 handoff §29：
 
-### Threading model
-
-- **GUI thread**: owns tk widgets, polls via `root.after()` timers (200ms logs, 500ms captcha, 30s auto-scheduler)
-- **Bot thread**: daemon `threading.Thread(target=bot.run)`, communicates via `threading.Event` (captcha_needed, captcha_done, stop_event) and `queue.Queue` (logging)
-- `self.running` boolean only touched by GUI thread
-- Bot hooks (`on_video_end`, `on_bot_stop`) run in bot thread — they write DB progress but must NOT touch tk widgets directly
-
-### Auto-scheduler (`main.py:ZhiHuiShuGUI`)
-
-`_auto_scheduler_tick()` → `root.after(30000)` perpetually. Logic in `_auto_scheduler_evaluate()`:
-
-- **Start conditions**: auto_mode ON, bot not running, time in range (or "全天" checked), today's watched < time_limit
-- **Stop conditions**: bot running AND (time out of range OR today's watched >= time_limit)
-- **Natural completion**: detected when `self.running` True but `bot_thread.is_alive()` False
-- If natural completion with <60s progress → course pool exhausted → auto-uncheck auto_mode
-- `_stop_bot()` with `auto_uncheck=True` (user/manual stop) also unchecks auto_mode; scheduler calls with `auto_uncheck=False` (temporary stops — keeps auto_mode for next day)
-
-### Video iteration (`bot_core.py` + `course.py`)
-
-Uses `get_next_video_after(current_title)` on `CourseNavigator` — detects current position from DOM class `li.video.current_play`, then searches downward for next eligible video (respecting `skip_completed`). Wraps around to head when at end. This means if the user manually clicks a different course during auto-play, the next video will be the one *below* the user-clicked one.
-
-### Progress tracking
-
-- `bot_core._accumulate_duration()` uses actual monitor-loop elapsed time (not video DOM duration), so progress-bar dragging doesn't inflate the counter
-- `on_video_end` hook (wired in `main.py:_start_bot`) writes delta to `daily_progress` table via `database.add_daily_progress()`
-- `_auto_scheduler_evaluate()` reloads from DB each tick and updates the "今日已刷课时长" label
-
-### Captcha flow
-
-- `CaptchaHandler._notify_and_wait()`: sets `captcha_needed` Event → GUI `_check_captcha_status()` (500ms poll) shows red status + enables confirm button
-- User clicks "没有需确认的验证码" → `_on_confirm_captcha()` sets `captcha_done` → bot resumes
-- On stop: `_stop_bot()` sets `stop_event` but does NOT set `captcha_done` (doing so would make the captcha loop mistake stop for user confirmation). The captcha loop checks `_should_stop()` every 1s and exits cleanly
-
-### Database schema
-
-- `url_history(url_type, url, note, used_at)` — URL autocomplete history, UNIQUE(type, url)
-- `settings(key PRIMARY KEY, value)` — key-value config persistence
-- `daily_progress(date TEXT PRIMARY KEY, watched_seconds INTEGER)` — per-day brush time, UPSERT-incremented
-
-### Login methods (GUI dropdown)
-
-Two strategies selectable from dropdown "登录方式" between "登录跳转URL" and "课程视频URL":
-1. **智慧树** — `ZhihuishuLogin`: phone + password → Yidun slider CAPTCHA
-2. **数字石大** — `UPCLogin`: SSO via `i.upc.edu.cn`, injects credentials into Vue component via JS
-
-When auto-mode checked, dropdown grays out (auto-mode always uses UPC).
-
-### CSS selectors
-
-All in `src/constants.py`. Key ones:
-- `VIDEO_LIST_ITEM_CSS = "li.video"`, `VIDEO_CURRENT_PLAY_CSS = "li.video.current_play"`, `VIDEO_FINISHED_MARK_CSS = ".time_icofinish"`
-- Platform DOM changes only need updates in constants.py
-
-### Status messages
-
-| State | Status text | Color |
+| 层 | 位置 | 需要 |
 |---|---|---|
-| Idle | ● 就绪 | gray |
-| Initializing | ● 正在初始化（登录方式）... | green |
-| Brushing | ● 正在刷课 | green |
-| Captcha | ⚠ 检测到验证码 — 请在浏览器中完成验证 | red |
-| Manual stop | ● 已停止 | red |
-| Auto target reached | ● 今日自动刷课已到目标时长 | orange |
-| Auto out of range | ● 不在允许运行时间内 | orange |
+| 单元 | `tests/unit/` | 无 |
+| DOM 夹具 | `tests/integration/` | `npx playwright install chromium` |
+| 端到端冒烟 | `scripts/` | Electron / Python / ffmpeg |
 
-## Paths and conda
+其他验证脚本：
 
-- Conda env: `zhihuishu` at `/c/Users/liuxx/anaconda3/envs/zhihuishu/`
-- Python: `/c/Users/liuxx/anaconda3/envs/zhihuishu/python.exe` (Windows `python` cmd may point to MS Store stub)
+```bash
+node scripts/smoke-electron.mjs                      # Electron 启动 + typed IPC + 渲染层隔离
+node scripts/poc/02-host-full-matrix.mjs --offline   # 浏览器自动化能力矩阵（27 项）
+node scripts/verify-package.mjs <打包产物路径>        # 打包产物真的能跑
+node scripts/screenshot.mjs                          # 界面走查截图
+```
+
+## 架构
+
+```
+src/main/             Electron 主进程（v2 的 backend）
+├── index.ts          分流：--browser-host → 宿主，否则 → 应用本体
+├── app-main.ts       应用本体启动、窗口、退出清理
+├── automation/       浏览器自动化（只认 Playwright，不碰 Electron）
+│   ├── browser-service.ts   浏览器生命周期唯一管理者
+│   ├── browser-session.ts   BrowserAutomation 抽象（handoff §6）
+│   ├── browser-host.ts      Playwright 驱动的纯窗口子进程
+│   ├── constants.ts         所有选择器 / 超时（对应 v1 src/constants.py）
+│   ├── login/               LoginProvider：zhihuishu / upc
+│   ├── classic/             传统课程 Runner / Navigator / VideoController
+│   ├── map/                 图谱课程 Runner / Navigator / URL 解析
+│   ├── captcha.ts quiz.ts   验证码与弹题
+│   └── runner.ts            CourseRunner 契约
+├── services/         业务流程
+│   ├── bot-service.ts          任务生命周期状态机（唯一持有者）
+│   ├── scheduler-service.ts    自动调度
+│   ├── transcription-service.ts 转录编排 + MediaPort 实现
+│   ├── stt-worker.ts           Python STT worker 桥接（NDJSON）
+│   ├── media.ts                ffmpeg + Node 侧下载
+│   ├── settings-service.ts     类型化设置
+│   ├── event-bus.ts            Service → IPC → Renderer
+│   └── container.ts            依赖装配点
+├── storage/          SQLite / safeStorage / v1 导入
+└── ipc/              typed IPC handler
+
+src/preload/          只暴露 window.appApi，不暴露 ipcRenderer
+src/renderer/         Vue 3 控制面板（不含任何业务状态机）
+src/shared/           Main / Preload / Renderer 共享的类型契约
+python/transcriber/   v2 唯一保留的 Python：SenseVoice worker（audio → text）
+```
+
+## 关键约束
+
+### 浏览器
+
+- **谁都不许自己 launch/close 浏览器**，只能通过 `BrowserService` 拿 `BrowserSession`。
+- Playwright **无法**驱动应用自身的 BrowserWindow（Electron 在
+  `--remote-debugging-port` 上不提供 `Runtime` domain）。这就是 `--browser-host`
+  子进程存在的原因，证据见 `docs/PLAYWRIGHT_POC.md`。
+- 任何加载远程内容的 WebContents 必须
+  `nodeIntegration:false / contextIsolation:true / sandbox:true`。
+- **不打任何反检测补丁**（handoff §5）。
+- 升级 Electron 或 Playwright 后必须重跑 `scripts/poc/02-host-full-matrix.mjs`。
+
+### 进程与线程
+
+- 应用本体与 Browser Host 共用同一个二进制，靠 `--browser-host` 分流；
+  分流必须发生在任何重模块加载之前（宿主不能抢 userData 锁）。
+- 构建产物路径不要用 `join(__dirname, ...)`：主进程被拆成
+  `out/main/index.js` + `out/main/chunks/*.js`，`__dirname` 会飘。
+  统一用 `app.getAppPath()` 相对解析。
+- 退出清理只允许执行一次（`ServiceContainer.dispose`）。
+
+### 业务边界
+
+- `ClassicCourseRunner` 与 `MapCourseRunner` 是**两套独立业务**，
+  不要写成 `if (mapMode) {...} else {...}` 塞进一个类（handoff §9）。
+- Runner 通过 `RunnerContext` 拿一切依赖，不直接 import Electron / Vue。
+- `course_progress` 的写入与转录**无关**（这是 v1 的缺陷 #1）。
+- 每日进度用监控循环的真实耗时，不信任 video DOM 的 duration。
+- 自动调度独立于 UI：关窗口、切页都不影响。
+
+### 转录
+
+- Python 侧只能做 `audio → text`。它不允许知道智慧树、DOM、验证码、
+  数据库、Electron 的任何事（handoff §21）。
+- Node 侧负责媒体获取、下载、录音、ffmpeg、文件管理、任务编排。
+- 协议是 stdin/stdout NDJSON，worker 常驻。
+- 录音产物**不走浏览器下载**：blob 下载在 Electron 下既不触发 Playwright
+  事件也不触发宿主 `will-download`，必须走「页面攒块 + Node 分批取回」。
+
+### 选择器
+
+全部集中在 `src/main/automation/constants.ts`（以及 `map/navigator.ts`）。
+平台改版只需要改这些文件。
+
+**选择器一律保留多候选数组**：实测智慧树登录页的 `#lUsername` 已经失效，
+靠 `input[placeholder*="手机号"]` 才命中（`docs/PLAYWRIGHT_POC.md` §2.2）。
+
+## 提交约定
+
+按阶段提交，每个提交保持仓库可运行，参考 handoff §31 的建议前缀：
+
+```
+chore(scope):  脚手架
+feat(scope):   功能迁移
+spike(scope):  技术验证
+build:         打包
+refactor:      删除 legacy
+```
+
+行为变化必须单独记录到 `docs/MIGRATION.md`。

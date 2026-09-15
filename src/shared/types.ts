@@ -75,13 +75,6 @@ export interface ProgressSnapshot {
   targetMinutes: number
 }
 
-/** 单个视频/知识项完成时上报，用于持久化每日进度与课程进度。 */
-export interface VideoProgressEvent {
-  courseNote: string
-  videoTitle: string
-  deltaSeconds: number
-}
-
 // ============================================================================
 // 课程
 // ============================================================================
@@ -220,16 +213,9 @@ export interface CredentialState {
   encryptionAvailable: boolean
 }
 
-/** chrome/chromedriver 配置在 v2 中不再需要；仅保留用于检测/提示。 */
-
 // ============================================================================
 // 启动校验
 // ============================================================================
-
-export interface StartRequest {
-  /** 覆盖当前设置的一次性启动参数（可选） */
-  settings?: SettingsPatch
-}
 
 export interface ValidationError {
   field: keyof AppSettings | 'credentials'
@@ -252,19 +238,3 @@ export interface MigrationReport {
   message: string
 }
 
-// ============================================================================
-// 浏览器
-// ============================================================================
-
-export interface BrowserPageInfo {
-  id: string
-  url: string
-  title: string
-  isCourseWindow: boolean
-}
-
-export interface ChromeDetectionResult {
-  chrome: string
-  driver: string
-  status: string
-}

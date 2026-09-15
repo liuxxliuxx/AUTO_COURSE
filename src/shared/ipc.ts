@@ -9,7 +9,6 @@ import type {
   AppSettings,
   BotStatus,
   CaptchaRequiredEvent,
-  ChromeDetectionResult,
   CourseItem,
   CredentialState,
   Credentials,
@@ -54,7 +53,6 @@ export const IPC_INVOKE = {
   progressGet: 'progress:get',
 
   browserOpenCourseWindow: 'browser:openCourseWindow',
-  browserDetectChrome: 'browser:detectChrome',
 
   transcriptionGet: 'transcription:get',
 
@@ -63,7 +61,6 @@ export const IPC_INVOKE = {
   logsRecent: 'logs:recent',
 
   dialogPickDirectory: 'dialog:pickDirectory',
-  dialogPickFile: 'dialog:pickFile',
 
   appVersion: 'app:version'
 } as const
@@ -81,9 +78,6 @@ export const IPC_EVENT = {
   settingsChanged: 'event:settings-changed',
   error: 'event:error'
 } as const
-
-export type InvokeChannel = (typeof IPC_INVOKE)[keyof typeof IPC_INVOKE]
-export type EventChannel = (typeof IPC_EVENT)[keyof typeof IPC_EVENT]
 
 // ============================================================================
 // 事件负载映射
@@ -132,7 +126,6 @@ export interface InvokeMap {
   [IPC_INVOKE.progressGet]: { req: void; res: ProgressSnapshot }
 
   [IPC_INVOKE.browserOpenCourseWindow]: { req: void; res: void }
-  [IPC_INVOKE.browserDetectChrome]: { req: void; res: ChromeDetectionResult }
 
   [IPC_INVOKE.transcriptionGet]: { req: void; res: TranscriptionStatus }
 
@@ -141,7 +134,6 @@ export interface InvokeMap {
   [IPC_INVOKE.logsRecent]: { req: void; res: LogEntry[] }
 
   [IPC_INVOKE.dialogPickDirectory]: { req: void; res: string }
-  [IPC_INVOKE.dialogPickFile]: { req: { kind: 'chrome' | 'chromedriver' | 'image' }; res: string }
 
   [IPC_INVOKE.appVersion]: {
     req: void
@@ -150,9 +142,6 @@ export interface InvokeMap {
 }
 
 export type InvokeName = keyof InvokeMap
-
-/** 便捷别名：取某个 channel 的响应类型 */
-export type Res<C extends InvokeName> = InvokeMap[C]['res']
 
 // ============================================================================
 // Preload 暴露的 API
@@ -200,7 +189,6 @@ export interface AppApi {
 
   browser: {
     openCourseWindow(): Promise<void>
-    detectChrome(): Promise<ChromeDetectionResult>
   }
 
   transcription: {
@@ -217,7 +205,6 @@ export interface AppApi {
 
   dialog: {
     pickDirectory(): Promise<string>
-    pickFile(kind: 'chrome' | 'chromedriver' | 'image'): Promise<string>
   }
 
   app: {

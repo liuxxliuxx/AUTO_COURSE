@@ -24,12 +24,17 @@ import {
   type ResourceItem
 } from './navigator'
 import { MapUrlError, knowledgeStudyUrl, learnPageUrl, parseMapCourseUrl } from './url'
-import { createLoginProvider } from '../login/provider'
+import { createLoginProvider, type LoginProvider } from '../login/provider'
 import { CaptchaService } from '../captcha'
 import { SLEEP } from '../constants'
 
 export class MapCourseRunner implements CourseRunner {
   readonly mode: TaskMode = 'map'
+
+  /** 同 ClassicCourseRunner：登录提供方可注入，便于集成测试 */
+  constructor(
+    private readonly createLogin: (method: 'zhihuishu' | 'upc') => LoginProvider = createLoginProvider
+  ) {}
 
   async run(ctx: RunnerContext): Promise<RunOutcome> {
     const { log, session, settings, credentials } = ctx
@@ -60,7 +65,7 @@ export class MapCourseRunner implements CourseRunner {
     log.info(`图谱课: courseId=${ref.courseId} mapId=${ref.mapId} mapUid=${ref.mapUid || '(无)'}`)
 
     // ------------------------------------------------------------ 2. 登录
-    const provider = createLoginProvider(settings.loginMethod)
+    const provider = this.createLogin(settings.loginMethod)
     const loginResult = await provider.login({
       session,
       settings,

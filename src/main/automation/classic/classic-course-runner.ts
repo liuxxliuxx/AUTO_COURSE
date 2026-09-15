@@ -18,7 +18,7 @@ import { ClassicCourseNavigator, type NextVideoResult } from './navigator'
 import { VideoController } from './video-controller'
 import { CaptchaService } from '../captcha'
 import { QuizService } from '../quiz'
-import { createLoginProvider } from '../login/provider'
+import { createLoginProvider, type LoginProvider } from '../login/provider'
 import {
   CLICK_VIDEO_MAX_RETRIES,
   INTERVAL,
@@ -28,6 +28,14 @@ import {
 
 export class ClassicCourseRunner implements CourseRunner {
   readonly mode: TaskMode = 'classic'
+
+  /**
+   * 登录提供方可注入 —— 集成测试要绕过真实站点登录，
+   * 但又必须让主循环（点击 → 监控 → 终止判定）真实跑起来。
+   */
+  constructor(
+    private readonly createLogin: (method: 'zhihuishu' | 'upc') => LoginProvider = createLoginProvider
+  ) {}
 
   async run(ctx: RunnerContext): Promise<RunOutcome> {
     const { log, session, settings, credentials } = ctx
@@ -51,7 +59,7 @@ export class ClassicCourseRunner implements CourseRunner {
     const navigator = new ClassicCourseNavigator(page, log, captcha, quiz, settings.skipCompleted)
 
     // ------------------------------------------------------------ 1. 登录
-    const provider = createLoginProvider(settings.loginMethod)
+    const provider = this.createLogin(settings.loginMethod)
     const loginResult = await provider.login({
       session,
       settings,

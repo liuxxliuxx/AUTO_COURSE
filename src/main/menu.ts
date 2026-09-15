@@ -6,7 +6,7 @@
  */
 
 import { app, Menu, shell, type MenuItemConstructorOptions } from 'electron'
-import { isDev } from './index'
+import { isDev } from './app-main'
 
 export function installApplicationMenu(): void {
   const template: MenuItemConstructorOptions[] = [

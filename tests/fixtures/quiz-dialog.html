@@ -1,0 +1,108 @@
+<!doctype html>
+<!--
+  弹题弹窗夹具 —— 对应 src/bot/quiz.py 的选择器：
+    div.el-dialog[aria-label*="弹题"]
+    .topic-item（选项）/.topic-option-item.active（选中态）/.btn-next（下一题）
+    .el-dialog__headerbtn（关闭）
+  包含两题，用于验证多题连答。
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>弹题 · 夹具</title>
+    <style>
+      body { font-family: sans-serif; background: #f5f5f5; padding: 20px; }
+      .el-dialog {
+        position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+        width: 520px; background: #fff; border-radius: 8px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, .2);
+      }
+      .el-dialog__header { padding: 16px 20px; border-bottom: 1px solid #eee; display: flex; }
+      .el-dialog__headerbtn { margin-left: auto; cursor: pointer; border: none; background: none; font-size: 16px; }
+      .el-dialog__body { padding: 20px; }
+      .topic-item {
+        border: 1px solid #ddd; border-radius: 4px;
+        padding: 10px 14px; margin-bottom: 8px; cursor: pointer;
+      }
+      .topic-item.active, .topic-option-item.active, .item-topic.active {
+        border-color: #409eff; background: #ecf5ff;
+      }
+      .btn-next { padding: 8px 22px; cursor: pointer; }
+      .dialog-footer { padding: 12px 20px; border-top: 1px solid #eee; text-align: right; }
+    </style>
+  </head>
+  <body>
+    <div class="el-dialog" id="quizDialog" aria-label="弹题测验" role="dialog">
+      <div class="el-dialog__header">
+        <span>弹题测验</span>
+        <button class="el-dialog__headerbtn" id="closeBtn" aria-label="Close">✕</button>
+      </div>
+
+      <div class="el-dialog__body">
+        <p id="question">第 <span id="qIndex">1</span> 题：艺术最主要的特征是什么？</p>
+        <!-- 真实站点：.topic-item 是外层容器，选中态加在内层 .topic-option-item 上
+             （constants.QUIZ_OPTION_ACTIVE_CSS = ['.topic-option-item.active', '.item-topic.active']） -->
+        <div id="options">
+          <div class="topic-item">
+            <div class="topic-option-item"><span class="item-topic">A. 形象性</span></div>
+          </div>
+          <div class="topic-item">
+            <div class="topic-option-item"><span class="item-topic">B. 逻辑性</span></div>
+          </div>
+          <div class="topic-item">
+            <div class="topic-option-item"><span class="item-topic">C. 数理性</span></div>
+          </div>
+        </div>
+        <button class="btn-next" id="nextBtn" disabled>下一题</button>
+      </div>
+
+      <div class="dialog-footer">
+        <div class="btn" id="footerClose">关闭</div>
+      </div>
+    </div>
+
+    <script>
+      let current = 1
+      const options = document.getElementById('options')
+      const nextBtn = document.getElementById('nextBtn')
+
+      // 真实站点上点击选项会给对应的 .topic-item 加 active
+      options.addEventListener('click', (ev) => {
+        const item = ev.target.closest('.topic-item')
+        if (!item) return
+        for (const el of options.querySelectorAll('.topic-item')) {
+          el.classList.remove('active')
+          el.querySelector('.topic-option-item')?.classList.remove('active')
+          el.querySelector('.item-topic')?.classList.remove('active')
+        }
+        item.classList.add('active')
+        item.querySelector('.topic-option-item')?.classList.add('active')
+        item.querySelector('.item-topic')?.classList.add('active')
+        nextBtn.disabled = false
+      })
+
+      nextBtn.addEventListener('click', () => {
+        if (current === 1) {
+          current = 2
+          document.getElementById('qIndex').textContent = '2'
+          document.getElementById('question').lastChild.textContent = '：以下哪项属于造型艺术？'
+          options.innerHTML = `
+            <div class="topic-item"><span class="item-topic">A. 绘画</span></div>
+            <div class="topic-item"><span class="item-topic">B. 音乐</span></div>
+            <div class="topic-item"><span class="item-topic">C. 诗歌</span></div>`
+          nextBtn.disabled = true
+          nextBtn.textContent = '提交'
+        } else {
+          document.getElementById('quizDialog').remove()
+        }
+      })
+
+      document.getElementById('closeBtn').addEventListener('click', () =>
+        document.getElementById('quizDialog').remove()
+      )
+      document.getElementById('footerClose').addEventListener('click', () =>
+        document.getElementById('quizDialog').remove()
+      )
+    </script>
+  </body>
+</html>

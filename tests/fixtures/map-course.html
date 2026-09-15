@@ -1,0 +1,103 @@
+<!doctype html>
+<!--
+  图谱课程夹具 —— 对应 src/bot/map_course.py 实际依赖的 DOM：
+    图谱页：[id*='knowledgeId-']（id 是 knowledgeId-XXX，不是 class）
+    学习页：.resources-section / .resources-detail-title /
+            .basic-info-video-card-container（注意：PPT 卡片也是这个 class，
+            所以类型判定必须看文本时长特征，不能只看 class）
+
+  本夹具同时包含"图谱页"与"学习页"两块，用 hash 切换，便于同一文件测两条路径。
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>图谱课程 · 夹具</title>
+    <style>
+      body { font-family: sans-serif; margin: 0; padding: 16px; }
+      .knowledge-item { border: 1px solid #ddd; padding: 12px; margin-bottom: 8px; border-radius: 6px; }
+      .resources-section { border: 1px solid #ccc; padding: 12px; margin-bottom: 12px; }
+      .resources-detail-title { font-weight: 700; margin-bottom: 8px; }
+      .resources-list { display: flex; flex-direction: column; gap: 6px; }
+      .basic-info-video-card-container { border: 1px solid #eee; padding: 8px; cursor: pointer; }
+      #vjs_videoContStudy { margin-top: 12px; }
+      [hidden] { display: none; }
+    </style>
+  </head>
+  <body>
+    <!-- ==================== 图谱页 ==================== -->
+    <section id="map-view">
+      <h1>知识图谱</h1>
+
+      <div class="knowledge-item" id="knowledgeId-1001">
+        <span class="k-title">艺术的定义</span>
+        <span class="k-progress">学习进度 100 %</span>
+      </div>
+
+      <div class="knowledge-item" id="knowledgeId-1002">
+        <span class="k-title">艺术的分类</span>
+        <span class="k-progress">学习进度 40 %</span>
+      </div>
+
+      <div class="knowledge-item" id="knowledgeId-1003">
+        <span class="k-title">艺术的起源</span>
+        <span class="k-progress">学习进度 0 %</span>
+      </div>
+    </section>
+
+    <!-- ==================== 学习页 ==================== -->
+    <section id="study-view" hidden>
+      <h2>艺术的定义</h2>
+
+      <div class="resources-section">
+        <div class="resources-detail-title">必学资源</div>
+        <div class="resources-list">
+          <!-- 视频资源：文本带时长 -->
+          <div class="basic-info-video-card-container" id="res-video">
+            <span>1. 艺术是什么</span>
+            <span class="duration">12:35</span>
+          </div>
+          <!-- 非视频资源（PPT）：class 同样是 basic-info-video-card-container，靠"页"区分 -->
+          <div class="basic-info-video-card-container" id="res-ppt">
+            <span>2. 课件讲义</span>
+            <span>共 24 页</span>
+          </div>
+          <!-- 已完成的视频资源 -->
+          <div class="basic-info-video-card-container" id="res-done">
+            <span>3. 拓展阅读</span>
+            <span class="duration">08:20</span>
+            <span>已完成</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="resources-section">
+        <div class="resources-detail-title">选学资源</div>
+        <div class="resources-list">
+          <div class="basic-info-video-card-container" id="res-optional">
+            <span>选学：纪录片片段</span>
+            <span class="duration">30:00</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="vjs_videoContStudy" class="video-js">
+        <video id="mapVideo" width="320" height="180" loop muted></video>
+      </div>
+    </section>
+
+    <script>
+      function render() {
+        const study = location.hash === '#study'
+        document.getElementById('map-view').hidden = study
+        document.getElementById('study-view').hidden = !study
+      }
+      window.addEventListener('hashchange', render)
+      render()
+
+      // 点资源卡片模拟进入播放
+      document.querySelectorAll('.basic-info-video-card-container').forEach((card) => {
+        card.addEventListener('click', () => card.classList.add('opened'))
+      })
+    </script>
+  </body>
+</html>

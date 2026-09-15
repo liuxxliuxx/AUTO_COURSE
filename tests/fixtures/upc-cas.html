@@ -1,0 +1,35 @@
+<!doctype html>
+<!--
+  数字石大 UPC CAS 登录页夹具（外层）。
+
+  真实站点结构（见 src/bot/login/upc.py）：
+    外层页面 → <iframe src="...login-normal..."> → 内层 Vant UI 表单
+  常量 UPC_LOGIN_IFRAME_CSS = "iframe[src*='login-normal']"
+
+  这里保留 src 中的 login-normal 关键字（检测靠它），
+  但实际渲染内容取自同目录的 upc-cas-frame.html —— 比 srcdoc 更可控。
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>数字石大统一认证 · 夹具</title>
+    <style>
+      body { margin: 0; font-family: sans-serif; background: #eef1f6; }
+      iframe { width: 100vw; height: 100vh; border: 0; display: block; }
+    </style>
+  </head>
+  <body>
+    <iframe
+      id="loginFrame"
+      src="https://i.upc.edu.cn/login-normal?redirect=upc-cas-frame.html"
+      data-fixture-src="/upc-cas-frame.html"
+    ></iframe>
+
+    <script>
+      // 夹具环境没有外网 CAS 服务，把 iframe 指向本地内容页。
+      // 真实运行时这里就是 i.upc.edu.cn 的 CAS 表单，其余行为一致。
+      const frame = document.getElementById('loginFrame')
+      frame.src = frame.dataset.fixtureSrc
+    </script>
+  </body>
+</html>

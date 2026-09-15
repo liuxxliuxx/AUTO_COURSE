@@ -1,0 +1,44 @@
+<!doctype html>
+<!--
+  验证码场景夹具 —— 对应 src/bot/captcha.py 的三条检测路径：
+    1. iframe src 含 captcha/yidun/turing/cstaticdun/necaptcha/verify
+    2. 可见弹窗 .yidun_popup / .yidun_modal / #tcaptcha_transform_dy
+    3. 登录页图片验证码输入框 #j-captcha-mobile
+  点 #trigger 后弹出滑块验证码，用于验证「检测 → 通知 → 人工确认 → 继续」。
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>验证码 · 夹具</title>
+    <style>
+      body { font-family: sans-serif; padding: 24px; }
+      button { padding: 8px 18px; cursor: pointer; }
+      .yidun_popup {
+        position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+        width: 320px; height: 220px; background: #fff; border: 1px solid #ddd;
+        border-radius: 6px; box-shadow: 0 8px 28px rgba(0,0,0,.18);
+        padding: 20px; box-sizing: border-box;
+      }
+      .hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <h1>验证码检测夹具</h1>
+    <button id="trigger">触发滑块验证码</button>
+    <button id="clear">完成验证</button>
+
+    <div id="popup" class="yidun_popup hidden">
+      <p>请完成安全验证</p>
+      <div id="tcaptcha_transform_dy" style="height: 60px; background: #eee"></div>
+    </div>
+
+    <script>
+      document.getElementById('trigger').addEventListener('click', () => {
+        document.getElementById('popup').classList.remove('hidden')
+      })
+      document.getElementById('clear').addEventListener('click', () => {
+        document.getElementById('popup').classList.add('hidden')
+      })
+    </script>
+  </body>
+</html>

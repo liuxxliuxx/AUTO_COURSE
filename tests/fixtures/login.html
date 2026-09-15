@@ -1,0 +1,56 @@
+<!doctype html>
+<!--
+  智慧树登录页夹具 —— 对应 src/constants.py 的登录选择器：
+    a.cur[href='#signin']（手机号 Tab）
+    #lUsername / #lPassword
+    .wall-sub-btn（登录按钮）
+  以及登录页图片验证码输入框 #j-captcha-mobile。
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>智慧树登录 · 夹具</title>
+    <style>
+      body { font-family: sans-serif; background: #f0f2f5; display: flex;
+             align-items: center; justify-content: center; height: 100vh; margin: 0; }
+      .wall { width: 380px; background: #fff; padding: 32px; border-radius: 8px; }
+      .tabs { display: flex; gap: 16px; margin-bottom: 20px; }
+      .tabs a { color: #666; text-decoration: none; padding-bottom: 6px; }
+      .tabs a.cur { color: #22a06b; border-bottom: 2px solid #22a06b; }
+      .row { margin-bottom: 14px; }
+      input { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
+      .wall-sub-btn { display: block; width: 100%; padding: 10px; background: #22a06b;
+                      color: #fff; text-align: center; border: none; border-radius: 4px; cursor: pointer; }
+      .hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <div class="wall">
+      <div class="tabs">
+        <a href="#signin" class="cur" id="tabPhone">手机号登录</a>
+        <a href="#qrcode" id="tabQr">扫码登录</a>
+      </div>
+
+      <div id="signinForm">
+        <div class="row"><input id="lUsername" name="username" placeholder="请输入手机号" /></div>
+        <div class="row"><input id="lPassword" name="password" type="password" placeholder="请输入密码" /></div>
+        <div class="row hidden" id="imageCaptchaRow">
+          <input id="j-captcha-mobile" placeholder="图片验证码" />
+        </div>
+        <button class="wall-sub-btn" id="submitBtn">登 录</button>
+      </div>
+    </div>
+
+    <script>
+      // 点登录后显示滑块 iframe —— 与真实站点一致，用于验证 CaptchaHandler 的检测路径
+      document.getElementById('submitBtn').addEventListener('click', () => {
+        if (document.getElementById('yidun')) return
+        const frame = document.createElement('iframe')
+        frame.id = 'yidun'
+        frame.src = 'https://cstaticdun.126.net/load.min.js'
+        frame.style.cssText = 'position:fixed;inset:0;width:100%;height:100%;border:0;'
+        document.body.appendChild(frame)
+      })
+    </script>
+  </body>
+</html>

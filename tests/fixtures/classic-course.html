@@ -1,0 +1,160 @@
+<!doctype html>
+<!--
+  传统智慧树课程页夹具 —— 覆盖 src/constants.py 中传统课程相关的全部选择器：
+    li.video / .small-lesson / .catalogue_title / .time_icofinish / li.video.current_play
+    div.dialog-read（学前必读）/ .ss2077-msg-custom（学习进度提醒）
+    video / .vjs-big-play-button / button.vjs-play-control
+  以及转录链路需要的 MediaRecorder + captureStream + download。
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>传统课程 · 夹具</title>
+    <style>
+      body { margin: 0; font-family: sans-serif; display: flex; height: 100vh; }
+      #sidebar { width: 320px; border-right: 1px solid #ddd; overflow: auto; }
+      ul { list-style: none; margin: 0; padding: 0; }
+      li.video { padding: 10px 12px; border-bottom: 1px solid #eee; cursor: pointer; }
+      li.video.current_play { background: #e8f4ff; }
+      .time_icofinish { color: #2a2; font-size: 12px; }
+      .small-lesson { font-weight: 700; background: #f6f6f6; }
+      #stage { flex: 1; padding: 16px; }
+      #load-more { margin: 8px; }
+      .dialog-read, .ss2077-msg-custom {
+        position: fixed; inset: 0; background: rgba(0,0,0,.4);
+        display: flex; align-items: center; justify-content: center;
+      }
+      .dialog-read .box, .ss2077-msg-custom .box { background: #fff; padding: 24px; }
+    </style>
+  </head>
+  <body>
+    <aside id="sidebar">
+      <ul id="video-list">
+        <li class="video">
+          <span class="catalogue_title">1.1 绪论</span>
+          <i class="time_icofinish">已学完</i>
+        </li>
+        <li class="video current_play">
+          <span class="catalogue_title">1.2 艺术的起源</span>
+        </li>
+        <li class="video">
+          <span class="catalogue_title">1.3 审美与形式</span>
+        </li>
+        <li class="video small-lesson">
+          <span class="catalogue_title">第二章 章节导语</span>
+        </li>
+        <li class="video">
+          <span class="catalogue_title">2.1 绘画语言</span>
+          <i class="time_icofinish">已学完</i>
+        </li>
+        <li class="video">
+          <span class="catalogue_title">2.2 雕塑与空间</span>
+        </li>
+      </ul>
+      <button id="load-more">加载更多</button>
+      <div id="late-host"></div>
+    </aside>
+
+    <main id="stage">
+      <h1 id="course-title">艺术与审美</h1>
+
+      <video id="courseVideo" width="320" height="180" loop muted></video>
+
+      <div class="vjs-big-play-button" id="bigPlay">▶</div>
+      <button class="vjs-play-control" id="playControl">play</button>
+
+      <p>
+        <a id="download-link" href="#" download="poc-download.txt">下载附件（blob）</a>
+        <a id="http-download-link" href="/attachment/course-material.pdf" download>下载附件（HTTP）</a>
+      </p>
+    </main>
+
+    <script>
+      // ---- 侧边栏：模拟点击切换 current_play ----
+      const list = document.getElementById('video-list')
+      list.addEventListener('click', (ev) => {
+        const li = ev.target.closest('li.video')
+        if (!li || li.classList.contains('small-lesson')) return
+        for (const el of list.querySelectorAll('li.video')) el.classList.remove('current_play')
+        li.classList.add('current_play')
+      })
+
+      // ---- 动态插入（模拟 SPA 懒加载）----
+      document.getElementById('load-more').addEventListener('click', () => {
+        setTimeout(() => {
+          const li = document.createElement('li')
+          li.className = 'video late-item'
+          li.innerHTML = '<span class="catalogue_title">3.1 延迟加载的章节</span>'
+          list.appendChild(li)
+        }, 300)
+      })
+
+      // ---- 会话存储（验证 storage 可用）----
+
+      // ---- 用 MediaRecorder 合成一段真实可播放的媒体 ----
+      // 这样 <video>.duration 是真实数字，且顺便证明了 captureStream/MediaRecorder 可用。
+      async function synthesizeMedia() {
+        const canvas = document.createElement('canvas')
+        canvas.width = 320
+        canvas.height = 180
+        const ctx = canvas.getContext('2d')
+        let hue = 0
+        const draw = setInterval(() => {
+          hue = (hue + 12) % 360
+          ctx.fillStyle = `hsl(${hue}, 70%, 50%)`
+          ctx.fillRect(0, 0, 320, 180)
+        }, 60)
+
+        const videoStream = canvas.captureStream(15)
+        const audioCtx = new AudioContext()
+        const osc = audioCtx.createOscillator()
+        const dest = audioCtx.createMediaStreamDestination()
+        osc.frequency.value = 440
+        osc.connect(dest)
+        osc.start()
+
+        const mixed = new MediaStream([
+          ...videoStream.getVideoTracks(),
+          ...dest.stream.getAudioTracks()
+        ])
+
+        const rec = new MediaRecorder(mixed)
+        const chunks = []
+        rec.ondataavailable = (e) => e.data.size && chunks.push(e.data)
+        const done = new Promise((r) => (rec.onstop = r))
+        rec.start()
+        await new Promise((r) => setTimeout(r, 2000))
+        rec.stop()
+        await done
+        clearInterval(draw)
+        osc.stop()
+
+        const blob = new Blob(chunks, { type: 'video/webm' })
+        const video = document.getElementById('courseVideo')
+        video.src = URL.createObjectURL(blob)
+        window.__mediaReady = true
+      }
+
+      synthesizeMedia().catch((e) => {
+        window.__mediaError = String(e)
+      })
+
+      // ---- 下载：用 blob URL 触发真实 download 事件 ----
+      document.getElementById('download-link').addEventListener('click', (ev) => {
+        ev.preventDefault()
+        const blob = new Blob(['poc download payload'], { type: 'text/plain' })
+        const a = ev.currentTarget
+        a.href = URL.createObjectURL(blob)
+        a.click()
+      })
+
+      // ---- 播放按钮 ----
+      const video = document.getElementById('courseVideo')
+      document.getElementById('bigPlay').addEventListener('click', () => video.play())
+      document.getElementById('playControl').addEventListener('click', () => {
+        if (video.paused) video.play()
+        else video.pause()
+      })
+    </script>
+  </body>
+</html>

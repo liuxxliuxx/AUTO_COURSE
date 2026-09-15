@@ -19,15 +19,47 @@ export interface RunOutcome {
   reason: StopReason
 }
 
+/**
+ * 媒体/转录端口。
+ *
+ * Phase 6 接入真实转录服务前，Runner 只认这个接口，
+ * 从而保证「刷课 + 转录」与「仅转录」两条链路都能挂在同一个 Runner 上
+ * （handoff §22、§28「Map + Transcription」）。
+ * 未启用转录时 ctx.media 为 null。
+ */
+export interface MediaPort {
+  /** 视频即将开始播放（实时录音模式在这里开始录制） */
+  onVideoBegin(session: BrowserSession, title: string): Promise<void>
+  /**
+   * 视频播放结束。
+   * 实时录音模式在这里停止录制并把音频入队；
+   * 仅转录模式不走这里 —— 它由 Runner 直接调 transcribeOnly()。
+   */
+  onVideoEnd(title: string): Promise<void>
+  /** 仅转录模式：下载直链提取音轨并转写，不播放视频 */
+  transcribeOnly(session: BrowserSession, title: string): Promise<boolean>
+}
+
 export interface RunnerContext {
   readonly settings: AppSettings
   readonly credentials: Credentials
   readonly bus: EventBus
   readonly session: BrowserSession
   readonly log: Logger
+  /** 未启用转录时为 null */
+  readonly media: MediaPort | null
+
+  /**
+   * 「从上次进度继续」的起点标题，来自 course_progress。
+   * 未启用该选项或没有记录时为空串。
+   */
+  readonly lastVideoTitle: string
 
   /** 外部是否已请求停止。Runner 必须在其长循环里定期检查。 */
   shouldStop(): boolean
+
+  /** 本次运行累计观看秒数，用于判断单次时长上限 */
+  sessionWatchedSeconds(): number
 
   /**
    * 报告「某个视频实际观看了多少秒」。

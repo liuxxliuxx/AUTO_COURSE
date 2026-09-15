@@ -36,6 +36,9 @@ export type StopReason =
   | 'time-limit'
   | 'out-of-schedule'
   | 'target-reached'
+  /** 本轮把整个列表跑完了一遍（skip_completed=false 时的正常终点） */
+  | 'completed'
+  /** 已经没有待处理项了（skip_completed=true 且全部完成） */
   | 'pool-exhausted'
   | 'error'
 

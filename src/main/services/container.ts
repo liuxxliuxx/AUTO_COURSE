@@ -95,7 +95,10 @@ export class ServiceContainer {
     })
   }
 
-  /** Phase 4/5 在启动时注册真正的 Runner。 */
+  /**
+   * 注册 Runner 工厂。
+   * 传统课程与图谱课程各自实现 CourseRunner，BotService 按 TaskMode 取用。
+   */
   setRunnerFactory(factory: RunnerFactory): void {
     this.runnerFactory = factory
   }

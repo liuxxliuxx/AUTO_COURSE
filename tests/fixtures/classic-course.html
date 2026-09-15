@@ -58,7 +58,12 @@
     <main id="stage">
       <h1 id="course-title">艺术与审美</h1>
 
-      <video id="courseVideo" width="320" height="180" loop muted></video>
+      <!--
+        用预生成的静态媒体而不是运行时 MediaRecorder 合成：
+        MediaRecorder 产出的 WebM 头部不带 duration，Chrome 读到的是 NaN，
+        断言 duration 的测试会一直等不到。静态文件是确定性的。
+      -->
+      <video id="courseVideo" width="320" height="180" loop muted src="/assets/tiny.webm"></video>
 
       <div class="vjs-big-play-button" id="bigPlay">▶</div>
       <button class="vjs-play-control" id="playControl">play</button>
@@ -91,53 +96,15 @@
 
       // ---- 会话存储（验证 storage 可用）----
 
-      // ---- 用 MediaRecorder 合成一段真实可播放的媒体 ----
-      // 这样 <video>.duration 是真实数字，且顺便证明了 captureStream/MediaRecorder 可用。
-      async function synthesizeMedia() {
-        const canvas = document.createElement('canvas')
-        canvas.width = 320
-        canvas.height = 180
-        const ctx = canvas.getContext('2d')
-        let hue = 0
-        const draw = setInterval(() => {
-          hue = (hue + 12) % 360
-          ctx.fillStyle = `hsl(${hue}, 70%, 50%)`
-          ctx.fillRect(0, 0, 320, 180)
-        }, 60)
-
-        const videoStream = canvas.captureStream(15)
-        const audioCtx = new AudioContext()
-        const osc = audioCtx.createOscillator()
-        const dest = audioCtx.createMediaStreamDestination()
-        osc.frequency.value = 440
-        osc.connect(dest)
-        osc.start()
-
-        const mixed = new MediaStream([
-          ...videoStream.getVideoTracks(),
-          ...dest.stream.getAudioTracks()
-        ])
-
-        const rec = new MediaRecorder(mixed)
-        const chunks = []
-        rec.ondataavailable = (e) => e.data.size && chunks.push(e.data)
-        const done = new Promise((r) => (rec.onstop = r))
-        rec.start()
-        await new Promise((r) => setTimeout(r, 2000))
-        rec.stop()
-        await done
-        clearInterval(draw)
-        osc.stop()
-
-        const blob = new Blob(chunks, { type: 'video/webm' })
-        const video = document.getElementById('courseVideo')
-        video.src = URL.createObjectURL(blob)
+      // ---- 媒体就绪标记（供测试等待）----
+      const mediaVideo = document.getElementById('courseVideo')
+      mediaVideo.addEventListener('loadedmetadata', () => {
         window.__mediaReady = true
-      }
-
-      synthesizeMedia().catch((e) => {
-        window.__mediaError = String(e)
       })
+      mediaVideo.addEventListener('error', () => {
+        window.__mediaError = String(mediaVideo.error?.message ?? 'media load error')
+      })
+      if (mediaVideo.readyState >= 1) window.__mediaReady = true
 
       // ---- 下载：用 blob URL 触发真实 download 事件 ----
       document.getElementById('download-link').addEventListener('click', (ev) => {

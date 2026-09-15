@@ -28,7 +28,9 @@ import type { CredentialStore } from '../storage/credentials'
 import type { SettingsService } from './settings-service'
 import type { EventBus } from './event-bus'
 import type { BrowserService } from '../automation/browser-service'
+import type { BrowserSession } from '../automation/browser-session'
 import type { CourseRunner, RunOutcome, RunnerContext } from '../automation/runner'
+import { sanitizeCourseNote } from '../util/filename'
 import { createLogger } from './logger'
 
 const logger = createLogger('bot')
@@ -194,7 +196,7 @@ export class BotService {
       const credentials = this.credentials.get()
 
       const session = await this.browser.openSession()
-      const ctx = this.buildContext(settings, credentials, session)
+      const ctx = this.buildContext(settings, credentials, session, this.resolveLastVideoTitle(settings))
 
       this.setStatus('running', `正在${TASK_MODE_LABEL[mode]}`, 'success')
       const runner = this.createRunner(mode, ctx)
@@ -229,6 +231,8 @@ export class BotService {
         return { text: '不在允许运行时间内', tone: 'warning' }
       case 'pool-exhausted':
         return { text: '课程已全部完成', tone: 'success' }
+      case 'completed':
+        return { text: '本轮课程已跑完', tone: 'success' }
       case 'error':
         return { text: '⚠ 运行出错，请查看日志', tone: 'danger' }
       default:
@@ -236,10 +240,24 @@ export class BotService {
     }
   }
 
+  /**
+   * 「从上次进度继续」的起点。
+   *
+   * v1 只在转录成功时才写 course_progress，导致不开转录时这个功能静默失效
+   * （docs/V1_BASELINE.md §7.1）。v2 的写入在 reportVideoCompleted 里，
+   * 与转录完全无关；这里只负责读。
+   */
+  private resolveLastVideoTitle(settings: AppSettings): string {
+    if (!settings.fromLastProgress || !settings.courseNote) return ''
+    const row = this.db.getCourseProgress(settings.courseNote, sanitizeCourseNote(settings.courseNote))
+    return row?.lastVideoTitle ?? ''
+  }
+
   private buildContext(
     settings: AppSettings,
     credentials: Credentials,
-    session: RunnerContext['session']
+    session: BrowserSession,
+    lastVideoTitle: string
   ): RunnerContext {
     return {
       settings,
@@ -247,7 +265,11 @@ export class BotService {
       bus: this.bus,
       session,
       log: createLogger('runner'),
+      // Phase 6 接入转录后由 TranscriptionService 提供
+      media: null,
+      lastVideoTitle,
       shouldStop: () => this.stopRequested,
+      sessionWatchedSeconds: () => this.watchedSeconds,
       reportVideoWatched: (seconds) => this.reportVideoWatched(seconds),
       reportVideoCompleted: (title) => this.reportVideoCompleted(title),
       reportCurrentTitle: (title) => {

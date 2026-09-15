@@ -56,15 +56,6 @@ export function registerBotIpc(container: ServiceContainer): void {
   })
 
   // --------------------------------------------------------------- 转录
-  // Phase 6 接入真实转录服务前，先返回一个稳定的空闲状态。
 
-  handle(IPC_INVOKE.transcriptionGet, () => ({
-    phase: 'idle' as const,
-    title: null,
-    completed: 0,
-    failed: 0,
-    message: '转录未启用',
-    tone: 'neutral' as const,
-    percent: null
-  }))
+  handle(IPC_INVOKE.transcriptionGet, () => container.transcription.getStatus())
 }

@@ -29,7 +29,7 @@ import type { SettingsService } from './settings-service'
 import type { EventBus } from './event-bus'
 import type { BrowserService } from '../automation/browser-service'
 import type { BrowserSession } from '../automation/browser-session'
-import type { CourseRunner, RunOutcome, RunnerContext } from '../automation/runner'
+import type { CourseRunner, MediaPort, RunOutcome, RunnerContext } from '../automation/runner'
 import { sanitizeCourseNote } from '../util/filename'
 import { createLogger } from './logger'
 
@@ -71,7 +71,15 @@ export class BotService {
     private readonly settings: SettingsService,
     private readonly bus: EventBus,
     private readonly browser: BrowserService,
-    private readonly createRunner: RunnerFactory
+    private readonly createRunner: RunnerFactory,
+    /**
+     * 取得媒体/转录端口。返回 null 表示本次不转录。
+     * 由 TranscriptionService 提供；不转录时**不会**启动 Python worker。
+     */
+    private readonly acquireMedia: (
+      settings: AppSettings,
+      transcribeOnly: boolean
+    ) => Promise<MediaPort | null>
   ) {}
 
   // ------------------------------------------------------------------ 状态
@@ -196,7 +204,18 @@ export class BotService {
       const credentials = this.credentials.get()
 
       const session = await this.browser.openSession()
-      const ctx = this.buildContext(settings, credentials, session, this.resolveLastVideoTitle(settings))
+
+      // 仅转录：不播放视频，直接下载音轨。与 v1 bridge.py:274 的推导一致。
+      const transcribeOnly = !settings.brushEnabled && !settings.mapMode
+      const media = await this.acquireMedia(settings, transcribeOnly)
+
+      const ctx = this.buildContext(
+        settings,
+        credentials,
+        session,
+        this.resolveLastVideoTitle(settings),
+        media
+      )
 
       this.setStatus('running', `正在${TASK_MODE_LABEL[mode]}`, 'success')
       const runner = this.createRunner(mode, ctx)
@@ -257,7 +276,8 @@ export class BotService {
     settings: AppSettings,
     credentials: Credentials,
     session: BrowserSession,
-    lastVideoTitle: string
+    lastVideoTitle: string,
+    media: MediaPort | null
   ): RunnerContext {
     return {
       settings,
@@ -265,8 +285,7 @@ export class BotService {
       bus: this.bus,
       session,
       log: createLogger('runner'),
-      // Phase 6 接入转录后由 TranscriptionService 提供
-      media: null,
+      media,
       lastVideoTitle,
       shouldStop: () => this.stopRequested,
       sessionWatchedSeconds: () => this.watchedSeconds,

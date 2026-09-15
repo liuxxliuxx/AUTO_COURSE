@@ -9,6 +9,7 @@
  */
 
 import { app, BrowserWindow } from 'electron'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { addLogSink, createLogger } from './logger'
 import { EventBus } from './event-bus'
@@ -19,10 +20,24 @@ import { Database } from '../storage/database'
 import { CredentialStore } from '../storage/credentials'
 import { maybeImportLegacy } from '../storage/migrations/v1-import'
 import { BrowserService } from '../automation/browser-service'
+import { TranscriptionService } from './transcription-service'
+import { findPython } from './stt-worker'
 import { IPC_EVENT, type EventName } from '@shared/ipc'
 import type { LogEntry, LogLevel, MigrationReport } from '@shared/types'
 
 const logger = createLogger('container')
+
+/**
+ * worker.py 的位置：开发态在仓库里，打包后在 resources 下。
+ * 放在这里是因为只有 Electron 侧知道 app 路径与 resourcesPath。
+ */
+function resolveWorkerScript(): string {
+  const candidates = [
+    join(app.getAppPath(), 'python', 'transcriber', 'worker.py'),
+    join(process.resourcesPath ?? '', 'python', 'transcriber', 'worker.py')
+  ]
+  return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]
+}
 
 export interface AppPaths {
   /** 应用数据目录（Electron userData） */
@@ -47,6 +62,7 @@ export class ServiceContainer {
   readonly credentials: CredentialStore
   readonly settings: SettingsService
   readonly browser: BrowserService
+  readonly transcription: TranscriptionService
   readonly bot: BotService
   readonly scheduler: SchedulerService
   readonly migration: MigrationReport
@@ -73,6 +89,11 @@ export class ServiceContainer {
     this.credentials = new CredentialStore(this.paths.credentialsFile)
     this.settings = new SettingsService(this.db)
     this.browser = new BrowserService({ downloadDir: this.paths.downloadDir })
+    this.transcription = new TranscriptionService({
+      bus: this.bus,
+      getSettings: () => this.settings.getAll(),
+      worker: { pythonPath: findPython(), scriptPath: resolveWorkerScript() }
+    })
 
     this.bot = new BotService(
       this.db,
@@ -85,6 +106,11 @@ export class ServiceContainer {
           throw new Error(`未注册 ${mode} 模式的 Runner`)
         }
         return this.runnerFactory(mode, ctx)
+      },
+      // 不启用转录时返回 null —— Python worker 根本不会被启动
+      async (settings, transcribeOnly) => {
+        const usable = await this.transcription.configure(settings, transcribeOnly)
+        return usable ? this.transcription : null
       }
     )
 
@@ -185,6 +211,7 @@ export class ServiceContainer {
 
     this.scheduler.stop()
     await this.bot.dispose().catch((error) => logger.exception('停止 Bot 失败', error))
+    await this.transcription.dispose().catch((error) => logger.exception('关闭转录服务失败', error))
     await this.browser.close().catch((error) => logger.exception('关闭浏览器失败', error))
     this.browser.dispose()
 

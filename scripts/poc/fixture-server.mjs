@@ -27,6 +27,32 @@ export async function startFixtureServer(rootDir) {
     try {
       const url = new URL(req.url, 'http://127.0.0.1')
 
+      // 大文件端点：用于测试「下载小于 1 MiB 视为鉴权失败」这条判据
+      if (url.pathname.startsWith('/bigfile/')) {
+        const size = Number.parseInt(url.searchParams.get('size') ?? '1200000', 10)
+        const total = Number.isFinite(size) && size > 0 ? size : 1_200_000
+        res.writeHead(200, {
+          'Content-Type': 'application/octet-stream',
+          'Content-Length': String(total)
+        })
+        // 分块写出，避免一次性构造大 Buffer
+        const chunk = Buffer.alloc(64 * 1024, 0x41)
+        let sent = 0
+        const pump = () => {
+          while (sent < total) {
+            const size = Math.min(chunk.length, total - sent)
+            sent += size
+            if (!res.write(chunk.subarray(0, size))) {
+              res.once('drain', pump)
+              return
+            }
+          }
+          res.end()
+        }
+        pump()
+        return
+      }
+
       // 附件下载端点：用于验证宿主侧的 will-download 落盘
       // （Playwright 的 download 事件在 Electron 下不可用，见 fixture 说明）
       if (url.pathname.startsWith('/attachment/')) {

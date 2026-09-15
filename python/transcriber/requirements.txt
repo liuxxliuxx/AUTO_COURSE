@@ -1,0 +1,13 @@
+# SenseVoice STT Worker 的依赖。
+#
+# 与 v1 一致：funasr + modelscope + torch/torchaudio。
+# 这些包只服务于「音频 → 文本」，与桌面应用本身无关。
+#
+# 安装（建议单独的环境或沿用现有 zhihuishu conda 环境）：
+#   pip install -r python/transcriber/requirements.txt
+#   pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+funasr>=1.0.0
+modelscope>=1.14.0
+torch>=2.0.0
+torchaudio>=2.0.0

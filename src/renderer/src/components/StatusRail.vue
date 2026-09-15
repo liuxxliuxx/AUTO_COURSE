@@ -46,7 +46,8 @@ const modeLabel = computed(() =>
         <span class="course-title" :title="status.currentTitle">{{ status.currentTitle }}</span>
       </template>
       <template v-else-if="course">
-        <span class="course-title" :title="course.url">{{ course.display }}</span>
+        <!-- 侧边栏已经完整显示 URL 了，这里只放课程名，避免顶栏被地址撑满 -->
+        <span class="course-title" :title="course.url">{{ course.note || course.url }}</span>
       </template>
       <template v-else>
         <span class="course-note">未选择课程</span>

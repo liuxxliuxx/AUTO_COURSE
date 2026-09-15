@@ -30,7 +30,9 @@ package.json  src/main/  src/preload/  src/renderer/  python/transcriber/
 
 v2 目前的验证状态（详见 `docs/MIGRATION.md` §5）：
 
-- ✅ 自动化测试覆盖：单元 169 项 + DOM 夹具 + 端到端（假 Python worker）+ 打包产物验证
+- ✅ 自动化测试：177 项（单元 + DOM 夹具 + Runner 主循环端到端 + 假 Python worker 转录链路）
+- ✅ 打包产物验证：真的启动打包后的应用并拉起 Browser Host（9/9）
+- ✅ 浏览器自动化能力矩阵：31/31（含真实站点可达性）
 - ⚠️ **未经真实账号验证**：智慧树登录、数字石大 SSO、真实课程页面的完整刷课流程
 - ⚠️ **未经真实模型验证**：SenseVoice 实际推理（协议层已用假 worker 验证）
 - ⚠️ **未经真实 Windows 验证**：打包配置就绪但未在 Windows 上实测

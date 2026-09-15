@@ -232,15 +232,23 @@ v1 的 keyring 数据保持不动，可随时回退到 v1。
 | 刷课 + 转录 | ✅ 端到端验证（假 worker） |
 | 仅转录 | ✅ 端到端验证（假 worker） |
 | STT Worker 可启动、复用、关闭 | ✅ 端到端验证 |
-| 退出不留 Chrome/Electron/Python 子进程 | ✅ 已实现，**需在打包环境下复验** |
+| 退出不留 Chrome/Electron/Python 子进程 | ✅ 打包产物实测无残留 |
 | Windows 构建可运行 | ⚠️ 配置就绪，**未在 Windows 上实测** |
 | macOS 构建可运行 | ⚠️ 配置就绪，见打包说明 |
 | Playwright 成为最终浏览器自动化 API | ✅ |
 | Legacy Selenium 可删除 | ⏳ 见下 |
 
 **⚠️ 标记的项需要在有真实账号与对应平台的机器上补验。**
-本仓库的自动化测试覆盖到夹具与协议层；真实站点的页面结构、滑块验证码、
-真实视频直链下载必须人工冒烟（步骤见 `docs/PLAYWRIGHT_POC.md` §2.3）。
+
+自动化测试目前 177 项全绿，覆盖到夹具层与协议层：
+- 单元测试（调度决策、设置往返、DB CRUD、v1 导入映射、图谱/URL 解析、文件名净化、媒体下载）
+- DOM 夹具测试（用真实 Chromium 驱动 Navigator / VideoController / QuizService / CaptchaService）
+- Runner 主循环端到端（点击 → 监控 → 记账 → 终止，含 handoff §28 的回环修正）
+- 转录链路端到端（假 Python worker，协议与 worker.py 完全一致）
+- 打包产物验证（真的启动打包后的应用并拉起 Browser Host）
+
+真实站点的页面结构、滑块验证码、真实视频直链下载、真实 SenseVoice 推理
+必须人工冒烟（步骤见 `docs/PLAYWRIGHT_POC.md` §2.3）。
 
 ---
 

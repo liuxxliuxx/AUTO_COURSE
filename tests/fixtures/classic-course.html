@@ -115,6 +115,14 @@
         a.click()
       })
 
+      // ---- 验证码：默认休眠，测试里显式唤起 ----
+      window.__showCaptcha = () => {
+        document.getElementById('captchaLive').hidden = false
+      }
+      window.__hideCaptcha = () => {
+        document.getElementById('captchaLive').hidden = true
+      }
+
       // ---- 播放按钮 ----
       const video = document.getElementById('courseVideo')
       document.getElementById('bigPlay').addEventListener('click', () => video.play())
@@ -123,5 +131,44 @@
         else video.pause()
       })
     </script>
+
+    <!--
+      真实站点会长期在 DOM 里挂一个**休眠的验证码容器**（v1 注释里叫 #captchaYidun）。
+      它没弹出来，但 iframe 一直在。Selenium 的 is_displayed() 会跳过它；
+      只看 getBoundingClientRect() 的实现会误报成"检测到验证码"。
+      下面把几种常见的隐藏方式各放一个，作为误报回归用例。
+
+      全部用 position:fixed —— 真实 yidun 弹窗就是这么定位的，
+      同时也让它们脱离 body 的 flex 布局，不干扰其它用例。
+    -->
+    <div id="captchaYidun" style="position: fixed; left: 0; top: 0; width: 300px; height: 150px; visibility: hidden">
+      <iframe src="https://cstaticdun.126.net/2.2.4/load.min.js?hidden-by-visibility"></iframe>
+    </div>
+
+    <div id="captchaHiddenOpacity" style="position: fixed; left: 0; top: 0; width: 300px; height: 150px; opacity: 0; pointer-events: none">
+      <iframe src="https://cstaticdun.126.net/2.2.4/load.min.js?hidden-by-opacity"></iframe>
+    </div>
+
+    <div id="captchaClipped" style="position: fixed; left: 0; top: 0; width: 0; height: 0; overflow: hidden">
+      <iframe src="https://cstaticdun.126.net/2.2.4/load.min.js?clipped-away"></iframe>
+    </div>
+
+    <div id="captchaOffscreen" style="position: fixed; left: -9999px; top: 0; width: 300px; height: 150px">
+      <iframe src="https://cstaticdun.126.net/2.2.4/load.min.js?parked-offscreen"></iframe>
+    </div>
+
+    <div id="captchaHiddenDisplay" style="position: fixed; display: none">
+      <iframe src="https://cstaticdun.126.net/2.2.4/load.min.js?hidden-by-display"></iframe>
+    </div>
+
+    <!-- 与之对应：一个真的弹出来的验证码（确认修了误报之后仍然检得出来） -->
+    <div
+      id="captchaLive"
+      class="yidun_popup"
+      hidden
+      style="position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 320px; height: 220px; background: #fff; border: 1px solid #ddd"
+    >
+      <div id="tcaptcha_transform_dy" style="height: 60px; background: #eee"></div>
+    </div>
   </body>
 </html>

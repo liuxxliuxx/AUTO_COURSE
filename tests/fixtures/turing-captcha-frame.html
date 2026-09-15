@@ -1,0 +1,22 @@
+<!doctype html>
+<!--
+  腾讯 TCaptcha 模板 iframe 的占位页。
+
+  真实站点里这个 iframe 是
+    https://turing.captcha.gtimg.com/1/template/drag_ele.html
+  —— 由 `https://captcha.253.com/Captcha.js` 预热注入，常驻在 body 下，
+  外面套着 `#tcaptcha_transform_dy`（opacity:0 + top:-1000000px），
+  所以人看不到它，但它一直在 DOM 里。
+
+  这里只需要它**存在**：验证码检测的 iframe 分支按 src 关键字命中，
+  不关心里面渲染了什么。
+-->
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>TCaptcha 模板（占位）</title>
+  </head>
+  <body>
+    验证码模板占位页
+  </body>
+</html>

@@ -222,6 +222,91 @@ describe('CaptchaService', () => {
     expect(await service.detect()).toBeNull()
   })
 
+  /**
+   * 回归：目标站点长期在 DOM 里挂一个休眠的验证码容器（v1 注释里的 #captchaYidun）。
+   * 它没弹出来，但 iframe 一直在，而且通常是 visibility/opacity/裁剪 这类
+   * **不影响 bounding rect** 的方式藏起来的。
+   *
+   * 只看 getBoundingClientRect() 的实现会把这些算作"可见"，
+   * 于是刷课时莫名其妙弹出"请完成验证码"，用户到浏览器里却找不到验证码。
+   * 必须对齐 Selenium `is_displayed()` 的语义。
+   */
+  it('休眠的验证码容器不误报（visibility / opacity / 裁剪 / 视口外 / display）', async () => {
+    await page.goto(`${server.origin}/classic-course.html`)
+
+    // 夹具里四种隐藏方式各有一个 iframe，都带 cstaticdun（命中关键字表）
+    const hiddenFrames = await page
+      .locator(
+        '#captchaYidun iframe, iframe[src*="hidden-by-opacity"], iframe[src*="clipped-away"], iframe[src*="parked-offscreen"], #captchaHiddenDisplay iframe'
+      )
+      .count()
+    expect(hiddenFrames).toBe(5)
+
+    const { service } = makeCaptcha()
+    expect(await service.detect()).toBeNull()
+  })
+
+  it('休眠容器是被判为"不可见"排除的，而不是压根没匹配上', async () => {
+    await page.goto(`${server.origin}/classic-course.html`)
+
+    const debugLines: string[] = []
+    const capturingLog: Logger = { ...silentLog, debug: (m) => debugLines.push(m) }
+    const service = new CaptchaService({
+      session,
+      shouldStop: () => false,
+      log: capturingLog,
+      requestCaptcha: async () => true
+    })
+
+    expect(await service.detect()).toBeNull()
+
+    // 四个命中关键字的 iframe 都应该出现在"被排除"清单里，
+    // 并且带上各自的隐藏原因；否则说明是关键字没匹配上，而不是可见性判对了
+    const joined = debugLines.join('\n')
+    expect(joined).toContain('hidden-by-visibility')
+    expect(joined).toContain('hidden-by-opacity')
+    expect(joined).toContain('clipped-away')
+    expect(joined).toContain('parked-offscreen')
+    // 诊断要能说清"被谁、以什么方式藏起来的"
+    expect(joined).toContain('visibility:hidden')
+    expect(joined).toContain('opacity:0')
+    expect(joined).toContain('overflow 完全裁掉')
+    expect(joined).toContain('完全在视口之外')
+    expect(joined).toContain('display:none')
+  })
+
+  it('休眠容器仍然挡不住真正的验证码弹出', async () => {
+    await page.goto(`${server.origin}/classic-course.html`)
+    const { service } = makeCaptcha()
+    expect(await service.detect()).toBeNull()
+
+    // 真的弹出来 → 必须检出（不能因为修误报而变成漏报）
+    await page.evaluate(() => (window as unknown as { __showCaptcha: () => void }).__showCaptcha())
+    const hit = await service.detect()
+    expect(hit?.kind).toBe('popup')
+
+    await page.evaluate(() => (window as unknown as { __hideCaptcha: () => void }).__hideCaptcha())
+    expect(await service.detect()).toBeNull()
+  })
+
+  it('visibility:hidden 的容器内的验证码 iframe 不算可见', async () => {
+    await page.goto(`${server.origin}/classic-course.html`)
+    // 直接验证判据本身：把休眠容器换成"只有 rect 检查会通过"的状态
+    const verdict = await page.evaluate(() => {
+      const frame = document.querySelector('#captchaYidun iframe') as HTMLIFrameElement
+      const rect = frame.getBoundingClientRect()
+      const own = getComputedStyle(frame).visibility
+      const parent = getComputedStyle(frame.parentElement as Element).visibility
+      return { rectWidth: rect.width, rectHeight: rect.height, own, parent }
+    })
+
+    // rect 是正常的（300x150）—— 证明"只看 rect"必然误报
+    expect(verdict.rectWidth).toBeGreaterThan(10)
+    expect(verdict.rectHeight).toBeGreaterThan(0)
+    // 真正能区分的是继承下来的 visibility
+    expect(verdict.parent).toBe('hidden')
+  })
+
   it('检测到弹窗式验证码', async () => {
     await page.goto(`${server.origin}/captcha.html`)
     const { service } = makeCaptcha()

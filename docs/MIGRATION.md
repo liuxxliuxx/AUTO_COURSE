@@ -274,3 +274,45 @@ scripts/build_mac.sh      py2app
 `services/transcription-service.ts` 取代。之所以留着，是因为
 `audio_capture.py` 里记着 v1 踩过的坑（MediaRecorder 不传 mimeType/timeslice、
 WASAPI 回环设备选择），在打包环境复验之前仍是有价值的参考。
+
+---
+
+## 七、人工测试发现的回归（已修）
+
+### 验证码误报：休眠容器被当成"弹出的验证码"
+
+**现象**（用户人工测试报告）：
+切换课程时弹出「切换课程「XXX」时出现验证码，请完成验证」，
+但浏览器里根本没有验证码。
+
+**原因**：目标站点长期在 DOM 里挂着一个休眠的验证码容器
+（v1 的 `captcha.py` 注释里写的 `#captchaYidun`）。
+v1 用的是 Selenium 的 `is_displayed()`，它会跳过这类容器；
+我迁移时把「是否可见」简化成了 `getBoundingClientRect()` 尺寸判断 ——
+而这个容器是用 `visibility:hidden` / `opacity:0` / 被祖先 `overflow` 裁掉
+这类**不影响 bounding rect** 的方式藏起来的，尺寸完全正常，
+于是被判成"可见"，误报给用户。
+
+**修复**（`automation/captcha.ts`）：`isDisplayed()` 改为对齐 Selenium
+`bot.dom.isShown` 的语义，逐级向上检查：
+
+1. 自身与所有祖先的 `display` / `visibility` / `opacity`
+2. 尺寸
+3. 是否被祖先的 `overflow:hidden` 完全裁掉
+4. 是否完全落在视口之外
+
+第 4 条是 v2 额外加的：站点也常用 `left:-9999px` 停放休眠容器，
+而且从产品语义上讲，**用户根本看不到的东西就不该弹提示让他去处理**。
+只在"完全不重叠"时才判为不可见，部分露出（例如需要滚动）仍算可见。
+
+**测试**：夹具里补了五种隐藏方式（visibility / opacity / 裁剪 / 视口外 / display），
+并断言它们是被**判为不可见而排除**的，而不是压根没匹配上 ——
+以及真的弹出验证码时仍然检得出来（确认没修成漏报）。
+
+**排查辅助**：`detect()` 现在会把「命中关键字但被判为不可见」的候选
+连同**具体原因与被谁藏起来的**一起记进 debug 日志。
+如果再遇到误报，把日志发我即可定位。
+
+**已知局限**：真实站点的课程页需要登录才能到达，
+所以这次修复**没有在你的实际场景里复现验证过**，
+依据是"对齐 v1 已验证过的 `is_displayed()` 语义"。

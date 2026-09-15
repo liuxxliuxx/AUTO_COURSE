@@ -23,6 +23,17 @@ const rendererDevUrl = process.env['ELECTRON_RENDERER_URL']
 
 export const isDev = !app.isPackaged
 
+/**
+ * 构建产物路径。
+ *
+ * 不能写成 `join(__dirname, '../renderer/...')`：主进程被 rollup 拆成了
+ * `out/main/index.js` + `out/main/chunks/*.js`，`__dirname` 会随代码落在哪个
+ * chunk 而变。统一相对 app 根目录解析，dev 与 packaged 都成立。
+ */
+const appRoot = app.getAppPath()
+const PRELOAD_ENTRY = join(appRoot, 'out', 'preload', 'index.js')
+const RENDERER_ENTRY = join(appRoot, 'out', 'renderer', 'index.html')
+
 let mainWindow: BrowserWindow | null = null
 let container: ServiceContainer | null = null
 
@@ -51,7 +62,7 @@ function createMainWindow(): BrowserWindow {
     // 避免「系统标题栏 + 应用顶栏」两层 chrome。
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
+      preload: PRELOAD_ENTRY,
       // 控制面板窗口不加载远程内容，但仍然禁止 Node 直达渲染层。
       nodeIntegration: false,
       contextIsolation: true,
@@ -71,7 +82,7 @@ function createMainWindow(): BrowserWindow {
   if (rendererDevUrl) {
     void window.loadURL(rendererDevUrl)
   } else {
-    void window.loadFile(join(__dirname, '../renderer/index.html'))
+    void window.loadFile(RENDERER_ENTRY)
   }
 
   window.on('closed', () => {

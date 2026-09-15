@@ -70,6 +70,50 @@ try {
   await window.locator('.hero-value').waitFor({ timeout: 5_000 })
   const hero = await window.locator('.hero-value').textContent()
   pass(`Dashboard 主读数: ${hero?.trim()}`)
+
+  // 5. Phase 3 服务层：SQLite / 设置 / 凭据 / 调度 / v1 迁移
+  const settings = await window.evaluate(() => window.appApi.settings.getAll())
+  if (settings && typeof settings.skipCompleted === 'boolean') {
+    pass(
+      `设置已从 SQLite 读出（登录方式=${settings.loginMethod} 跳过已完成=${settings.skipCompleted}）`
+    )
+  } else {
+    fail(`设置读取异常: ${JSON.stringify(settings)}`)
+  }
+
+  const credState = await window.evaluate(() => window.appApi.credentials.state())
+  pass(`safeStorage 可用: ${credState.encryptionAvailable}`)
+
+  const sched = await window.evaluate(() => window.appApi.scheduler.get())
+  if (sched?.config) pass(`调度器状态就绪（启用=${sched.config.enabled}）`)
+  else fail(`调度器状态异常: ${JSON.stringify(sched)}`)
+
+  const progress = await window.evaluate(() => window.appApi.progress.get())
+  if (typeof progress?.today?.watchedSeconds === 'number') {
+    pass(`今日进度: ${progress.today.date} / ${progress.today.watchedSeconds}s`)
+  } else {
+    fail(`进度读取异常: ${JSON.stringify(progress)}`)
+  }
+
+  const migration = await window.evaluate(() => window.appApi.migration.report())
+  pass(`v1 迁移: imported=${migration.imported} — ${migration.message}`)
+
+  const validation = await window.evaluate(() => window.appApi.settings.validate())
+  pass(`设置校验返回 ${validation.length} 条违规项`)
+
+  // 未填账号密码时启动必须被拒绝，且不得有任何副作用（不建浏览器、不动状态）
+  const startResult = await window.evaluate(() => window.appApi.bot.start())
+  if (startResult.ok === false && Array.isArray(startResult.errors) && startResult.errors.length) {
+    pass(
+      `校验不通过时启动被拒绝（${startResult.errors.map((e) => e.field).join(', ')}）`
+    )
+  } else {
+    fail(`启动未被拒绝: ${JSON.stringify(startResult)}`)
+  }
+
+  const afterStart = await window.evaluate(() => window.appApi.bot.status())
+  if (afterStart.state === 'idle') pass('启动被拒后状态仍为 idle')
+  else fail(`启动被拒后状态异常: ${afterStart.state}`)
 } catch (error) {
   fail(`冒烟测试异常: ${error instanceof Error ? error.message : String(error)}`)
 } finally {

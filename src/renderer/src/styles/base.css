@@ -1,0 +1,180 @@
+@import './tokens.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--ground);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--fs-base);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  /* 桌面工具：默认不允许选中文本，输入框和日志区单独放开 */
+  user-select: none;
+  cursor: default;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+  font-weight: inherit;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  user-select: text;
+}
+
+a {
+  color: var(--sky);
+  text-decoration: none;
+}
+
+/* ---- 统一的键盘焦点样式 ---- */
+:focus-visible {
+  outline: 2px solid var(--sky);
+  outline-offset: 2px;
+  border-radius: var(--r-control);
+}
+
+/* ---- 细线分割：整个界面的结构语言 ---- */
+.rule {
+  border: 0;
+  border-top: 1px solid var(--line-soft);
+  margin: 0;
+}
+
+/* ---- 等宽数字读数 ---- */
+.num {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* ---- 滚动条 ---- */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--surface-3);
+  border: 3px solid var(--ground);
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--line);
+}
+
+/* ==========================================================================
+   表单控件 —— 全局类，避免在 scoped 样式中反复重定义
+   ========================================================================== */
+
+.input,
+.select {
+  height: 28px;
+  padding: 0 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  color: var(--text);
+  font-size: var(--fs-small);
+  transition: border-color var(--motion-fast) ease;
+}
+
+.input:hover,
+.select:hover {
+  border-color: var(--surface-3);
+}
+
+.input:focus,
+.select:focus {
+  border-color: var(--sky);
+  outline: none;
+}
+
+.input::placeholder {
+  color: var(--text-3);
+}
+
+.input:disabled,
+.select:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.input.grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.input.narrow {
+  width: 76px;
+}
+
+/* type=time / type=date 需要容纳 HH:mm 加原生选择器图标，窄宽度会把分钟裁掉 */
+.input.time {
+  width: 116px;
+}
+
+.input.mono {
+  font-family: var(--font-num);
+  font-size: var(--fs-micro);
+}
+
+.select {
+  padding-right: 4px;
+  cursor: pointer;
+}
+
+.btn-quiet {
+  flex: none;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  color: var(--text-2);
+  font-size: var(--fs-small);
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+
+.btn-quiet:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.btn-quiet:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

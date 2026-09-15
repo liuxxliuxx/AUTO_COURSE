@@ -16,6 +16,7 @@ import { registerIpcHandlers } from './ipc'
 import { installApplicationMenu } from './menu'
 import { createLogger } from './services/logger'
 import { ClassicCourseRunner } from './automation/classic/classic-course-runner'
+import { MapCourseRunner } from './automation/map/map-course-runner'
 import type { TaskMode } from '@shared/types'
 import type { CourseRunner, RunnerContext } from './automation/runner'
 
@@ -124,11 +125,9 @@ export function startApplication(): void {
     container = new ServiceContainer()
     await container.initialize()
 
-    // Runner 选择：图谱课程在 Phase 5 接入，这里先只挂传统课程。
+    // Runner 选择：图谱课与传统课是两套独立业务，各自实现 CourseRunner。
     container.setRunnerFactory((mode: TaskMode, _ctx: RunnerContext): CourseRunner => {
-      if (mode === 'map') {
-        throw new Error('图谱课程 Runner 尚未接入（Phase 5）')
-      }
+      if (mode === 'map') return new MapCourseRunner()
       // 'classic' 与 'transcribe-only' 共用传统课程流程：
       // 仅转录只是「不播放视频、直接下载音轨」，导航与列表解析完全一致
       // （v1 bot_core.py 里也是同一段循环，靠 _transcribe_only 分支区分）。

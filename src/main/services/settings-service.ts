@@ -60,7 +60,11 @@ function parse(kind: Kind, raw: string | undefined, fallback: unknown): unknown 
     case 'boolean':
       return raw === '1' || raw === 'true'
     case 'number': {
-      const n = Number.parseInt(raw, 10)
+      // 不能只用 parseInt：uiScale 这类设置是小数（0.9 / 1.15 / 1.3），
+      // parseInt 会把 1.15 截成 1。空串按"没有设置"处理，退回默认值。
+      const trimmed = raw.trim()
+      if (!trimmed) return fallback
+      const n = Number(trimmed)
       return Number.isFinite(n) ? n : fallback
     }
     case 'loginMethod':

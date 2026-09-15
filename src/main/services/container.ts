@@ -163,6 +163,22 @@ export class ServiceContainer {
     this.send(IPC_EVENT.botStatus, this.bot.getStatus())
     this.send(IPC_EVENT.progress, this.progressSnapshot())
     this.send(IPC_EVENT.schedulerStatus, this.scheduler.getStatus())
+    this.applyUiScale()
+  }
+
+  /**
+   * 应用界面缩放。
+   * 只在主进程侧做 —— Renderer 拿不到 webFrame，也不该拿到。
+   */
+  applyUiScale(): void {
+    const scale = this.settings.getAll().uiScale
+    if (!this.mainWindow || this.mainWindow.isDestroyed()) return
+    if (!Number.isFinite(scale) || scale < 0.5 || scale > 2) return
+    try {
+      this.mainWindow.webContents.setZoomFactor(scale)
+    } catch (error) {
+      logger.exception('设置界面缩放失败', error)
+    }
   }
 
   private send(channel: EventName, payload: unknown): void {
@@ -191,6 +207,7 @@ export class ServiceContainer {
     this.send(IPC_EVENT.settingsChanged, this.settings.getAll())
     this.send(IPC_EVENT.schedulerStatus, this.scheduler.getStatus())
     this.send(IPC_EVENT.progress, this.progressSnapshot())
+    this.applyUiScale()
   }
 
   getRecentLogs(): LogEntry[] {

@@ -12,7 +12,7 @@
  *   立即判定为「本轮已跑完」并结束。终止条件不再依赖 DOM 的偶然变化。
  */
 
-import type { TaskMode, AppSettings } from '@shared/types'
+import type { TaskMode, AppSettings, LoginMethod } from '@shared/types'
 import type { CourseRunner, RunOutcome, RunnerContext } from '../runner'
 import { ClassicCourseNavigator, type NextVideoResult } from './navigator'
 import { VideoController } from './video-controller'
@@ -35,7 +35,7 @@ export class ClassicCourseRunner implements CourseRunner {
    * 但又必须让主循环（点击 → 监控 → 终止判定）真实跑起来。
    */
   constructor(
-    private readonly createLogin: (method: 'zhihuishu' | 'upc') => LoginProvider = createLoginProvider
+    private readonly createLogin: (method: LoginMethod) => LoginProvider = createLoginProvider
   ) {}
 
   async run(ctx: RunnerContext): Promise<RunOutcome> {

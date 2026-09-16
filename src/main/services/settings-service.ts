@@ -68,7 +68,7 @@ function parse(kind: Kind, raw: string | undefined, fallback: unknown): unknown 
       return Number.isFinite(n) ? n : fallback
     }
     case 'loginMethod':
-      return raw === 'upc' ? 'upc' : 'zhihuishu'
+      return raw === 'upc' || raw === 'upc-institution' ? raw : 'zhihuishu'
     default:
       return raw
   }
@@ -123,7 +123,7 @@ export class SettingsService {
       })
     }
     if (s.loginMethod === 'upc' && !s.loggedUrl.trim()) {
-      errors.push({ field: 'loggedUrl', message: '数字石大登录需要填写登录跳转 URL' })
+      errors.push({ field: 'loggedUrl', message: '数字石大旧门户登录需要填写登录跳转 URL' })
     }
     const transcribeOnly = !s.brushEnabled && !s.mapMode
     if (transcribeOnly && !s.transcribeBaseDir.trim()) {

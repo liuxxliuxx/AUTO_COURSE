@@ -50,9 +50,12 @@ describe('SettingsService', () => {
     expect(settings.getAll().timeLimitMinutes).toBe(0)
   })
 
-  it('loginMethod 只认 upc，其余一律回落 zhihuishu', () => {
+  it('loginMethod 支持新旧数字石大流程，其余回落 zhihuishu', () => {
     settings.update({ loginMethod: 'upc' })
     expect(settings.getAll().loginMethod).toBe('upc')
+
+    settings.update({ loginMethod: 'upc-institution' })
+    expect(settings.getAll().loginMethod).toBe('upc-institution')
 
     db.setSetting('loginMethod', '数字石大')
     expect(settings.getAll().loginMethod).toBe('zhihuishu')
@@ -76,9 +79,12 @@ describe('SettingsService', () => {
     expect(errors.some((e) => e.field === 'mapMode')).toBe(true)
   })
 
-  it('校验：数字石大登录必须有登录跳转 URL', () => {
+  it('校验：只有数字石大旧门户登录必须有登录跳转 URL', () => {
     settings.update({ videoUrl: 'https://x/y', loginMethod: 'upc' })
     expect(settings.validate().some((e) => e.field === 'loggedUrl')).toBe(true)
+
+    settings.update({ loginMethod: 'upc-institution' })
+    expect(settings.validate().some((e) => e.field === 'loggedUrl')).toBe(false)
   })
 
   it('校验：仅转录模式必须有保存路径', () => {

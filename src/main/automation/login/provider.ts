@@ -9,7 +9,8 @@ import type { BrowserSession } from '../browser-session'
 import type { CaptchaService } from '../captcha'
 import type { Logger } from '../../services/logger'
 import { ZhihuishuLogin } from './zhihuishu'
-import { UpcLogin } from './upc'
+import { UpcInstitutionLogin } from './upc-institution'
+import { UpcLegacyLogin } from './upc-legacy'
 
 export interface LoginContext {
   session: BrowserSession
@@ -35,5 +36,7 @@ export interface LoginProvider {
 
 /** 按方式挑实现。这是唯一出现分支的地方。 */
 export function createLoginProvider(method: LoginMethod): LoginProvider {
-  return method === 'upc' ? new UpcLogin() : new ZhihuishuLogin()
+  if (method === 'upc-institution') return new UpcInstitutionLogin()
+  if (method === 'upc') return new UpcLegacyLogin()
+  return new ZhihuishuLogin()
 }

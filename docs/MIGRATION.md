@@ -215,7 +215,7 @@ v1 的 keyring 数据保持不动，可随时回退到 v1。
 | Electron + Vue 可独立启动 | ✅ |
 | PySide6/QML 不再进入运行链路 | ✅ |
 | 智慧树账号密码登录 | ⚠️ 已迁移，**未经真实账号验证** |
-| UPC SSO 登录 | ⚠️ 已迁移，**未经真实账号验证** |
+| UPC SSO 登录 | ⚠️ 已迁移，**未经真实账号验证**；主路径已改成智慧树「机构登录」（见第七节），真实站点结构核对通过 |
 | 传统课程完整刷课 | ⚠️ 已迁移，夹具级验证通过 |
 | 图谱课程完整刷课 | ⚠️ 已迁移，夹具级验证通过 |
 | 跳过已完成课程 | ✅ 夹具验证 |
@@ -544,3 +544,31 @@ v1 是前者，而站点一加载就把第一项标成 `current_play`，于是�
 新夹具 `tests/fixtures/login/center.html` + `tests/integration/zhs-login.test.ts`
 三条用例：填表并判定成功、第一轮没表单会重来第二轮成功、点了登录仍停在登录页时
 重试用完才请人工。
+
+### 数字石大登录：新旧流程拆分，机构 SSO 直达 CAS（行为变化）
+
+Chrome 实测确认两条链路共享同一个 UPC CAS 表单，但服务目标不同：
+
+- 旧门户：`i.upc.edu.cn → CAS(service=i.upc.edu.cn/dcp/index.jsp) → 数字石大门户`
+- 机构 SSO：`CAS(service=upcsso.zhihuishu.com/authorize) → oc.zhihuishu.com/oauth/callback/upc → 智慧树`
+
+CAS 外层页面包含标准 POST 表单，字段为 `username`、`password`、`type`、
+动态 `execution` 与 `_eventId=submit`。因此新流程无需进入智慧树登录中心、搜索学校、
+点击「去登录」，也无需访问 iframe 内部的 Vue 实例。新流程直接打开构造好的 CAS
+service URL，再通过 `form#loginForm.requestSubmit()` 提交标准字段，由浏览器原生处理
+CAS/OAuth 重定向和 Cookie。曾验证过纯 `page.request` 方案；它能完成 302，但在当前
+Electron/Playwright 组合中 Cookie 没有可靠进入课程页的 CookieJar，因此没有采用。
+
+新旧模块现在完全分开：
+
+| 设置项 | 实现 | 行为 |
+|---|---|---|
+| 数字石大 · 机构 SSO（新） | `upc-institution.ts` + `upc-cas.ts` | 直达并提交 CAS 标准表单；失败时停在 CAS 页面请人工处理 |
+| 数字石大 · 旧门户（兼容） | `upc-legacy.ts` | 保留原 iframe/Vue 注入与工作台跳转 |
+
+旧设置值 `upc` 继续映射旧门户；新流程使用 `upc-institution`。两者不会互相自动回退，
+避免一条链失败后又绕进另一条链。新流程不要求“登录跳转 URL”，旧门户仍要求。
+
+验证：Chrome 逐页确认了两条真实 service URL 与 CAS POST 字段；本地集成测试验证
+表单登录会跟随 302、Cookie 会进入页面上下文、新旧 provider 按设置独立选择。
+真实凭据提交未由测试代码执行；密码错误或验证码仍进入人工处理。

@@ -54,8 +54,9 @@ async function pickDirectory(): Promise<void> {
 }
 
 const loginOptions: Array<{ value: LoginMethod; label: string }> = [
-  { value: 'zhihuishu', label: '智慧树' },
-  { value: 'upc', label: '数字石大' }
+  { value: 'zhihuishu', label: '智慧树账号' },
+  { value: 'upc-institution', label: '数字石大 · 机构 SSO（新）' },
+  { value: 'upc', label: '数字石大 · 旧门户（兼容）' }
 ]
 </script>
 
@@ -121,7 +122,11 @@ const loginOptions: Array<{ value: LoginMethod; label: string }> = [
 
         <FieldRow
           label="登录跳转 URL"
-          hint="登录成功后应落到的页面地址。数字石大登录必填，用于判断是否已登录。"
+          :hint="
+            s.loginMethod === 'upc'
+              ? '旧门户流程必填，用于判断门户跳转是否完成。'
+              : '机构 SSO 与智慧树账号登录通常无需填写。'
+          "
           stacked
         >
           <input

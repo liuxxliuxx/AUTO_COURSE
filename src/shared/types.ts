@@ -155,7 +155,7 @@ export interface SchedulerStatus {
 // 设置
 // ============================================================================
 
-export type LoginMethod = 'zhihuishu' | 'upc'
+export type LoginMethod = 'zhihuishu' | 'upc-institution' | 'upc'
 
 /**
  * 持久化设置。所有字段都会落到 SQLite `settings` 表。
@@ -237,4 +237,3 @@ export interface MigrationReport {
   sourcePath: string | null
   message: string
 }
-

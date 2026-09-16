@@ -12,7 +12,7 @@
  *    （handoff §28「Map + Transcription」）。
  */
 
-import type { TaskMode } from '@shared/types'
+import type { LoginMethod, TaskMode } from '@shared/types'
 import type { CourseRunner, RunOutcome, RunnerContext } from '../runner'
 import {
   MapCourseNavigator,
@@ -33,7 +33,7 @@ export class MapCourseRunner implements CourseRunner {
 
   /** 同 ClassicCourseRunner：登录提供方可注入，便于集成测试 */
   constructor(
-    private readonly createLogin: (method: 'zhihuishu' | 'upc') => LoginProvider = createLoginProvider
+    private readonly createLogin: (method: LoginMethod) => LoginProvider = createLoginProvider
   ) {}
 
   async run(ctx: RunnerContext): Promise<RunOutcome> {

@@ -27,6 +27,48 @@ export async function startFixtureServer(rootDir) {
     try {
       const url = new URL(req.url, 'http://127.0.0.1')
 
+      // CAS 标准表单夹具：验证“GET execution → POST 凭据 → 302”请求链。
+      if (url.pathname === '/login/cas-request') {
+        if (req.method === 'POST') {
+          let body = ''
+          for await (const chunk of req) body += chunk
+          const form = new URLSearchParams(body)
+          const accepted =
+            form.get('username') === '20260001' &&
+            form.get('password') === 'Abc123456' &&
+            form.get('execution') === 'fixture-execution' &&
+            form.get('_eventId') === 'submit'
+          if (accepted) {
+            res.writeHead(302, {
+              Location: '/login/cas-success'
+            })
+            res.end()
+          } else {
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+            res.end('<form id="loginForm">登录失败</form>')
+          }
+          return
+        }
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        res.end(
+          '<form method="post" id="loginForm">' +
+            '<input name="username">' +
+            '<input name="password" type="password">' +
+            '<input name="execution" value="fixture-execution">' +
+            '<input name="_eventId" value="submit">' +
+            '</form>'
+        )
+        return
+      }
+      if (url.pathname === '/login/cas-success') {
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Set-Cookie': 'fixture-sso=ok; Path=/; HttpOnly'
+        })
+        res.end('<!doctype html><title>SSO success</title>')
+        return
+      }
+
       // 大文件端点：用于测试「下载小于 1 MiB 视为鉴权失败」这条判据
       if (url.pathname.startsWith('/bigfile/')) {
         const size = Number.parseInt(url.searchParams.get('size') ?? '1200000', 10)

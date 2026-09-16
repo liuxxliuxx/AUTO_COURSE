@@ -6,7 +6,11 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { hasCookiesFor, isLoginUrl } from '../../src/main/automation/login/session-check'
+import {
+  hasCookiesFor,
+  isCourseDestination,
+  isLoginUrl
+} from '../../src/main/automation/login/session-check'
 import type { BrowserSession } from '../../src/main/automation/browser-session'
 
 describe('isLoginUrl', () => {
@@ -46,5 +50,24 @@ describe('hasCookiesFor', () => {
     const target = 'https://studyvideoh5.zhihuishu.com/stuStudy?x=1'
     expect(await hasCookiesFor(withCookies(['notzhihuishu.com']), target)).toBe(false)
     expect(await hasCookiesFor(withCookies([]), target)).toBe(false)
+  })
+})
+
+describe('isCourseDestination', () => {
+  const course =
+    'https://studyvideoh5.zhihuishu.com/stuStudy?recruitAndCourseId=4e595c584d5c4859'
+
+  it('允许课程页自身更新查询参数或 hash', () => {
+    expect(isCourseDestination(course, course + '#/lesson/1')).toBe(true)
+    expect(
+      isCourseDestination(course, 'https://studyvideoh5.zhihuishu.com/stuStudy?foo=bar')
+    ).toBe(true)
+  })
+
+  it('不把未登录时经过的学生首页当成有效课程会话', () => {
+    expect(
+      isCourseDestination(course, 'https://onlineh5.zhihuishu.com/onlineWeb.html#/studentIndex')
+    ).toBe(false)
+    expect(isCourseDestination(course, 'https://login.zhihuishu.com/?origin=zhs')).toBe(false)
   })
 })

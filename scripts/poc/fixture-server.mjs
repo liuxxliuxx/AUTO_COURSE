@@ -27,6 +27,12 @@ export async function startFixtureServer(rootDir) {
     try {
       const url = new URL(req.url, 'http://127.0.0.1')
 
+      if (url.pathname === '/login/cas-redirect-login') {
+        res.writeHead(302, { Location: '/login/center.html' })
+        res.end()
+        return
+      }
+
       // CAS 标准表单夹具：验证“GET execution → POST 凭据 → 302”请求链。
       if (url.pathname === '/login/cas-request') {
         if (req.method === 'POST') {
@@ -40,7 +46,7 @@ export async function startFixtureServer(rootDir) {
             form.get('_eventId') === 'submit'
           if (accepted) {
             res.writeHead(302, {
-              Location: '/login/cas-success'
+              Location: '/cas-success'
             })
             res.end()
           } else {
@@ -60,7 +66,7 @@ export async function startFixtureServer(rootDir) {
         )
         return
       }
-      if (url.pathname === '/login/cas-success') {
+      if (url.pathname === '/cas-success') {
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8',
           'Set-Cookie': 'fixture-sso=ok; Path=/; HttpOnly'

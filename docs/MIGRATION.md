@@ -556,14 +556,14 @@ CAS 外层页面包含标准 POST 表单，字段为 `username`、`password`、`
 动态 `execution` 与 `_eventId=submit`。因此新流程无需进入智慧树登录中心、搜索学校、
 点击「去登录」，也无需访问 iframe 内部的 Vue 实例。新流程直接打开构造好的 CAS
 service URL，再通过 `form#loginForm.requestSubmit()` 提交标准字段，由浏览器原生处理
-CAS/OAuth 重定向和 Cookie。曾验证过纯 `page.request` 方案；它能完成 302，但在当前
-Electron/Playwright 组合中 Cookie 没有可靠进入课程页的 CookieJar，因此没有采用。
+CAS/OAuth 重定向和 Cookie。纯 `page.request` 方案尚未通过真实账号完整验证；早期夹具
+存在未实际提交表单的问题，不能据此认定 Electron/Playwright 的 Cookie 共享失效。
 
 新旧模块现在完全分开：
 
 | 设置项 | 实现 | 行为 |
 |---|---|---|
-| 数字石大 · 机构 SSO（新） | `upc-institution.ts` + `upc-cas.ts` | 直达并提交 CAS 标准表单；失败时停在 CAS 页面请人工处理 |
+| 数字石大 · 机构 SSO（新） | `upc-institution.ts` + `upc-cas.ts` | 直达 CAS 并等待授权落地；超时保留现场，检测到可见验证码才提示处理 |
 | 数字石大 · 旧门户（兼容） | `upc-legacy.ts` | 保留原 iframe/Vue 注入与工作台跳转 |
 
 旧设置值 `upc` 继续映射旧门户；新流程使用 `upc-institution`。两者不会互相自动回退，
@@ -571,4 +571,20 @@ Electron/Playwright 组合中 Cookie 没有可靠进入课程页的 CookieJar，
 
 验证：Chrome 逐页确认了两条真实 service URL 与 CAS POST 字段；本地集成测试验证
 表单登录会跟随 302、Cookie 会进入页面上下文、新旧 provider 按设置独立选择。
-真实凭据提交未由测试代码执行；密码错误或验证码仍进入人工处理。
+真实凭据提交未由测试代码执行；这些测试通过不代表真实账号登录已经通过。
+
+登录态复用现在还要求导航后仍位于原课程入口的同一 origin 与 pathname。
+失效会话会短暂经过 `onlineh5.zhihuishu.com/onlineWeb.html#/studentIndex`，此前只排除
+`login.*` 会把这个中间页误判为登录成功；现在会继续执行所选登录模块。
+
+### 2026-09-16 登录异步跳转与失败中止
+
+用户日志确认 `wxTransit/3` 仍处于授权链路，旧实现等待 500ms 就按域名判失败。
+新机构流程最多等待 45 秒，只接受明确的工作台/课程中心落点，之后重新验证课程会话；
+传统课还必须出现课程目录，不能仅凭 URL 与 Cookie 判成功。若一直停留在中转页，
+报告授权超时并保留现场，不导航课程页。`state=09876999` 是浏览器观察到的参数，
+没有证据证明先前随机 state 就是实际故障根因。
+
+旧门户在调用 Vue 登录方法后，等待实际到达 `i.upc.edu.cn/dcp/index.jsp`，再跳工作台。
+两个课程运行器在 `LoginResult.ok=false` 时返回 error（用户停止则返回 user），不继续运行。
+回归覆盖延迟中转、持续中转超时、门户延迟认证、停止等待及两个运行器的失败分支。

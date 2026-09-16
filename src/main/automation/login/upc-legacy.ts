@@ -4,6 +4,7 @@ import type { LoginContext, LoginProvider, LoginResult } from './provider'
 import type { LoginMethod } from '@shared/types'
 import { SLEEP, TIMEOUT, UPC_BASE_URL, UPC_FORWARD_URL, UPC_LOGIN_IFRAME_CSS } from '../constants'
 import { firstVisible } from '../locators'
+import { waitForAuthDestination } from './auth-redirect'
 import { checkCourseSession, isLoginUrl, isUpcPortalSessionAlive } from './session-check'
 
 export class UpcLegacyLogin implements LoginProvider {
@@ -26,8 +27,21 @@ export class UpcLegacyLogin implements LoginProvider {
         const ok = await captcha.requestManualHelp('login', '请在浏览器中手动完成旧门户登录')
         if (!ok) return { ok: false, alreadyLoggedIn: false, message: '旧门户登录表单不可用' }
       }
+      log.info('等待数字石大门户认证完成后再打开工作台')
+      const authenticated = await waitForAuthDestination(
+        session.playwrightPage,
+        (url) => url.hostname === 'i.upc.edu.cn' && url.pathname === '/dcp/index.jsp',
+        { shouldStop: ctx.shouldStop }
+      )
+      if (!authenticated) {
+        await captcha.checkAndHandle('login', '门户登录出现验证码，请完成验证')
+        return { ok: false, alreadyLoggedIn: false, message: `门户认证尚未完成：${session.getCurrentUrl()}` }
+      }
     }
 
+    if (ctx.shouldStop() || session.playwrightPage.isClosed()) {
+      return { ok: false, alreadyLoggedIn: false, message: '登录已停止或课程窗口已关闭' }
+    }
     await session.navigate(UPC_FORWARD_URL)
     await captcha.checkAndHandle('login', '登录时出现验证码，请完成验证')
     const ok = await this.waitForRedirect(ctx, settings.loggedUrl)

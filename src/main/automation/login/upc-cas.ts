@@ -1,6 +1,10 @@
 import type { Page } from 'playwright-core'
+import { isInstitutionDestination, waitForAuthDestination, type AuthWaitOptions } from './auth-redirect'
 
-export function buildUpcInstitutionCasUrl(state = String(Date.now())): string {
+// Observed in the institution entry's service URL; not evidence of why login failed.
+const UPC_ZHS_OAUTH_STATE = '09876999'
+
+export function buildUpcInstitutionCasUrl(state = UPC_ZHS_OAUTH_STATE): string {
   const service = new URL('http://upcsso.zhihuishu.com/authorize')
   service.searchParams.set('portal', '14')
   service.searchParams.set('response_type', 'code')
@@ -25,47 +29,53 @@ export async function submitCasForm(
   loginUrl: string,
   username: string,
   password: string,
-  timeoutMs = 30_000
+  timeoutMs = 45_000,
+  options: AuthWaitOptions & { accepts?: (url: URL) => boolean } = {}
 ): Promise<CasSubmitResult> {
+  const accepts = options.accepts ?? isInstitutionDestination
   try {
     await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: timeoutMs })
-    const form = page.locator('form#loginForm')
-    if ((await form.count()) === 0 && !isCasLoginUrl(page.url())) {
-      return { ok: true, finalUrl: page.url(), detail: '复用已有 CAS 会话' }
+    const deadline = Date.now() + timeoutMs
+    let submitted = false
+    while (Date.now() < deadline) {
+      if (page.isClosed() || options.shouldStop?.()) {
+        return { ok: false, finalUrl: page.url(), detail: '登录已停止或课程窗口已关闭' }
+      }
+      if (accepts(new URL(page.url()))) {
+        const ok = await waitForAuthDestination(page, accepts, {
+          ...options, timeoutMs: Math.max(0, deadline - Date.now())
+        })
+        return {
+          ok, finalUrl: page.url(),
+          detail: ok ? 'CAS/OAuth 已到达授权目标页' : '授权目标页未稳定或登录已停止'
+        }
+      }
+      // Only submit on the requested CAS origin/path, never on an OAuth transit page.
+      const requested = new URL(loginUrl)
+      const current = new URL(page.url())
+      if (!submitted && requested.origin === current.origin && requested.pathname === current.pathname) {
+        const form = page.locator('form#loginForm')
+        if (await form.count()) {
+          submitted = true
+          await form.evaluate((element, credentials) => {
+            const loginForm = element as HTMLFormElement
+            const user = loginForm.elements.namedItem('username') as HTMLInputElement | null
+            const pass = loginForm.elements.namedItem('password') as HTMLInputElement | null
+            if (!user || !pass) throw new Error('CAS 标准表单字段缺失')
+            user.value = credentials.username
+            pass.value = credentials.password
+            const submitter = loginForm.querySelector<HTMLInputElement>('input[type="submit"]')
+            loginForm.requestSubmit(submitter ?? undefined)
+          }, { username, password })
+        }
+      }
+      await page.waitForTimeout(200)
     }
-
-    await form.waitFor({ state: 'attached', timeout: 10_000 })
-    const formUrl = page.url()
-
-    await Promise.all([
-      page.waitForURL((url) => url.toString() !== formUrl, { timeout: timeoutMs }),
-      form.evaluate(
-        (element, credentials) => {
-          const loginForm = element as HTMLFormElement
-          const usernameInput = loginForm.elements.namedItem('username') as HTMLInputElement | null
-          const passwordInput = loginForm.elements.namedItem('password') as HTMLInputElement | null
-          if (!usernameInput || !passwordInput) {
-            throw new Error('CAS 标准表单字段缺失')
-          }
-
-          usernameInput.value = credentials.username
-          passwordInput.value = credentials.password
-          loginForm.requestSubmit()
-        },
-        { username, password }
-      )
-    ])
-
-    return { ok: true, finalUrl: page.url(), detail: 'CAS/OAuth 重定向完成' }
+    return {
+      ok: false, finalUrl: page.url(),
+      detail: `等待 CAS/OAuth 完成超时（${submitted ? '已提交表单' : '尚未提交表单/已有 CAS 会话跳转'}）：${page.url()}`
+    }
   } catch (error) {
     return { ok: false, finalUrl: page.url(), detail: String(error) }
-  }
-}
-
-export function isCasLoginUrl(value: string): boolean {
-  try {
-    return new URL(value).pathname.includes('/cas/login')
-  } catch {
-    return false
   }
 }

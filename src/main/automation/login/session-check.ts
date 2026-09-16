@@ -14,7 +14,7 @@
 
 import type { LoginContext } from './provider'
 import type { BrowserSession } from '../browser-session'
-import { SLEEP, UPC_BASE_URL } from '../constants'
+import { SLEEP, UPC_BASE_URL, VIDEO_LIST_ITEM_CSS } from '../constants'
 import type { Logger } from '../../services/logger'
 
 /**
@@ -63,6 +63,26 @@ export interface CourseSessionState {
 }
 
 /**
+ * 登录检查只有仍停在请求的课程入口才算成功。
+ *
+ * 智慧树的失效会话会先落到 onlineh5 的学生首页，再由前端跳去登录中心；
+ * 只排除 login.* 会在这个中间页产生短暂的假阳性。
+ */
+export function isCourseDestination(target: string, current: string): boolean {
+  try {
+    const expected = new URL(target)
+    const actual = new URL(current)
+    const normalizePath = (path: string): string => path.replace(/\/+$/, '') || '/'
+    return (
+      actual.origin === expected.origin &&
+      normalizePath(actual.pathname) === normalizePath(expected.pathname)
+    )
+  } catch {
+    return false
+  }
+}
+
+/**
  * 现在能不能直接打开课程页 —— 也就是"这次还需不需要登录"。
  *
  * 智慧树的学习页是 SPA：未登录时 HTTP 依然返回 200、也没有 Location 头，
@@ -89,6 +109,34 @@ export async function checkCourseSession(ctx: LoginContext): Promise<CourseSessi
   const current = session.getCurrentUrl()
   if (isLoginUrl(current)) {
     return { loggedIn: false, detail: `被带到登录页：${current}` }
+  }
+  if (!isCourseDestination(target, current)) {
+    return { loggedIn: false, detail: `课程入口跳转到了其他页面：${current}` }
+  }
+
+  // Traditional course authentication is asynchronous. The initial URL and HTML
+  // shell alone are not proof that the server granted access to the course.
+  if (new URL(target).hostname === 'studyvideoh5.zhihuishu.com') {
+    try {
+      const expected = new URL(target)
+      const ready = await session.playwrightPage.waitForFunction(
+        ({ origin, pathname, selector }) => {
+          if (location.origin !== origin || location.pathname !== pathname) return true
+          const entry = document.querySelector(selector)
+          if (!entry) return false
+          const rect = entry.getBoundingClientRect()
+          return rect.width > 0 && rect.height > 0 && getComputedStyle(entry).visibility !== 'hidden'
+        },
+        { origin: expected.origin, pathname: expected.pathname, selector: VIDEO_LIST_ITEM_CSS },
+        { timeout: 15_000 }
+      )
+      await ready.dispose()
+    } catch {
+      return { loggedIn: false, detail: `未加载已授权的课程目录：${session.getCurrentUrl()}` }
+    }
+    if (!isCourseDestination(target, session.getCurrentUrl())) {
+      return { loggedIn: false, detail: `加载课程目录期间发生跳转：${session.getCurrentUrl()}` }
+    }
   }
 
   log.info(`会话仍然有效，复用现有登录：${current}`)

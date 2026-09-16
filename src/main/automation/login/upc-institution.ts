@@ -2,11 +2,13 @@
 
 import type { LoginMethod } from '@shared/types'
 import type { LoginContext, LoginProvider, LoginResult } from './provider'
-import { checkCourseSession, isLoginUrl } from './session-check'
+import { checkCourseSession } from './session-check'
 import { buildUpcInstitutionCasUrl, submitCasForm } from './upc-cas'
 
 export interface UpcInstitutionLoginOptions {
   casLoginUrl?: string
+  timeoutMs?: number
+  accepts?: (url: URL) => boolean
 }
 
 export class UpcInstitutionLogin implements LoginProvider {
@@ -27,31 +29,25 @@ export class UpcInstitutionLogin implements LoginProvider {
       ctx.session.playwrightPage,
       loginUrl,
       ctx.credentials.username,
-      ctx.credentials.password
+      ctx.credentials.password,
+      this.options.timeoutMs,
+      { shouldStop: ctx.shouldStop, accepts: this.options.accepts }
     )
 
     if (!result.ok) {
       ctx.log.warn(`机构 SSO 表单登录失败：${result.detail}`)
-      const handled = await ctx.captcha.requestManualHelp(
-        'login',
-        '机构登录需要人工处理（密码错误或出现验证码），请登录后继续'
-      )
+      const handled = await ctx.captcha.checkAndHandle('login', '机构登录出现验证码，请完成验证')
       return {
-        ok: handled,
+        ok: false,
         alreadyLoggedIn: false,
-        message: handled ? '已通过人工完成机构登录' : `机构登录失败：${result.detail}`
+        message: handled ? '验证码处理完成，请重新开始登录' : `机构登录失败：${result.detail}`
       }
     }
 
     ctx.log.info(`机构 SSO 重定向链完成：${result.finalUrl}`)
-    const target = ctx.settings.videoUrl.trim() || result.finalUrl
-    await ctx.session.navigate(target)
-    if (isLoginUrl(ctx.session.getCurrentUrl())) {
-      return {
-        ok: false,
-        alreadyLoggedIn: false,
-        message: `OAuth 完成后仍被带回登录页：${ctx.session.getCurrentUrl()}`
-      }
+    const course = await checkCourseSession(ctx)
+    if (!course.loggedIn) {
+      return { ok: false, alreadyLoggedIn: false, message: `机构授权后课程鉴权未通过：${course.detail}` }
     }
     return { ok: true, alreadyLoggedIn: false, message: '机构 SSO 登录成功' }
   }

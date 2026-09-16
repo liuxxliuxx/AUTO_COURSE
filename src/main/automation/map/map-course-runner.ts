@@ -74,8 +74,9 @@ export class MapCourseRunner implements CourseRunner {
       shouldStop: ctx.shouldStop,
       log
     })
-    if (!loginResult.ok && ctx.shouldStop()) {
-      return { completedCount: 0, watchedSeconds: 0, reason: 'user' }
+    if (!loginResult.ok || ctx.shouldStop()) {
+      log.error(`登录未完成，停止运行：${loginResult.message}`)
+      return { completedCount: 0, watchedSeconds: 0, reason: ctx.shouldStop() ? 'user' : 'error' }
     }
     log.info(`登录结果: ${loginResult.message}`)
 

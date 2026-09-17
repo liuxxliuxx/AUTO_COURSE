@@ -185,6 +185,32 @@ export class BrowserService {
     return this.openSession()
   }
 
+  /**
+   * 把课程窗口提到前台并聚焦。
+   *
+   * 宿主开窗时走的是 `showInactive()`（不抢焦点），所以**只有用户主动要求**
+   * （点运行页的「打开课程窗口 / 验证窗口 / 登录窗口」）时才调用这里。
+   * 自动运行、宿主重启都不会调用。
+   */
+  async focusCourseWindow(): Promise<boolean> {
+    const host = this.electronApp
+    if (!host) return false
+    try {
+      return await host.evaluate(({ BrowserWindow }) => {
+        const window = BrowserWindow.getAllWindows().find((item) => !item.isDestroyed())
+        if (!window) return false
+        if (window.isMinimized()) window.restore()
+        window.show()
+        window.focus()
+        window.moveTop()
+        return true
+      })
+    } catch (error) {
+      logger.warn(`聚焦课程窗口失败: ${String(error)}`)
+      return false
+    }
+  }
+
   // ---------------------------------------------------------------- 下载
 
   /**

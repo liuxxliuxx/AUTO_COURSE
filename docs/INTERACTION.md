@@ -44,6 +44,20 @@
 - 课程加载失败 → 重试任务、返回课程详情
 - 普通执行错误只提示「任务执行失败」，不会引导去处理验证码
 
+### 窗口焦点
+
+课程窗口是自动打开的（每次运行、每次宿主重启都会开），所以它**不允许抢焦点**：
+
+- 自动路径（宿主启动、运行开始、宿主重启）只 `showInactive()`：窗口照常出现，
+  但不激活进程、不打断用户正在用的 App。
+- 只有用户主动点「打开课程窗口 / 验证窗口 / 登录窗口」时，`browser:openCourseWindow`
+  才会显式把窗口拉到前台（`BrowserService.focusCourseWindow()`）。
+
+实测（`scripts/poc/focus-probe.mjs`，需要图形会话，手动跑）：前台放着「访达」时
+拉起宿主，窗口 `visible=true / focused=false`，前台仍是「访达」；点按钮才切到 Electron。
+同一探针还确认不聚焦时 Playwright 仍能正常 fill / click，页面 `document.hasFocus()` 也是 true，
+所以刷课链路不受影响。
+
 ---
 
 ## 2. 模块边界

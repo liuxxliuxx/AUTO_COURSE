@@ -110,7 +110,9 @@ function createCourseWindow(): BrowserWindow {
   const window = new BrowserWindow({
     width: WINDOW_WIDTH,
     height: WINDOW_HEIGHT,
-    show: true,
+    // 不要 show: true —— 课程窗口是自动打开的（每次运行、每次宿主重启都会开），
+    // 抢走用户当前 App 的焦点会直接打断人家正在做的事。
+    show: false,
     title: '课程窗口',
     backgroundColor: '#ffffff',
     autoHideMenuBar: true,
@@ -125,7 +127,9 @@ function createCourseWindow(): BrowserWindow {
     }
   })
 
-  window.on('ready-to-show', () => window.show())
+  // showInactive：窗口照常出现，但不激活本进程、不抢键盘焦点。
+  // 需要用户动手时（点「打开课程窗口 / 验证窗口 / 登录窗口」）由主应用显式 focus。
+  window.on('ready-to-show', () => window.showInactive())
 
   // 远程页面自己发起的 window.open 一律拒绝：多窗口由 BrowserService 显式管理，
   // 不能让网页凭空多开一个无受控的窗口。

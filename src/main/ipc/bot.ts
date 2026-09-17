@@ -56,9 +56,11 @@ export function registerBotIpc(container: ServiceContainer): void {
 
   // --------------------------------------------------------------- 浏览器
 
+  // 只有用户主动点按钮才会走到这里，所以在这里显式把课程窗口拉到前台。
   handle(IPC_INVOKE.browserOpenCourseWindow, async () => {
     const session = await container.browser.ensureSession()
     const url = session.getCurrentUrl()
+    await container.browser.focusCourseWindow()
     logger.info(`课程窗口已打开: ${url}`)
   })
 

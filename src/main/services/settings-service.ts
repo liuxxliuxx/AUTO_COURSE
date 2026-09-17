@@ -106,8 +106,7 @@ export class SettingsService {
   }
 
   /** 启动前的校验，规则与 v1 `bridge._validate_start` 等价。 */
-  validate(): ValidationError[] {
-    const s = this.getAll()
+  validate(s = this.getAll()): ValidationError[] {
     const errors: ValidationError[] = []
 
     if (!s.brushEnabled && !s.transcribeEnabled && !s.mapMode) {
@@ -137,8 +136,7 @@ export class SettingsService {
   }
 
   /** 提示词用的「当前任务模式」推导（与 v1 bridge.py:274 一致） */
-  deriveTaskMode(): 'classic' | 'map' | 'transcribe-only' {
-    const s = this.getAll()
+  deriveTaskMode(s = this.getAll()): 'classic' | 'map' | 'transcribe-only' {
     if (s.mapMode) return 'map'
     if (!s.brushEnabled) return 'transcribe-only'
     return 'classic'

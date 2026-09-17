@@ -5,12 +5,13 @@
  * BotService 只认这个接口，按 TaskMode 挑实现。
  */
 
-import type { AppSettings, Credentials, StopReason, TaskMode } from '@shared/types'
+import type { AppSettings, Credentials, StopReason, TaskMode, RunPhase, RunError, InterventionRequest } from '@shared/types'
 import type { BrowserSession } from './browser-session'
 import type { EventBus } from '../services/event-bus'
 import type { Logger } from '../services/logger'
 
 export interface RunOutcome {
+  error?: RunError
   /** 本次运行完成的视频/知识项数量 */
   completedCount: number
   /** 本次实际观看秒数（用于每日进度） */
@@ -78,7 +79,8 @@ export interface RunnerContext {
    * 请求人工处理验证码。
    * 返回 true 表示用户已确认并继续；false 表示期间收到停止请求。
    */
-  requestCaptcha(scene: 'login' | 'course' | 'video', message: string): Promise<boolean>
+  reportPhase?(phase: RunPhase): void
+  requestCaptcha(scene: 'login' | 'course' | 'video', message: string, kind?: InterventionRequest['kind']): Promise<boolean>
 }
 
 export interface CourseRunner {

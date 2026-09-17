@@ -208,8 +208,14 @@ export class TranscriptionService implements MediaPort {
    * 按当前设置决定是否启用。
    * 返回是否可用（ffmpeg + worker 都在）。
    */
-  async configure(settings: AppSettings, transcribeOnly: boolean): Promise<boolean> {
-    const wanted = settings.transcribeEnabled || transcribeOnly || settings.mapMode
+  private configuredCourseName = DEFAULT_COURSE_NAME
+
+  /**
+   * @param courseFolder 由课程库给出的输出目录名（同名课程会带序号）。
+   *   缺省时退回课程备注，保证调用方不必知道命名规则。
+   */
+  async configure(settings: AppSettings, transcribeOnly: boolean, courseFolder?: string): Promise<boolean> {
+    const wanted = settings.transcribeEnabled || transcribeOnly
     this.enabled = wanted && !!settings.transcribeBaseDir
 
     if (!this.enabled) {
@@ -224,9 +230,10 @@ export class TranscriptionService implements MediaPort {
       return false
     }
 
+    this.configuredCourseName = courseFolder?.trim() || sanitizeFilename(settings.courseNote || DEFAULT_COURSE_NAME)
     this.outputRoot = join(settings.transcribeBaseDir, OUTPUT_ROOT_DIRNAME)
     this.tempDir = join(this.outputRoot, TEMP_DIRNAME)
-    this.courseDir = join(this.outputRoot, sanitizeFilename(settings.courseNote || DEFAULT_COURSE_NAME))
+    this.courseDir = join(this.outputRoot, this.configuredCourseName)
     mkdirSync(this.tempDir, { recursive: true })
     mkdirSync(this.courseDir, { recursive: true })
 
@@ -561,8 +568,7 @@ export class TranscriptionService implements MediaPort {
    * 保证用户已有的「课程录音」目录内容前后一致。
    */
   private writeTranscript(title: string, text: string): void {
-    const settings = this.deps.getSettings()
-    const courseName = sanitizeFilename(settings.courseNote || DEFAULT_COURSE_NAME)
+    const courseName = this.configuredCourseName
     const target = join(this.courseDir, `${sanitizeFilename(title)}.txt`)
 
     const now = new Date()

@@ -1,128 +1,53 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { RouterLink, RouterView } from 'vue-router'
+import { onMounted, onUnmounted, ref } from 'vue'
+import { RouterLink, RouterView, useRouter } from 'vue-router'
 import { useAppStore } from './stores/app'
-
-const app = useAppStore()
-const version = ref('')
-const platform = ref('')
-
-// 事件订阅与初始快照由 App 持有：切到「设置」页时也要继续接收状态推送，
-// 所以这里不随页面卸载而 dispose。
-onMounted(async () => {
-  void app.hydrate()
+import { useCoursesStore } from './stores/courses'
+import { useSchedulerStore } from './stores/scheduler'
+import { useSettingsStore } from './stores/settings'
+const run = useAppStore(), courses = useCoursesStore(), scheduler = useSchedulerStore(), settings = useSettingsStore()
+const router = useRouter()
+const version = ref(''), platform = ref(''), error = ref('')
+const ready = ref(false)
+let unsubscribers: Array<() => void> = []
+async function initialize(): Promise<void> {
+  error.value = ''
   try {
-    const info = await window.appApi.app.version()
-    version.value = `v${info.version}`
-    platform.value = info.platform
-  } catch {
-    version.value = ''
-  }
-})
+    if (!unsubscribers.length) unsubscribers = [
+      window.appApi.events.onCourseLibraryChanged(value => { courses.library = value }),
+      window.appApi.events.onSchedulerStatus(value => { scheduler.status = value }),
+      window.appApi.events.onSettingsChanged(value => { settings.settings = value })
+    ]
+    await Promise.all([run.hydrate(), courses.load(), scheduler.load(), settings.load()])
+    if (courses.error || settings.error) throw new Error(courses.error || settings.error)
+    const info = await window.appApi.app.version(); version.value = info.version; platform.value = info.platform
+    if (run.isRunning) await router.replace('/run')
+    ready.value = true
+  } catch (e) { error.value = `初始化失败：${String(e)}` }
+}
+onMounted(initialize)
+onUnmounted(() => { unsubscribers.forEach(off => off()); run.dispose() })
 </script>
-
 <template>
   <div class="shell" :data-platform="platform">
-    <header class="topbar">
-      <div class="brand">智慧树自动刷课</div>
-
-      <nav class="tabs" aria-label="主导航">
-        <RouterLink to="/" class="tab" active-class="active">运行</RouterLink>
-        <RouterLink to="/settings" class="tab" active-class="active">设置</RouterLink>
+    <aside class="sidebar">
+      <div class="window-space"></div>
+      <div class="brand"><span class="brand-icon">学</span><div>课程助手<small>专注学习，有序进行</small></div></div>
+      <nav aria-label="主导航">
+        <RouterLink to="/courses"><span aria-hidden="true">▦</span>课程</RouterLink>
+        <RouterLink to="/run"><span aria-hidden="true">▷</span>运行<span v-if="run.isRunning" class="live-dot"></span></RouterLink>
+        <RouterLink to="/settings"><span aria-hidden="true">⚙</span>设置</RouterLink>
       </nav>
-
-      <div class="right">
-        <span v-if="app.migration?.imported" class="migrated" :title="app.migration.message">
-          已导入旧数据
-        </span>
-        <span v-if="version" class="version num">{{ version }}</span>
-      </div>
-    </header>
-
-    <main class="view">
-      <RouterView />
+      <div class="sidebar-bottom"><span class="badge" :class="run.isRunning ? 'green' : ''">{{ run.isRunning ? '任务进行中' : '当前无运行任务' }}</span><p>课程助手 <span v-if="version">v{{ version }}</span></p></div>
+    </aside>
+    <main class="workspace"><div class="titlebar"></div>
+      <div v-if="error" class="page"><div class="notice error" role="alert">{{ error }}</div><button @click="initialize">重新加载</button></div>
+      <RouterView v-else-if="ready" />
+      <div v-else class="empty" role="status">正在加载课程与设置…</div>
     </main>
   </div>
 </template>
-
 <style scoped>
-.shell {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-}
-
-.topbar {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--sp-5);
-  height: 42px;
-  padding: 0 var(--sp-6);
-  border-bottom: 1px solid var(--line-soft);
-  background: var(--ground);
-  -webkit-app-region: drag;
-}
-
-/* macOS 使用 hiddenInset 标题栏，给红黄绿按钮让出位置 */
-.shell[data-platform='darwin'] .topbar {
-  padding-left: 82px;
-}
-
-.brand {
-  font-size: var(--fs-base);
-  color: var(--text);
-  letter-spacing: 0.01em;
-}
-
-.tabs {
-  display: flex;
-  gap: var(--sp-1);
-  -webkit-app-region: no-drag;
-}
-
-.tab {
-  padding: 3px 10px;
-  border-radius: var(--r-control);
-  font-size: var(--fs-small);
-  color: var(--text-3);
-  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
-}
-
-.tab:hover {
-  color: var(--text-2);
-  background: var(--surface);
-}
-
-.tab.active {
-  color: var(--text);
-  background: var(--surface-2);
-}
-
-.right {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  -webkit-app-region: no-drag;
-}
-
-.migrated {
-  font-size: var(--fs-micro);
-  color: var(--brass);
-  border: 1px solid var(--brass-dim);
-  border-radius: var(--r-control);
-  padding: 1px 7px;
-}
-
-.version {
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-}
-
-.view {
-  flex: 1 1 auto;
-  min-height: 0;
-}
+.shell{display:flex;height:100%;min-width:640px}.sidebar{width:194px;flex-shrink:0;background:#fff;border-right:1px solid var(--line-soft);display:flex;flex-direction:column;padding:0 16px}.window-space{height:48px;-webkit-app-region:drag}.brand{display:flex;gap:11px;align-items:center;font-size:18px;font-weight:650;padding:10px 7px 34px}.brand-icon{display:grid;place-items:center;width:36px;height:38px;background:var(--sky);color:white;border-radius:10px;font-size:19px}.brand small{display:block;font-size:10px;color:var(--text-3);font-weight:400;margin-top:2px}nav{display:grid;gap:7px}nav a{display:flex;align-items:center;gap:12px;border-radius:8px;padding:11px 14px;color:var(--text-2);font-weight:550}nav a>span:first-child{font-size:21px;line-height:1}nav a:hover{background:var(--ground)}nav a.router-link-active{background:var(--sky-dim);color:var(--sky)}.sidebar-bottom{margin-top:auto;padding:24px 8px}.sidebar-bottom p{color:var(--text-3);font-size:11px;margin-top:14px}.live-dot{width:6px;height:6px;background:var(--jade);border-radius:50%;margin-left:auto}.workspace{flex:1;min-width:0;height:100%;display:flex;flex-direction:column}.titlebar{height:20px;flex-shrink:0;-webkit-app-region:drag}.workspace>.page{height:calc(100% - 20px)}
+@media(max-width:850px){.sidebar{width:150px;padding:0 10px}.brand{font-size:16px}.brand small{display:none}}
 </style>

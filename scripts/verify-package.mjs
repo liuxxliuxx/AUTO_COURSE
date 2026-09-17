@@ -48,7 +48,7 @@ try {
 
   // 1. Renderer 渲染
   const brand = await window.locator('.brand').textContent({ timeout: 20_000 })
-  record('控制面板已渲染', brand?.includes('智慧树') === true, brand?.trim())
+  record('控制面板已渲染', brand?.includes('课程助手') === true, brand?.trim())
 
   // 2. 原生模块 + 数据库 + 设置
   const settings = await window.evaluate(() => window.appApi.settings.getAll())

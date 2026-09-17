@@ -19,8 +19,9 @@ const TICK_MS = 30_000
 
 export interface SchedulerController {
   isRunning(): boolean
+  isScheduledRun?(): boolean
   /** 由调度器发起的启动 */
-  startForSchedule(): Promise<void>
+  startForSchedule(courseId: string): Promise<void>
   /** 由调度器发起的停止（不会取消 autoMode） */
   stopForSchedule(reason: StopReason): Promise<void>
 }
@@ -75,6 +76,7 @@ export class SchedulerService {
     // 课程池耗尽 → 关掉自动模式，避免每 30 秒空转重启一次
     this.unsubscribe = this.bus.on('event:bot-status', (status) => {
       if (status.state !== 'idle') return
+      if (status.stoppedReason === 'error' && this.getConfig().enabled) { this.pause(status.message); return }
       if (status.stoppedReason === 'pool-exhausted' && this.getConfig().enabled) {
         logger.info('课程池已耗尽，自动关闭自动调度')
         this.settings.update({ autoMode: false })
@@ -95,12 +97,19 @@ export class SchedulerService {
     this.unsubscribe = null
   }
 
+  pause(reason: string): void {
+    this.db.setSetting('schedulerPausedReason', reason)
+    this.emitStatus()
+  }
+  resume(): void { this.db.setSetting('schedulerPausedReason', ''); this.emitStatus() }
+
   // ------------------------------------------------------------------ status
 
   getConfig(): SchedulerConfig {
     const s = this.settings.getAll()
     return {
       enabled: s.autoMode,
+      courseId: this.db.getSetting('schedulerCourseId') || null,
       startTime: s.autoStartTime,
       endTime: s.autoEndTime,
       allDay: s.autoAllDay,
@@ -112,6 +121,7 @@ export class SchedulerService {
     const config = this.getConfig()
     if (!config.enabled) {
       return {
+        pausedReason: this.db.getSetting('schedulerPausedReason') || null,
         config,
         inRange: true,
         targetReached: false,
@@ -124,6 +134,7 @@ export class SchedulerService {
     const targetSeconds = config.dailyLimitMinutes * 60
 
     return {
+      pausedReason: this.db.getSetting('schedulerPausedReason') || null,
       config,
       inRange: config.allDay || isTimeInRange(now, config.startTime, config.endTime),
       targetReached: targetSeconds > 0 && watched >= targetSeconds,
@@ -145,7 +156,7 @@ export class SchedulerService {
     const watched = this.db.getDailyProgress(todayString(now))
     const running = this.controller.isRunning()
 
-    if (!config.enabled) {
+    if (!config.enabled || this.db.getSetting('schedulerPausedReason')) {
       this.emitStatus()
       return
     }
@@ -154,6 +165,7 @@ export class SchedulerService {
     const targetSeconds = config.dailyLimitMinutes * 60
 
     if (running) {
+      if (this.controller.isScheduledRun && !this.controller.isScheduledRun()) return
       if (!inRange) {
         logger.info('已超出允许运行时间段，停止本次运行')
         await this.controller.stopForSchedule('out-of-schedule')
@@ -166,20 +178,22 @@ export class SchedulerService {
     }
 
     // 未在运行：判断要不要自动开始
-    if (!inRange || targetSeconds <= 0) {
+    if (!inRange) {
       this.emitStatus()
       return
     }
-    if (watched >= targetSeconds) {
+    if (targetSeconds > 0 && watched >= targetSeconds) {
       this.emitStatus()
       return
     }
 
+    if (!config.courseId) { this.pause('请为自动调度选择一门课程'); return }
     logger.info('满足自动启动条件，开始刷课')
     try {
-      await this.controller.startForSchedule()
+      await this.controller.startForSchedule(config.courseId)
     } catch (error) {
       logger.exception('自动启动失败', error)
+      this.pause(error instanceof Error ? error.message : '自动启动失败')
     }
     this.emitStatus()
   }

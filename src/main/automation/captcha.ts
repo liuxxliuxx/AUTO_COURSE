@@ -28,7 +28,7 @@ export interface CaptchaDetection {
 export interface CaptchaServiceDeps {
   session: BrowserSession
   /** 通知 UI 并等待用户确认；返回 false 表示期间收到停止请求 */
-  requestCaptcha: (scene: CaptchaScene, message: string) => Promise<boolean>
+  requestCaptcha: (scene: CaptchaScene, message: string, kind?: 'captcha' | 'manual-login') => Promise<boolean>
   shouldStop: () => boolean
   log: Logger
 }
@@ -203,7 +203,7 @@ export class CaptchaService {
     if (!hit) return false
 
     this.deps.log.warn(`检测到验证码（${hit.kind}: ${hit.detail}）`)
-    return this.requestManualHelp(scene, message)
+    return this.requestManualHelp(scene, message, 'captcha')
   }
 
   /**
@@ -213,16 +213,16 @@ export class CaptchaService {
    * 而它在屏幕上没有验证码时立刻返回 false —— 于是既不弹提示也不等待，
    * 用户看到的就是"被扔在登录页，然后不动了"。
    */
-  async requestManualHelp(scene: CaptchaScene, message: string): Promise<boolean> {
+  async requestManualHelp(scene: CaptchaScene, message: string, kind: 'captcha' | 'manual-login' = 'manual-login'): Promise<boolean> {
     if (this.deps.shouldStop()) return false
 
-    const confirmed = await this.deps.requestCaptcha(scene, message)
+    const confirmed = await this.deps.requestCaptcha(scene, message, kind)
     if (!confirmed) {
       this.deps.log.info('收到停止请求，放弃等待验证码')
       return false
     }
 
-    this.deps.log.info('用户确认验证码已处理，继续运行')
+    this.deps.log.info('用户确认人工处理已完成，继续运行')
     return true
   }
 }

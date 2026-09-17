@@ -59,8 +59,8 @@ function createMainWindow(): BrowserWindow {
     minWidth: 960,
     minHeight: 640,
     show: false,
-    title: '智慧树自动刷课',
-    backgroundColor: '#0e191b',
+    title: '课程助手',
+    backgroundColor: '#f5f7fb',
     autoHideMenuBar: true,
     // macOS 下把系统标题栏内嵌，让红黄绿按钮浮在自己的顶栏上，
     // 避免「系统标题栏 + 应用顶栏」两层 chrome。

@@ -32,7 +32,7 @@ function subscribe<E extends EventName>(
 export function createApi(ipcRenderer: IpcRenderer): AppApi {
   return {
     bot: {
-      start: () => invoke(ipcRenderer, IPC_INVOKE.botStart),
+      start: (request) => invoke(ipcRenderer, IPC_INVOKE.botStart, request),
       stop: () => invoke(ipcRenderer, IPC_INVOKE.botStop),
       status: () => invoke(ipcRenderer, IPC_INVOKE.botStatus)
     },
@@ -51,11 +51,15 @@ export function createApi(ipcRenderer: IpcRenderer): AppApi {
 
     courses: {
       list: () => invoke(ipcRenderer, IPC_INVOKE.coursesList),
-      select: (url, note) => invoke(ipcRenderer, IPC_INVOKE.coursesSelect, { url, note })
+      select: (id) => invoke(ipcRenderer, IPC_INVOKE.coursesSelect, { id }),
+      create: (input) => invoke(ipcRenderer, IPC_INVOKE.coursesCreate, input),
+      update: (id, input) => invoke(ipcRenderer, IPC_INVOKE.coursesUpdate, { id, input }),
+      remove: (id) => invoke(ipcRenderer, IPC_INVOKE.coursesRemove, { id }),
+      defaults: (options) => invoke(ipcRenderer, IPC_INVOKE.coursesDefaults, options)
     },
 
-    captcha: {
-      confirm: () => invoke(ipcRenderer, IPC_INVOKE.captchaConfirm)
+    intervention: {
+      confirm: () => invoke(ipcRenderer, IPC_INVOKE.interventionConfirm)
     },
 
     scheduler: {
@@ -96,13 +100,10 @@ export function createApi(ipcRenderer: IpcRenderer): AppApi {
       onBotStatus: (cb) => subscribe(ipcRenderer, IPC_EVENT.botStatus, cb),
       onLog: (cb) => subscribe(ipcRenderer, IPC_EVENT.log, cb),
       onProgress: (cb) => subscribe(ipcRenderer, IPC_EVENT.progress, cb),
-      onCourseChanged: (cb) => subscribe(ipcRenderer, IPC_EVENT.courseChanged, cb),
-      onCaptchaRequired: (cb) => subscribe(ipcRenderer, IPC_EVENT.captchaRequired, cb),
-      onCaptchaCleared: (cb) => subscribe(ipcRenderer, IPC_EVENT.captchaCleared, cb),
+      onCourseLibraryChanged: (cb) => subscribe(ipcRenderer, IPC_EVENT.courseLibraryChanged, cb),
       onTranscriptionStatus: (cb) => subscribe(ipcRenderer, IPC_EVENT.transcriptionStatus, cb),
       onSchedulerStatus: (cb) => subscribe(ipcRenderer, IPC_EVENT.schedulerStatus, cb),
-      onSettingsChanged: (cb) => subscribe(ipcRenderer, IPC_EVENT.settingsChanged, cb),
-      onError: (cb) => subscribe(ipcRenderer, IPC_EVENT.error, cb)
+      onSettingsChanged: (cb) => subscribe(ipcRenderer, IPC_EVENT.settingsChanged, cb)
     }
   }
 }

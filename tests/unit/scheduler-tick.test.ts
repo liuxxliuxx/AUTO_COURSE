@@ -55,6 +55,7 @@ const at = (h: number, m = 0): Date => new Date(2026, 8, 15, h, m, 0)
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'ac-sched-'))
   db = new Database(join(dir, 'test.db'))
+  db.setSetting('schedulerCourseId', 'fixture-course')
   settings = new SettingsService(db)
   bus = new EventBus()
 })
@@ -110,12 +111,12 @@ describe('自动调度：自动启动', () => {
     expect(controller.starts).toBe(0)
   })
 
-  it('未设目标（0 分钟）时不自动开始', async () => {
+  it('目标为 0 表示不限时长，在允许时段启动', async () => {
     settings.update({ autoLimitMinutes: 0 })
     const controller = makeController(false)
     scheduler = new SchedulerService(settings, db, bus, controller)
     await scheduler.tick(at(10))
-    expect(controller.starts).toBe(0)
+    expect(controller.starts).toBe(1)
   })
 
   it('已经在运行时不会重复启动', async () => {
@@ -275,5 +276,33 @@ describe('跨午夜调度', () => {
     expect(controller.starts).toBe(1)
 
     vi.restoreAllMocks()
+  })
+})
+
+
+describe('独立调度目标与错误暂停', () => {
+  it('使用固定的调度课程 ID，失败后暂停，恢复后才继续', async () => {
+    const controller = makeController(false)
+    const start = vi.spyOn(controller, 'startForSchedule')
+    settings.update({ autoMode: true, autoAllDay: true, autoLimitMinutes: 10 })
+    scheduler = new SchedulerService(settings, db, bus, controller)
+    scheduler.start()
+    await scheduler.tick(at(10))
+    expect(start).toHaveBeenCalledWith('fixture-course')
+    controller.running = false
+    bus.emit('event:bot-status', { state: 'idle', mode: null, currentTitle: null, completedCount: 0, watchedSeconds: 0, stoppedReason: 'error', message: '登录失败', tone: 'danger' })
+    await scheduler.tick(at(10))
+    expect(controller.starts).toBe(1)
+    expect(scheduler.getStatus().pausedReason).toBe('登录失败')
+    scheduler.resume(); await scheduler.tick(at(10)); expect(controller.starts).toBe(2)
+  })
+  it('缺少调度目标时暂停，不启动其他已选择课程', async () => {
+    db.setSetting('schedulerCourseId', '')
+    const controller = makeController(false)
+    settings.update({ autoMode: true, autoAllDay: true })
+    scheduler = new SchedulerService(settings, db, bus, controller)
+    await scheduler.tick(at(10))
+    expect(controller.starts).toBe(0)
+    expect(scheduler.getStatus().pausedReason).toContain('选择')
   })
 })

@@ -1,7 +1,7 @@
 /** 设置 / 凭据 / 课程 / 对话框 / 应用信息 相关 IPC。 */
 
 import { app, dialog, BrowserWindow } from 'electron'
-import { IPC_INVOKE } from '@shared/ipc'
+import { IPC_INVOKE, IPC_EVENT } from '@shared/ipc'
 import type { CredentialState } from '@shared/types'
 import { handle } from './handle'
 import type { ServiceContainer } from '../services/container'
@@ -26,27 +26,31 @@ export function registerSettingsIpc(container: ServiceContainer): void {
 
   // ------------------------------------------------------------------ 凭据
 
-  handle(IPC_INVOKE.credentialsGet, () => container.credentials.get())
+  handle(IPC_INVOKE.credentialsGet, () => { const c = container.credentials.get(); return { username: c.username, hasPassword: !!c.password } })
 
-  handle(IPC_INVOKE.credentialsSet, (creds) => container.credentials.set(creds))
+  handle(IPC_INVOKE.credentialsSet, (creds) => {
+    const saved = container.credentials.get()
+    if (creds.password === undefined && creds.username !== saved.username) throw new Error('账号已变更，请重新输入密码')
+    return container.credentials.set({ username: creds.username, password: creds.password ?? saved.password })
+  })
 
   handle(IPC_INVOKE.credentialsState, (): CredentialState => container.credentials.state())
 
   // ------------------------------------------------------------------ 课程
 
-  handle(IPC_INVOKE.coursesList, () => {
-    const s = container.settings.getAll()
-    const url = s.videoUrl || container.db.getUrlHistory('video', 1)[0]?.url || ''
-    const note = s.courseNote || (url ? container.db.getNoteForUrl(url) : '')
-    return container.db.listCourses(url, note)
-  })
-
-  handle(IPC_INVOKE.coursesSelect, ({ url, note }) => {
-    container.settings.update({ videoUrl: url, courseNote: note })
-    if (url) container.db.saveUrlHistory('video', url, note)
-    container.broadcastSettings()
-    return container.db.listCourses(url, note)
-  })
+  handle(IPC_INVOKE.coursesList, () => container.courses.list())
+  const changed = <T extends { ok: boolean }>(result: T): T => {
+    if (result.ok) {
+      container.bus.emit(IPC_EVENT.courseLibraryChanged, container.courses.list())
+      container.broadcastSettings()
+    }
+    return result
+  }
+  handle(IPC_INVOKE.coursesSelect, ({ id }) => changed(container.courses.select(id)))
+  handle(IPC_INVOKE.coursesCreate, (input) => changed(container.courses.create(input)))
+  handle(IPC_INVOKE.coursesUpdate, ({ id, input }) => changed(container.courses.update(id, input)))
+  handle(IPC_INVOKE.coursesRemove, ({ id }) => changed(container.courses.remove(id)))
+  handle(IPC_INVOKE.coursesDefaults, (options) => changed(container.courses.defaults(options)))
 
   // ------------------------------------------------------------ 文件对话框
 

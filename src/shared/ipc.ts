@@ -7,11 +7,9 @@
 
 import type {
   AppSettings,
+  CourseLibrary, CourseInput, CourseMutationResult, CourseRunOptions, RunRequest,
   BotStatus,
-  CaptchaRequiredEvent,
-  CourseItem,
   CredentialState,
-  Credentials,
   DailyProgress,
   LogEntry,
   MigrationReport,
@@ -44,8 +42,12 @@ export const IPC_INVOKE = {
 
   coursesList: 'courses:list',
   coursesSelect: 'courses:select',
+  coursesCreate: 'courses:create',
+  coursesUpdate: 'courses:update',
+  coursesRemove: 'courses:remove',
+  coursesDefaults: 'courses:defaults',
 
-  captchaConfirm: 'captcha:confirm',
+  interventionConfirm: 'intervention:confirm',
 
   schedulerGet: 'scheduler:get',
   schedulerUpdate: 'scheduler:update',
@@ -70,13 +72,10 @@ export const IPC_EVENT = {
   botStatus: 'event:bot-status',
   log: 'event:log',
   progress: 'event:progress',
-  courseChanged: 'event:course-changed',
-  captchaRequired: 'event:captcha-required',
-  captchaCleared: 'event:captcha-cleared',
+  courseLibraryChanged: 'event:course-library-changed',
   transcriptionStatus: 'event:transcription-status',
   schedulerStatus: 'event:scheduler-status',
-  settingsChanged: 'event:settings-changed',
-  error: 'event:error'
+  settingsChanged: 'event:settings-changed'
 } as const
 
 // ============================================================================
@@ -87,13 +86,10 @@ export interface EventPayloads {
   [IPC_EVENT.botStatus]: BotStatus
   [IPC_EVENT.log]: LogEntry
   [IPC_EVENT.progress]: ProgressSnapshot
-  [IPC_EVENT.courseChanged]: CourseItem | null
-  [IPC_EVENT.captchaRequired]: CaptchaRequiredEvent
-  [IPC_EVENT.captchaCleared]: null
+  [IPC_EVENT.courseLibraryChanged]: CourseLibrary
   [IPC_EVENT.transcriptionStatus]: TranscriptionStatus
   [IPC_EVENT.schedulerStatus]: SchedulerStatus
   [IPC_EVENT.settingsChanged]: AppSettings
-  [IPC_EVENT.error]: { message: string; detail?: string }
 }
 
 export type EventName = keyof EventPayloads
@@ -103,7 +99,7 @@ export type EventName = keyof EventPayloads
 // ============================================================================
 
 export interface InvokeMap {
-  [IPC_INVOKE.botStart]: { req: void; res: { ok: true } | { ok: false; errors: ValidationError[] } }
+  [IPC_INVOKE.botStart]: { req: RunRequest; res: { ok: true } | { ok: false; errors: ValidationError[] } }
   [IPC_INVOKE.botStop]: { req: void; res: void }
   [IPC_INVOKE.botStatus]: { req: void; res: BotStatus }
 
@@ -111,14 +107,18 @@ export interface InvokeMap {
   [IPC_INVOKE.settingsUpdate]: { req: SettingsPatch; res: AppSettings }
   [IPC_INVOKE.settingsValidate]: { req: void; res: ValidationError[] }
 
-  [IPC_INVOKE.credentialsGet]: { req: void; res: Credentials }
-  [IPC_INVOKE.credentialsSet]: { req: Credentials; res: CredentialState }
+  [IPC_INVOKE.credentialsGet]: { req: void; res: { username: string; hasPassword: boolean } }
+  [IPC_INVOKE.credentialsSet]: { req: { username: string; password?: string }; res: CredentialState }
   [IPC_INVOKE.credentialsState]: { req: void; res: CredentialState }
 
-  [IPC_INVOKE.coursesList]: { req: void; res: CourseItem[] }
-  [IPC_INVOKE.coursesSelect]: { req: { url: string; note: string }; res: CourseItem[] }
+  [IPC_INVOKE.coursesList]: { req: void; res: CourseLibrary }
+  [IPC_INVOKE.coursesSelect]: { req: { id: string }; res: CourseMutationResult }
+  [IPC_INVOKE.coursesCreate]: { req: CourseInput; res: CourseMutationResult }
+  [IPC_INVOKE.coursesUpdate]: { req: { id: string; input: CourseInput }; res: CourseMutationResult }
+  [IPC_INVOKE.coursesRemove]: { req: { id: string }; res: CourseMutationResult }
+  [IPC_INVOKE.coursesDefaults]: { req: CourseRunOptions; res: CourseMutationResult }
 
-  [IPC_INVOKE.captchaConfirm]: { req: void; res: void }
+  [IPC_INVOKE.interventionConfirm]: { req: void; res: void }
 
   [IPC_INVOKE.schedulerGet]: { req: void; res: SchedulerStatus }
   [IPC_INVOKE.schedulerUpdate]: { req: Partial<SchedulerConfig>; res: SchedulerStatus }
@@ -151,7 +151,7 @@ export type Unsubscribe = () => void
 
 export interface AppApi {
   bot: {
-    start(): Promise<InvokeMap[typeof IPC_INVOKE.botStart]['res']>
+    start(request: RunRequest): Promise<InvokeMap[typeof IPC_INVOKE.botStart]['res']>
     stop(): Promise<void>
     status(): Promise<BotStatus>
   }
@@ -163,17 +163,22 @@ export interface AppApi {
   }
 
   credentials: {
-    get(): Promise<Credentials>
-    set(creds: Credentials): Promise<CredentialState>
+    get(): Promise<{ username: string; hasPassword: boolean }>
+    set(creds: { username: string; password?: string }): Promise<CredentialState>
     state(): Promise<CredentialState>
   }
 
   courses: {
-    list(): Promise<CourseItem[]>
-    select(url: string, note: string): Promise<CourseItem[]>
+    list(): Promise<CourseLibrary>
+    select(id: string): Promise<CourseMutationResult>
+    create(input: CourseInput): Promise<CourseMutationResult>
+    update(id: string, input: CourseInput): Promise<CourseMutationResult>
+    remove(id: string): Promise<CourseMutationResult>
+    defaults(options: CourseRunOptions): Promise<CourseMutationResult>
   }
 
-  captcha: {
+  /** 人工介入（验证码或手动登录）完成后由渲染层确认 */
+  intervention: {
     confirm(): Promise<void>
   }
 
@@ -215,13 +220,10 @@ export interface AppApi {
     onBotStatus(cb: (payload: BotStatus) => void): Unsubscribe
     onLog(cb: (payload: LogEntry) => void): Unsubscribe
     onProgress(cb: (payload: ProgressSnapshot) => void): Unsubscribe
-    onCourseChanged(cb: (payload: CourseItem | null) => void): Unsubscribe
-    onCaptchaRequired(cb: (payload: CaptchaRequiredEvent) => void): Unsubscribe
-    onCaptchaCleared(cb: () => void): Unsubscribe
+    onCourseLibraryChanged(cb: (payload: CourseLibrary) => void): Unsubscribe
     onTranscriptionStatus(cb: (payload: TranscriptionStatus) => void): Unsubscribe
     onSchedulerStatus(cb: (payload: SchedulerStatus) => void): Unsubscribe
     onSettingsChanged(cb: (payload: AppSettings) => void): Unsubscribe
-    onError(cb: (payload: EventPayloads[typeof IPC_EVENT.error]) => void): Unsubscribe
   }
 }
 

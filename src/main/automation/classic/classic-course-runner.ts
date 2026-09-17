@@ -60,6 +60,7 @@ export class ClassicCourseRunner implements CourseRunner {
     const navigator = new ClassicCourseNavigator(page, log, captcha, quiz, settings.skipCompleted)
 
     // ------------------------------------------------------------ 1. 登录
+    ctx.reportPhase?.('login')
     const provider = this.createLogin(settings.loginMethod)
     const loginResult = await provider.login({
       session,
@@ -71,9 +72,10 @@ export class ClassicCourseRunner implements CourseRunner {
     })
     if (!loginResult.ok || ctx.shouldStop()) {
       log.error(`登录未完成，停止运行：${loginResult.message}`)
-      return { completedCount: 0, watchedSeconds: 0, reason: ctx.shouldStop() ? 'user' : 'error' }
+      return { completedCount: 0, watchedSeconds: 0, reason: ctx.shouldStop() ? 'user' : 'error', error: { stage: 'login', code: 'login', message: loginResult.message } }
     }
     log.info(`登录结果: ${loginResult.message}`)
+    ctx.reportPhase?.('loading-course')
 
     // -------------------------------------------------------- 2. 进课程页
     if (settings.videoUrl) {
@@ -92,13 +94,14 @@ export class ClassicCourseRunner implements CourseRunner {
       } else {
         log.info('没有待处理的视频')
       }
-      return { completedCount: 0, watchedSeconds: 0, reason: 'pool-exhausted' }
+      return { completedCount: 0, watchedSeconds: 0, reason: isLoginUrl(page.url()) ? 'error' : 'pool-exhausted', ...(isLoginUrl(page.url()) ? { error: { stage: 'loading-course' as const, code: 'course' as const, message: '课程鉴权失败，请重新登录' } } : {}) }
     }
 
     const label = settings.skipCompleted ? '未完成' : '全部'
     log.info(`开始依次处理${label}课程视频`)
 
     // ---------------------------------------------------------- 4. 主循环
+    ctx.reportPhase?.('executing')
     let sequence = 0
     while (next) {
       if (ctx.shouldStop()) {

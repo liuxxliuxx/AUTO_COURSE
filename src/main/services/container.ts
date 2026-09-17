@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { addLogSink, createLogger } from './logger'
 import { EventBus } from './event-bus'
 import { SettingsService } from './settings-service'
+import { CourseService } from './course-service'
 import { BotService, type RunnerFactory } from './bot-service'
 import { SchedulerService } from './scheduler-service'
 import { Database } from '../storage/database'
@@ -65,6 +66,7 @@ export class ServiceContainer {
   readonly settings: SettingsService
   readonly browser: BrowserService
   readonly transcription: TranscriptionService
+  readonly courses: CourseService
   readonly bot: BotService
   readonly scheduler: SchedulerService
   readonly migration: MigrationReport
@@ -93,6 +95,7 @@ export class ServiceContainer {
 
     this.credentials = new CredentialStore(this.paths.credentialsFile)
     this.settings = new SettingsService(this.db)
+    this.courses = new CourseService(this.db, this.settings, () => this.bot?.isRunning() ? this.bot.getStatus().courseId ?? null : null)
     this.browser = new BrowserService({
       downloadDir: this.paths.downloadDir,
       profileDir: this.paths.browserProfileDir
@@ -116,15 +119,18 @@ export class ServiceContainer {
         return this.runnerFactory(mode, ctx)
       },
       // 不启用转录时返回 null —— Python worker 根本不会被启动
-      async (settings, transcribeOnly) => {
-        const usable = await this.transcription.configure(settings, transcribeOnly)
+      async (settings, transcribeOnly, courseId) => {
+        const usable = await this.transcription.configure(settings, transcribeOnly, this.courses.transcriptFolderName(courseId))
+        if ((settings.transcribeEnabled || transcribeOnly) && !usable) throw new Error(this.transcription.getStatus().message)
         return usable ? this.transcription : null
-      }
+      },
+      this.courses
     )
 
     this.scheduler = new SchedulerService(this.settings, this.db, this.bus, {
       isRunning: () => this.bot.isRunning(),
-      startForSchedule: () => this.bot.startForSchedule(),
+      isScheduledRun: () => this.bot.getStatus().snapshot?.source === 'schedule',
+      startForSchedule: (courseId) => this.bot.startForSchedule(courseId),
       stopForSchedule: (reason) => this.bot.stopForSchedule(reason)
     })
   }

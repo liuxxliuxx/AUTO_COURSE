@@ -65,6 +65,7 @@ export class MapCourseRunner implements CourseRunner {
     log.info(`图谱课: courseId=${ref.courseId} mapId=${ref.mapId} mapUid=${ref.mapUid || '(无)'}`)
 
     // ------------------------------------------------------------ 2. 登录
+    ctx.reportPhase?.('login')
     const provider = this.createLogin(settings.loginMethod)
     const loginResult = await provider.login({
       session,
@@ -76,9 +77,10 @@ export class MapCourseRunner implements CourseRunner {
     })
     if (!loginResult.ok || ctx.shouldStop()) {
       log.error(`登录未完成，停止运行：${loginResult.message}`)
-      return { completedCount: 0, watchedSeconds: 0, reason: ctx.shouldStop() ? 'user' : 'error' }
+      return { completedCount: 0, watchedSeconds: 0, reason: ctx.shouldStop() ? 'user' : 'error', error: { stage: 'login', code: 'login', message: loginResult.message } }
     }
     log.info(`登录结果: ${loginResult.message}`)
+    ctx.reportPhase?.('loading-course')
 
     // -------------------------------------------------------- 3. 进图谱页
     if (!ref.mapId) {
@@ -98,7 +100,7 @@ export class MapCourseRunner implements CourseRunner {
     const items = await navigator.getKnowledgeItems()
     if (items.length === 0) {
       log.warn('未解析到知识项，请检查页面结构')
-      return { completedCount: 0, watchedSeconds: 0, reason: 'pool-exhausted' }
+      return { completedCount: 0, watchedSeconds: 0, reason: 'error', error: { stage: 'loading-course', code: 'course', message: '未加载到图谱知识项，请检查登录状态及课程地址' } }
     }
 
     const total = items.length
@@ -106,6 +108,7 @@ export class MapCourseRunner implements CourseRunner {
     let index = 0
 
     // ---------------------------------------------------------- 4. 遍历知识项
+    ctx.reportPhase?.('executing')
     for (const item of items) {
       index += 1
       if (ctx.shouldStop()) {
@@ -249,6 +252,7 @@ export class MapCourseRunner implements CourseRunner {
     let noVideoStreak = 0
     let zeroDurationStreak = 0
 
+    ctx.reportPhase?.('executing')
     while (elapsed < VIDEO_MAX_WAIT_MS) {
       if (ctx.shouldStop()) {
         log.info(`停止信号，退出视频监控: ${title}`)

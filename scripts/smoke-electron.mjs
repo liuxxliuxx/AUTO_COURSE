@@ -8,6 +8,10 @@
  *  4. preload 没有把 ipcRenderer 泄漏到 Renderer
  *
  * 用法：node scripts/smoke-electron.mjs
+ *
+ * 如果本机已经开着开发实例（单实例锁），或不想动真实用户数据，
+ * 用 AUTO_COURSE_SMOKE_USER_DATA 指定一个临时目录：
+ *   AUTO_COURSE_SMOKE_USER_DATA=/tmp/ac-smoke node scripts/smoke-electron.mjs
  */
 
 import { _electron as electron } from 'playwright-core'
@@ -15,6 +19,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const isolatedUserData = process.env.AUTO_COURSE_SMOKE_USER_DATA
 
 function fail(message) {
   console.error(`✗ ${message}`)
@@ -26,7 +31,7 @@ function pass(message) {
 }
 
 const app = await electron.launch({
-  args: [root],
+  args: isolatedUserData ? [root, `--user-data-dir=${isolatedUserData}`] : [root],
   cwd: root,
   env: { ...process.env, NODE_ENV: 'production' }
 })
@@ -40,7 +45,7 @@ try {
 
   // 1. Vue 是否挂载
   const brand = await window.locator('.brand').textContent({ timeout: 10_000 })
-  if (brand?.includes('智慧树')) pass(`Renderer 已渲染: ${brand.trim()}`)
+  if (brand?.includes('课程助手')) pass(`Renderer 已渲染: ${brand.trim()}`)
   else fail(`Renderer 未渲染，.brand = ${JSON.stringify(brand)}`)
 
   // 2. 主进程 IPC 往返
@@ -60,16 +65,16 @@ try {
     fail(`Renderer 隔离被破坏: ${JSON.stringify(leaked)}`)
   }
 
-  // 4. 两个页面都能导航
-  await window.locator('.tab', { hasText: '设置' }).click()
-  await window.locator('.group-title').first().waitFor({ timeout: 5_000 })
-  const groupTitle = await window.locator('.group-title').first().textContent()
-  pass(`路由切换正常，Settings 显示: ${groupTitle?.trim()}`)
-
-  await window.locator('.tab', { hasText: '运行' }).click()
-  await window.locator('.hero-value').waitFor({ timeout: 5_000 })
-  const hero = await window.locator('.hero-value').textContent()
-  pass(`Dashboard 主读数: ${hero?.trim()}`)
+  // 4. 三个页面都能导航
+  for (const [label, heading] of [
+    ['课程', '我的课程'],
+    ['运行', '运行'],
+    ['设置', '设置']
+  ]) {
+    await window.getByRole('link', { name: label, exact: true }).click()
+    await window.getByRole('heading', { name: heading, exact: true }).waitFor({ timeout: 10_000 })
+    pass(`路由切换正常：${label} 页显示「${heading}」`)
+  }
 
   // 5. Phase 3 服务层：SQLite / 设置 / 凭据 / 调度 / v1 迁移
   const settings = await window.evaluate(() => window.appApi.settings.getAll())
@@ -101,8 +106,16 @@ try {
   const validation = await window.evaluate(() => window.appApi.settings.validate())
   pass(`设置校验返回 ${validation.length} 条违规项`)
 
-  // 未填账号密码时启动必须被拒绝，且不得有任何副作用（不建浏览器、不动状态）
-  const startResult = await window.evaluate(() => window.appApi.bot.start())
+  // 课程库契约：每门课程独立配置 + 默认值
+  const library = await window.evaluate(() => window.appApi.courses.list())
+  if (Array.isArray(library?.courses) && library.defaults?.action) {
+    pass(`课程库可读：${library.courses.length} 门课程，默认运行方式=${library.defaults.action}`)
+  } else {
+    fail(`课程库读取异常: ${JSON.stringify(library)}`)
+  }
+
+  // 不存在的课程必须被拒绝，且不得有任何副作用（不建浏览器、不动状态）
+  const startResult = await window.evaluate(() => window.appApi.bot.start({ courseId: 'not-a-course' }))
   if (startResult.ok === false && Array.isArray(startResult.errors) && startResult.errors.length) {
     pass(
       `校验不通过时启动被拒绝（${startResult.errors.map((e) => e.field).join(', ')}）`

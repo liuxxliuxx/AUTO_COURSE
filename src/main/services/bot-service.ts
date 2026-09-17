@@ -14,6 +14,7 @@
 
 import type {
   AppSettings,
+  RunRequest, RunSnapshot, RunPhase, RunError, InterventionRequest,
   BotState,
   BotStatus,
   CaptchaRequiredEvent,
@@ -30,7 +31,9 @@ import type { EventBus } from './event-bus'
 import type { BrowserService } from '../automation/browser-service'
 import type { BrowserSession } from '../automation/browser-session'
 import type { CourseRunner, MediaPort, RunOutcome, RunnerContext } from '../automation/runner'
-import { sanitizeCourseNote } from '../util/filename'
+import { randomUUID } from 'node:crypto'
+import { identifyCourse, settingsForCourse, validateRunOptions } from '@shared/courses'
+import type { CourseService } from './course-service'
 import { createLogger } from './logger'
 
 const logger = createLogger('bot')
@@ -46,6 +49,10 @@ function todayString(now = new Date()): string {
 }
 
 export class BotService {
+  private snapshot: RunSnapshot | null = null
+  private phase: RunPhase = 'idle'
+  private error: RunError | null = null
+  private intervention: InterventionRequest | null = null
   private state: BotState = 'idle'
   private mode: TaskMode | null = null
   private currentTitle: string | null = null
@@ -62,8 +69,8 @@ export class BotService {
   /** 尚未结算的观看秒数（不足 1 秒的零头先攒着，避免反复写库） */
   private pendingSeconds = 0
 
-  /** 验证码握手 */
-  private captchaPending: { resolve: (confirmed: boolean) => void } | null = null
+  /** 人工介入握手：验证码与手动登录共用同一条通道 */
+  private interventionPending: { resolve: (confirmed: boolean) => void } | null = null
 
   constructor(
     private readonly db: Database,
@@ -78,14 +85,18 @@ export class BotService {
      */
     private readonly acquireMedia: (
       settings: AppSettings,
-      transcribeOnly: boolean
-    ) => Promise<MediaPort | null>
+      transcribeOnly: boolean,
+      courseId: string
+    ) => Promise<MediaPort | null>,
+    private readonly courses: CourseService
   ) {}
 
   // ------------------------------------------------------------------ 状态
 
   getStatus(): BotStatus {
     return {
+      runId: this.snapshot?.id ?? null, courseId: this.snapshot?.course.id ?? null,
+      snapshot: this.snapshot, phase: this.phase, error: this.error, intervention: this.intervention,
       state: this.state,
       mode: this.mode,
       currentTitle: this.currentTitle,
@@ -120,12 +131,17 @@ export class BotService {
 
   // ------------------------------------------------------------------ 启动
 
-  async start(): Promise<{ ok: true } | { ok: false; errors: ValidationError[] }> {
+  async start(request: RunRequest, source: 'manual' | 'schedule' = 'manual'): Promise<{ ok: true } | { ok: false; errors: ValidationError[] }> {
     if (this.isRunning()) {
       return { ok: false, errors: [{ field: 'videoUrl', message: '任务已在运行中' }] }
     }
 
-    const errors = this.settings.validate()
+    const course = this.courses.get(request?.courseId)
+    if (!course) return { ok: false, errors: [{ field: 'courseId', message: '请选择一门有效的课程' }] }
+    try { identifyCourse(course.url); validateRunOptions(course.options, course.kind) }
+    catch (error) { return { ok: false, errors: [{ field: 'courseId', message: String(error) }] } }
+    const runSettings = settingsForCourse(this.settings.getAll(), course)
+    const errors = this.settings.validate(runSettings)
     const creds = this.credentials.get()
     if (!creds.username.trim()) {
       errors.push({ field: 'credentials', message: '账号不能为空' })
@@ -135,7 +151,12 @@ export class BotService {
     }
     if (errors.length) return { ok: false, errors }
 
-    const mode = this.settings.deriveTaskMode()
+    const mode = this.settings.deriveTaskMode(runSettings)
+    this.snapshot = { id: randomUUID(), course: structuredClone(course), settings: { ...runSettings }, startedAt: new Date().toISOString(), source }
+    this.phase = 'preparing'
+    this.error = null
+    this.intervention = null
+    this.courses.markRun(course.id)
     this.mode = mode
     this.completedCount = 0
     this.watchedSeconds = 0
@@ -145,7 +166,7 @@ export class BotService {
 
     this.setStatus('starting', `正在初始化（${TASK_MODE_LABEL[mode]}）...`, 'success')
 
-    this.runPromise = this.runLoop(mode).finally(() => {
+    this.runPromise = this.runLoop(mode, this.snapshot, { ...creds }).finally(() => {
       this.runPromise = null
     })
 
@@ -153,12 +174,13 @@ export class BotService {
   }
 
   /** 由调度器调用；与手动 start 的唯一区别是不做交互式报错 */
-  async startForSchedule(): Promise<void> {
-    const result = await this.start()
+  async startForSchedule(courseId: string): Promise<void> {
+    const result = await this.start({ courseId }, 'schedule')
     if (!result.ok) {
       const text = result.errors.map((e) => e.message).join('；')
       logger.warn(`自动启动被跳过: ${text}`)
-      this.setStatus('idle', `⚠ ${text}`, 'warning')
+      this.setStatus('idle', text, 'warning', 'error')
+      throw new Error(text)
     }
   }
 
@@ -178,12 +200,13 @@ export class BotService {
     }
 
     this.stopRequested = true
+    this.phase = 'stopping'
     this.stoppedReason = reason
     this.setStatus('stopping', '正在停止...', 'warning', reason)
 
-    // 打断可能正在等待的验证码确认
-    this.captchaPending?.resolve(false)
-    this.captchaPending = null
+    // 打断可能正在等待的人工介入确认
+    this.interventionPending?.resolve(false)
+    this.interventionPending = null
 
     await this.runPromise?.catch((error) => {
       logger.exception('等待运行循环结束时报错', error)
@@ -196,36 +219,42 @@ export class BotService {
 
   // ------------------------------------------------------------------ 主循环
 
-  private async runLoop(mode: TaskMode): Promise<void> {
+  private async runLoop(mode: TaskMode, snapshot: RunSnapshot, credentials: Credentials): Promise<void> {
     let outcome: RunOutcome = { completedCount: 0, watchedSeconds: 0, reason: 'user' }
 
     try {
-      const settings = this.settings.getAll()
-      const credentials = this.credentials.get()
+      const settings = snapshot.settings
 
       const session = await this.browser.openSession()
+      if (this.stopRequested) return
 
       // 仅转录：不播放视频，直接下载音轨。与 v1 bridge.py:274 的推导一致。
       const transcribeOnly = !settings.brushEnabled && !settings.mapMode
-      const media = await this.acquireMedia(settings, transcribeOnly)
+      const media = await this.acquireMedia(settings, transcribeOnly, snapshot.course.id)
 
+      if (this.stopRequested) return
       const ctx = this.buildContext(
         settings,
         credentials,
         session,
-        this.resolveLastVideoTitle(settings),
+        snapshot.course.options.startPosition === 'resume' ? snapshot.course.lastVideoTitle ?? '' : '',
         media
       )
 
       this.setStatus('running', `正在${TASK_MODE_LABEL[mode]}`, 'success')
       const runner = this.createRunner(mode, ctx)
       outcome = await runner.run(ctx)
+      if (outcome.error && outcome.reason !== 'user') this.error = outcome.error
+      if (outcome.reason === 'error' && !this.error) this.error = { stage: this.phase, code: this.phase === 'login' ? 'login' : this.phase === 'loading-course' ? 'course' : 'execution', message: '任务未能完成，请查看日志并重试' }
     } catch (error) {
       logger.exception('运行循环异常', error)
+      this.error = { stage: this.phase, code: this.phase === 'login' ? 'login' : this.phase === 'loading-course' ? 'course' : 'execution', message: error instanceof Error ? error.message : String(error) }
       outcome = { ...outcome, reason: 'error' }
       this.setStatus('idle', '⚠ 运行出错，请查看日志', 'danger', 'error')
     } finally {
       this.flushPending()
+      this.phase = 'finished'
+      this.intervention = null
       // 只在这里收尾一次
       if (this.state !== 'idle') {
         this.state = 'idle'
@@ -253,7 +282,7 @@ export class BotService {
       case 'completed':
         return { text: '本轮课程已跑完', tone: 'success' }
       case 'error':
-        return { text: '⚠ 运行出错，请查看日志', tone: 'danger' }
+        return { text: this.error?.message ?? '运行失败，请展开日志查看原因', tone: 'danger' }
       default:
         return { text: '已完成', tone: 'success' }
     }
@@ -266,12 +295,6 @@ export class BotService {
    * （docs/V1_BASELINE.md §7.1）。v2 的写入在 reportVideoCompleted 里，
    * 与转录完全无关；这里只负责读。
    */
-  private resolveLastVideoTitle(settings: AppSettings): string {
-    if (!settings.fromLastProgress || !settings.courseNote) return ''
-    const row = this.db.getCourseProgress(settings.courseNote, sanitizeCourseNote(settings.courseNote))
-    return row?.lastVideoTitle ?? ''
-  }
-
   private buildContext(
     settings: AppSettings,
     credentials: Credentials,
@@ -295,7 +318,8 @@ export class BotService {
         this.currentTitle = title
         this.emitStatus()
       },
-      requestCaptcha: (scene, message) => this.requestCaptcha(scene, message)
+      reportPhase: (phase) => { this.phase = phase; this.emitStatus() },
+      requestCaptcha: (scene, message, kind) => this.requestCaptcha(scene, message, kind)
     }
   }
 
@@ -315,10 +339,7 @@ export class BotService {
 
   private reportVideoCompleted(title: string): void {
     this.completedCount += 1
-    const settings = this.settings.getAll()
-    if (settings.courseNote && title) {
-      this.db.saveCourseProgress(settings.courseNote, title)
-    }
+    if (this.snapshot && title) this.courses.saveProgress(this.snapshot.course.id, title)
     this.emitStatus()
   }
 
@@ -332,7 +353,7 @@ export class BotService {
 
   private emitProgress(): void {
     const date = todayString()
-    const settings = this.settings.getAll()
+    const settings = this.snapshot?.settings ?? this.settings.getAll()
     this.bus.emit('event:progress', {
       today: { date, watchedSeconds: this.db.getDailyProgress(date) },
       sessionSeconds: Math.floor(this.watchedSeconds),
@@ -340,35 +361,35 @@ export class BotService {
     })
   }
 
-  // ------------------------------------------------------------------ 验证码
+  // ---------------------------------------------------------------- 人工介入
 
-  private async requestCaptcha(scene: CaptchaRequiredEvent['scene'], message: string): Promise<boolean> {
+  private async requestCaptcha(scene: CaptchaRequiredEvent['scene'], message: string, kind: InterventionRequest['kind'] = 'captcha'): Promise<boolean> {
     if (this.stopRequested) return false
 
-    const event: CaptchaRequiredEvent = { message, scene, at: Date.now() }
-    this.bus.emit('event:captcha-required', event)
+    const event: InterventionRequest = { kind, message, scene, at: Date.now() }
+    const previousPhase = this.phase
+    this.phase = 'waiting'
+    this.intervention = event
     this.setStatus('running', `⚠ ${message}`, 'danger')
-    logger.warn(`需要人工处理验证码（${scene}）: ${message}`)
+    logger.warn(`需要人工处理（${kind}/${scene}）: ${message}`)
 
     const confirmed = await new Promise<boolean>((resolve) => {
-      this.captchaPending = { resolve }
+      this.interventionPending = { resolve }
     })
 
-    this.captchaPending = null
-    this.bus.emit('event:captcha-cleared', null)
+    this.interventionPending = null
+    this.intervention = null
+    this.phase = this.stopRequested ? 'stopping' : previousPhase
+    this.emitStatus()
     if (confirmed) {
       this.setStatus('running', `正在${TASK_MODE_LABEL[this.mode ?? 'classic']}`, 'success')
     }
     return confirmed
   }
 
-  /** Renderer 点「已完成验证，继续」 */
-  confirmCaptcha(): void {
-    this.captchaPending?.resolve(true)
-  }
-
-  get hasPendingCaptcha(): boolean {
-    return this.captchaPending !== null
+  /** Renderer 点「已完成验证/登录，继续」 */
+  confirmIntervention(): void {
+    this.interventionPending?.resolve(true)
   }
 
   // ------------------------------------------------------------------ 退出

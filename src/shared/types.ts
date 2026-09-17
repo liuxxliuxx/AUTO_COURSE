@@ -14,7 +14,18 @@ export type BotState = 'idle' | 'starting' | 'running' | 'stopping'
 /** 任务模式。图谱课与经典课是两套独立业务，不做 if/else 混写。 */
 export type TaskMode = 'classic' | 'map' | 'transcribe-only'
 
+export type RunPhase = 'idle' | 'preparing' | 'login' | 'loading-course' | 'executing' | 'waiting' | 'stopping' | 'finished'
+export interface RunError { stage: RunPhase; code: 'login' | 'course' | 'execution'; message: string }
+export interface RunRequest { courseId: string }
+export interface RunSnapshot { id: string; course: Course; settings: AppSettings; startedAt: string; source: 'manual' | 'schedule' }
+export type RunStatus = BotStatus
 export interface BotStatus {
+  runId?: string | null
+  courseId?: string | null
+  phase?: RunPhase
+  snapshot?: RunSnapshot | null
+  error?: RunError | null
+  intervention?: InterventionRequest | null
   state: BotState
   /** 当前任务模式；state === 'idle' 时为 null */
   mode: TaskMode | null
@@ -79,6 +90,30 @@ export interface ProgressSnapshot {
 // 课程
 // ============================================================================
 
+export interface CourseRunOptions {
+  action: 'learn' | 'learn-transcribe' | 'transcribe'
+  startPosition: 'beginning' | 'resume'
+  skipCompleted: boolean
+  timeLimitMinutes: number
+}
+export interface Course {
+  id: string
+  name: string
+  url: string
+  identity: string
+  kind: 'classic' | 'map' | 'unknown'
+  options: CourseRunOptions
+  createdAt: string
+  updatedAt: string
+  lastRunAt: string | null
+  progressWarning: string | null
+  lastVideoTitle: string | null
+}
+export interface CourseInput { name: string; url: string; options: CourseRunOptions }
+export interface CourseLibrary { courses: Course[]; selectedCourseId: string | null; defaults: CourseRunOptions }
+export type CourseMutationResult = { ok: true; library: CourseLibrary; courseId?: string } | { ok: false; message: string; existingCourseId?: string }
+
+/** Legacy import record only. */
 export interface CourseItem {
   url: string
   note: string
@@ -89,7 +124,14 @@ export interface CourseItem {
 // 验证码
 // ============================================================================
 
+export interface InterventionRequest {
+  kind: 'captcha' | 'manual-login'
+  message: string
+  scene: 'login' | 'course' | 'video'
+  at: number
+}
 export interface CaptchaRequiredEvent {
+  kind?: InterventionRequest['kind']
   /** 面向用户的提示文案 */
   message: string
   /** 触发场景，便于 UI 分类展示 */
@@ -130,6 +172,7 @@ export interface TranscriptionStatus {
 // ============================================================================
 
 export interface SchedulerConfig {
+  courseId?: string | null
   enabled: boolean
   /** HH:mm */
   startTime: string
@@ -142,6 +185,7 @@ export interface SchedulerConfig {
 }
 
 export interface SchedulerStatus {
+  pausedReason?: string | null
   config: SchedulerConfig
   /** 当前是否处于允许运行时间段内 */
   inRange: boolean
@@ -218,7 +262,7 @@ export interface CredentialState {
 // ============================================================================
 
 export interface ValidationError {
-  field: keyof AppSettings | 'credentials'
+  field: keyof AppSettings | 'credentials' | 'courseId'
   message: string
 }
 

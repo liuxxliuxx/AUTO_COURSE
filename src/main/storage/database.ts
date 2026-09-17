@@ -12,7 +12,7 @@ import type { CourseItem, DailyProgress, LogEntry } from '@shared/types'
 const logger = createLogger('database')
 
 /** v2 schema 版本。每次改表结构都要 +1 并补一条迁移。 */
-export const SCHEMA_VERSION = 1
+export const SCHEMA_VERSION = 2
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS url_history (
@@ -63,13 +63,25 @@ export class Database {
   // ------------------------------------------------------------------ schema
 
   private ensureSchema(): void {
-    this.db.exec(SCHEMA_SQL)
-    const current = this.userVersion
-    if (current < SCHEMA_VERSION) {
-      // 目前只有 v1 一个版本；后续版本在这里按版本号逐级迁移。
-      this.db.pragma(`user_version = ${SCHEMA_VERSION}`)
-      logger.info(`数据库 schema 版本 ${current} → ${SCHEMA_VERSION}`)
-    }
+    this.db.transaction(() => {
+      this.db.exec(SCHEMA_SQL)
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS courses (
+          id TEXT PRIMARY KEY, identity TEXT NOT NULL UNIQUE, name TEXT NOT NULL, url TEXT NOT NULL,
+          kind TEXT NOT NULL, options TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+          last_run_at TEXT, deleted_at TEXT, progress_warning TEXT
+        );
+        CREATE TABLE IF NOT EXISTS course_progress_v2 (
+          course_id TEXT PRIMARY KEY REFERENCES courses(id), last_video_title TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+      `)
+      const current = this.userVersion
+      if (current < SCHEMA_VERSION) {
+        this.db.pragma(`user_version = ${SCHEMA_VERSION}`)
+        logger.info(`数据库 schema 版本 ${current} → ${SCHEMA_VERSION}`)
+      }
+    })()
+
   }
 
   get userVersion(): number {

@@ -7,16 +7,17 @@ import { startFixtureServer, type FixtureServer } from '../../scripts/poc/fixtur
 import { Database } from '../../src/main/storage/database'
 import { SettingsService } from '../../src/main/services/settings-service'
 import { CourseService } from '../../src/main/services/course-service'
-import type { CourseInput, CourseRunOptions, BotStatus, SchedulerConfig, SettingsPatch } from '../../src/shared/types'
+import type { CourseInput, CourseRunOptions, BotStatus, SchedulerConfig, SettingsPatch, LogEntry } from '../../src/shared/types'
 let browser: Browser, server: FixtureServer, context: BrowserContext, page: Page, db: Database
 let courses: CourseService, settings: SettingsService, starts: number, failSave: boolean, state: BotStatus
 let pageErrors: string[]
+let fixtureLogs: LogEntry[]
 const shots = '/private/tmp/auto-course-ui'
 beforeAll(async () => { server = await startFixtureServer(resolve('out/renderer')); browser = await chromium.launch({ headless: true }); mkdirSync(shots, { recursive: true }) })
 afterAll(async () => { await browser?.close(); await server?.close() })
 beforeEach(async () => {
   db = new Database(':memory:'); settings = new SettingsService(db)
-  starts = 0; failSave = false
+  starts = 0; failSave = false; fixtureLogs = []
   state = { state: 'idle', mode: null, currentTitle: null, completedCount: 0, watchedSeconds: 0, stoppedReason: null, message: '准备好后开始一门课程', tone: 'neutral' }
   courses = new CourseService(db, settings, () => state.state !== 'idle' ? state.courseId ?? null : null)
   context = await browser.newContext({ viewport: { width: 1180, height: 780 } }); page = await context.newPage()
@@ -46,7 +47,7 @@ beforeEach(async () => {
       }
       case 'bot.stop': state = { ...state, state: 'idle' }; return
       case 'progress.get': return { today: { date: '2026-09-16', watchedSeconds: 0 }, sessionSeconds: 0, targetMinutes: 0 }
-      case 'logs.recent': return []
+      case 'logs.recent': return fixtureLogs
       case 'transcription.get': return { phase: 'idle', title: null, completed: 0, failed: 0, message: '转录未启用', tone: 'neutral', percent: null }
       case 'app.version': return { version: '2.0.0', platform: 'darwin' }
       default: return null
@@ -142,5 +143,107 @@ describe('课程与运行界面', () => {
     expect(await page.getByRole('dialog').getByRole('button', { name: '保存课程', exact: true }).evaluate(el => el === document.activeElement)).toBe(true)
     await page.screenshot({ path: `${shots}/compact-form.png`, fullPage: true })
     await page.keyboard.press('Escape'); expect(await page.getByRole('dialog').count()).toBe(0)
+  })
+})
+
+
+describe('紧凑工作区布局', () => {
+  it('多课程、长地址和长日志在窗口尺寸及缩放变化后仍可操作', async () => {
+    for (let i = 0; i < 20; i++) courses.create({
+      name: i === 0 ? '长课程名称用于验证详情换行与列表省略'.repeat(5) : `测试课程 ${i}`,
+      url: `https://studyvideoh5.zhihuishu.com/stuStudy?recruitAndCourseId=density-${i}&extra=${'x'.repeat(160)}`,
+      options: courses.list().defaults
+    })
+    fixtureLogs = Array.from({ length: 150 }, (_, i) => ({ time: Date.now() + i, level: i % 3 === 0 ? 'warning' : 'info', message: `事件 ${i}：${'长日志内容'.repeat(30)}` }))
+    await page.reload()
+    await page.getByRole('heading', { name: '我的课程', exact: true }).waitFor()
+    const visibleRows = await page.locator('.course-row').evaluateAll(rows => rows.filter(row => {
+      const r = row.getBoundingClientRect(), container = row.parentElement!.getBoundingClientRect()
+      return r.top >= container.top && r.bottom <= container.bottom
+    }).length)
+    expect(visibleRows).toBeGreaterThanOrEqual(10)
+    await page.getByRole('button', { name: /长课程名称/ }).click()
+    await page.getByRole('button', { name: '设为本次课程', exact: true }).click()
+    for (const size of [{ width: 1180, height: 780 }, { width: 960, height: 640 }, { width: 740, height: 570 }]) {
+      for (const scale of [1, 1.3]) {
+        // Electron zoom reduces CSS viewport dimensions; emulate that effective viewport in Chromium.
+        await page.setViewportSize({ width: Math.floor(size.width / scale), height: Math.floor(size.height / scale) })
+        const label = `${size.width}-${size.height}-${scale}`
+        for (const route of ['课程', '运行', '设置']) {
+          await page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: route, exact: true }).click()
+          if (route === '设置') await page.getByLabel('账号', { exact: true }).waitFor()
+          expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+          expect(await page.locator('.page').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
+          if (route === '课程') {
+            expect(await page.locator('.course-layout').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
+            expect(await page.locator('.course-detail').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
+            await page.getByRole('button', { name: '编辑', exact: true }).click()
+            const save = page.getByRole('button', { name: '保存课程', exact: true })
+            await save.scrollIntoViewIfNeeded()
+            expect(await save.isVisible()).toBe(true)
+            await page.screenshot({ path: `${shots}/dialog-${label}.png` })
+            await page.keyboard.press('Escape')
+          }
+          if (route === '运行') {
+            const lines = page.locator('.log-lines')
+            await lines.scrollIntoViewIfNeeded()
+            expect(await lines.evaluate(el => el.scrollHeight > el.clientHeight)).toBe(true)
+            await lines.evaluate(el => { el.scrollTop = el.scrollHeight })
+            expect(await lines.evaluate(el => el.scrollTop > 0)).toBe(true)
+            if (size.width === 1180 && scale === 1) {
+              expect(await page.locator('.run-page').evaluate(el => el.scrollHeight <= el.clientHeight)).toBe(true)
+            }
+            await page.getByText('技术日志', { exact: false }).first().click()
+            expect(await lines.isVisible()).toBe(false)
+            await page.locator('.logs summary').click()
+          }
+          await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+          await page.screenshot({ path: `${shots}/${route}-${label}.png` })
+        }
+      }
+    }
+  })
+})
+
+
+describe('紧凑界面操作与提示', () => {
+  it('编辑保存和移除仍使用原有课程操作', async () => {
+    await add('待编辑课程', 'edit-remove')
+    await page.getByRole('button', { name: '编辑', exact: true }).click()
+    await page.getByLabel('课程名称', { exact: true }).fill('已编辑课程')
+    await page.getByRole('button', { name: '保存课程', exact: true }).click()
+    await page.getByRole('dialog').waitFor({ state: 'hidden' })
+    expect(courses.list().courses[0].name).toBe('已编辑课程')
+    page.once('dialog', dialog => dialog.accept())
+    await page.getByRole('button', { name: '移除', exact: true }).click()
+    await page.getByRole('heading', { name: '从第一门课程开始' }).waitFor()
+    expect(courses.list().courses).toHaveLength(0)
+  })
+
+  it('人工处理、失败重试和停止中的操作在小窗口仍可达', async () => {
+    await add('提示测试课程', 'notices')
+    const course = courses.list().courses[0]
+    fixtureLogs = Array.from({ length: 100 }, () => ({ time: Date.now(), level: 'info', message: '等待用户处理' }))
+    await page.setViewportSize({ width: 740, height: 570 })
+    state = { ...state, state: 'running', phase: 'waiting', courseId: course.id,
+      snapshot: { id: 'notice-run', course, settings: settings.getAll(), startedAt: new Date().toISOString(), source: 'manual' } }
+    for (const kind of ['captcha', 'manual-login'] as const) {
+      state.intervention = { kind, message: '请在课程窗口完成操作，再返回继续运行。', scene: 'login', at: Date.now() }
+      await page.reload()
+      const confirm = page.getByRole('button', { name: kind === 'captcha' ? '已完成验证，继续' : '已完成登录，继续' })
+      await confirm.click()
+      expect(await confirm.evaluate(el => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight })).toBe(true)
+      await page.screenshot({ path: `${shots}/${kind}.png` })
+    }
+    state = { ...state, state: 'stopping', phase: 'stopping', intervention: null }
+    await page.reload()
+    const stop = page.getByRole('button', { name: '正在停止…', exact: true })
+    await stop.waitFor()
+    expect(await stop.isDisabled()).toBe(true)
+    state = { ...state, state: 'idle', phase: 'finished', error: { stage: 'executing', code: 'execution', message: '测试执行失败' } }
+    await page.reload()
+    await page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '运行', exact: true }).click()
+    await page.getByRole('button', { name: '重试任务', exact: true }).click()
+    expect(starts).toBe(1)
   })
 })

@@ -72,13 +72,13 @@ async function pickDirectory(): Promise<void> { try { const dir = await window.a
 </script>
 <template>
   <div class="page">
-    <header class="page-header"><div><div class="eyebrow">PREFERENCES</div><h1>设置</h1><p>把常用选项设好，让每次开始更简单。</p></div></header>
+    <header class="page-header"><h1>设置</h1></header>
     <div class="settings-layout">
       <nav class="settings-nav" aria-label="设置分类"><button v-for="item in sections" :key="item.id" :class="{ active: section === item.id }" :aria-current="section === item.id ? 'page' : undefined" @click="changeSection(item.id)">{{ item.label }}</button><RouterLink to="/courses" class="course-link">管理我的课程 ↗</RouterLink></nav>
-      <section class="panel settings-panel">
+      <section class="settings-panel">
         <div v-if="loading" class="empty" role="status">正在加载设置…</div>
         <form v-else class="stack" @submit.prevent="save">
-          <header><h2>{{ sections.find(s => s.id === section)?.label }}</h2><p class="muted">{{ sections.find(s => s.id === section)?.description }}</p></header>
+          <header><h2>{{ sections.find(s => s.id === section)?.label }}</h2></header>
           <div v-if="error" class="notice error" role="alert">{{ error }}</div><div v-if="success" class="notice success" role="status">{{ success }}</div>
           <template v-if="section === 'account'">
             <div v-if="!account.state.encryptionAvailable" class="notice warning">系统加密不可用，凭据仅在本次会话保留，退出后不会保存。</div>
@@ -98,7 +98,7 @@ async function pickDirectory(): Promise<void> { try { const dir = await window.a
             <div class="field"><label :for="`${uid}-daily`">每日目标（分钟）</label><input :id="`${uid}-daily`" v-model.number="schedule.dailyLimitMinutes" type="number" min="0" step="1" required /><small>0 表示不限；结束早于开始时按跨午夜计算。</small></div>
             <p class="muted small">登录或执行失败后暂停自动重试。手动任务不会被调度时间段抢占。</p>
           </template>
-          <template v-else><div class="field"><label :for="`${uid}-scale`">界面缩放</label><select :id="`${uid}-scale`" v-model.number="globalDraft.uiScale"><option :value=".9">90%</option><option :value="1">100%（默认）</option><option :value="1.1">110%</option><option :value="1.2">120%</option><option :value="1.3">130%</option></select></div><div class="theme-preview"><span>浅色</span><div><i></i><i></i><i></i></div><small>清晰、轻盈的桌面工作空间</small></div></template>
+          <template v-else><div class="field"><label :for="`${uid}-scale`">界面缩放</label><select :id="`${uid}-scale`" v-model.number="globalDraft.uiScale"><option :value=".9">90%</option><option :value="1">100%（默认）</option><option :value="1.1">110%</option><option :value="1.2">120%</option><option :value="1.3">130%</option></select></div><div class="theme-row"><span>主题</span><span>浅色</span></div></template>
           <footer class="settings-footer"><span class="muted small">{{ dirty ? '有未保存的修改' : '修改后点击保存' }}</span><div class="actions"><button type="button" :disabled="saving || !dirty" @click="load">取消修改</button><button type="submit" class="primary" :disabled="saving || (!dirty && !(section === 'schedule' && scheduler.status?.pausedReason))">{{ saving ? '正在保存…' : section === 'schedule' && scheduler.status?.pausedReason ? '保存并恢复调度' : '保存设置' }}</button></div></footer>
         </form>
       </section>
@@ -106,6 +106,22 @@ async function pickDirectory(): Promise<void> { try { const dir = await window.a
   </div>
 </template>
 <style scoped>
-.settings-layout{display:grid;grid-template-columns:165px minmax(0,700px);gap:26px;align-items:start}.settings-nav{display:grid;gap:6px}.settings-nav button{text-align:left;border:0;background:transparent;color:var(--text-2)}.settings-nav button.active{background:#e8eefb;color:var(--sky)}.course-link{padding:16px 13px;margin-top:10px;border-top:1px solid var(--line);font-size:13px}.settings-panel{padding:28px}.settings-panel header p{font-size:13px;margin-top:5px}.settings-panel .notice{margin:0}.settings-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid var(--line-soft);padding-top:24px;margin-top:6px;flex-wrap:wrap}.saved-password{font-size:12px;color:var(--jade);font-weight:400}.directory-row{display:flex;gap:8px}.directory-row button{flex-shrink:0}.theme-preview{padding:22px;border:1px solid var(--line);background:#f5f7fb;border-radius:12px;max-width:310px}.theme-preview>span{font-weight:600}.theme-preview>div{display:flex;gap:9px;margin:14px 0}.theme-preview i{width:48px;height:34px;border-radius:7px;background:white;border:1px solid var(--line)}.theme-preview i:last-child{background:var(--sky)}.theme-preview small{color:var(--text-3)}
-@media(max-width:850px){.settings-layout{grid-template-columns:1fr}.settings-nav{display:flex;flex-wrap:wrap}.course-link{margin:0;border:0;padding:8px 12px}.settings-panel{padding:20px}}
+.settings-layout { display: grid; grid-template-columns: 120px minmax(0,700px); gap: 12px; align-items: start; }
+.settings-nav { display: grid; gap: 4px; }
+.settings-nav button { text-align: left; border: 0; background: transparent; color: var(--text-2); }
+.settings-nav button.active { background: var(--sky-dim); color: var(--sky); }
+.course-link { padding: 8px; margin-top: 4px; border-top: 1px solid var(--line); }
+.settings-panel { min-width: 0; padding: 0 0 0 12px; border-left: 1px solid var(--line); }
+.settings-panel header { padding: 4px 0 8px; border-bottom: 1px solid var(--line); }
+.settings-panel .notice { margin: 0; }
+.settings-panel :deep(.field) { display: grid; grid-template-columns: 100px minmax(0,1fr); align-items: start; gap: 4px 8px; }
+.settings-panel :deep(.field>label) { padding-top: 4px; }
+.settings-panel :deep(.field>small) { grid-column: 2; }
+.settings-panel :deep(.options-grid) { grid-template-columns: 1fr; }
+.settings-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid var(--line); padding-top: 12px; flex-wrap: wrap; }
+.saved-password { font-size: var(--fs-micro); color: var(--jade); font-weight: 400; }
+.directory-row { display: flex; gap: 8px; min-width: 0; }
+.directory-row button { flex-shrink: 0; }
+.theme-row { display: grid; grid-template-columns: 100px 1fr; gap: 8px; }
+@container(max-width:600px) { .settings-layout { grid-template-columns: 1fr; } .settings-nav { display: flex; flex-wrap: wrap; gap: 4px; } .course-link { margin: 0; border: 0; padding: 4px 8px; } .settings-panel { border-left: 0; padding: 0; } .settings-panel :deep(.field) { grid-template-columns: 1fr; } .settings-panel :deep(.field>small) { grid-column: 1; } }
 </style>

@@ -78,20 +78,20 @@ const lastRun = (date: string | null): string => date ? new Date(date).toLocaleS
 </script>
 <template>
   <div class="page courses-page">
-    <header class="page-header"><div><div class="eyebrow">YOUR LEARNING SPACE</div><h1>我的课程</h1><p>保存每门课程的设置，按自己的节奏开始。</p></div><button class="primary" @click="openForm()">＋ 添加课程</button></header>
+    <header class="page-header"><h1>我的课程</h1><button class="primary" @click="openForm()">＋ 添加课程</button></header>
     <div v-if="!modal && (error || run.error || store.error)" class="notice error" role="alert">{{ error || run.error || store.error }} <button v-if="store.error" @click="store.load">重新加载</button></div>
     <div v-if="message" class="notice success" role="status">{{ message }}</div>
     <div v-if="store.loading" class="empty" role="status">正在加载课程…</div>
-    <div v-else-if="!store.library.courses.length" class="panel empty"><div class="empty-icon">▦</div><h2>从第一门课程开始</h2><p>粘贴课程学习页地址，为它取一个容易找到的名字。</p><p class="small">支持智慧树传统课和图谱课，每次运行一门。</p><button class="primary" @click="openForm()">添加第一门课程</button></div>
+    <div v-else-if="!store.library.courses.length" class="panel empty"><h2>从第一门课程开始</h2><p>粘贴课程学习页地址，为它取一个容易找到的名字。</p><p class="small">支持智慧树传统课和图谱课，每次运行一门。</p><button class="primary" @click="openForm()">添加第一门课程</button></div>
     <div v-else class="course-layout">
-      <section class="course-list panel" aria-label="课程列表"><div class="list-header"><strong>全部课程 <span class="muted">{{ store.library.courses.length }}</span></strong><input v-model="search" type="search" aria-label="搜索课程" placeholder="搜索课程名称" /></div>
-        <div v-if="!filtered.length" class="empty">没有匹配的课程</div>
+      <section class="course-list" aria-label="课程列表"><div class="list-header"><strong>全部课程 <span class="muted">{{ store.library.courses.length }}</span></strong><input v-model="search" type="search" aria-label="搜索课程" placeholder="搜索课程名称" /></div>
+        <div class="course-rows"><div v-if="!filtered.length" class="empty">没有匹配的课程</div>
         <button v-for="course in filtered" :key="course.id" class="course-row" :class="{ active: course.id === focusedId }" :aria-pressed="course.id === focusedId" @click="focusedId = course.id; message = ''; error = ''">
-          <div class="course-avatar">{{ course.kind === 'map' ? '图' : '课' }}</div><div class="course-row-content"><strong>{{ course.name }}</strong><div><span>{{ KIND_LABELS[course.kind] }}</span> · {{ lastRun(course.lastRunAt) }}</div><small class="url-preview">{{ course.url }}</small></div>
+          <div class="course-row-content"><strong :title="course.name">{{ course.name }}</strong><div><span>{{ KIND_LABELS[course.kind] }}</span> · {{ lastRun(course.lastRunAt) }}</div></div>
           <span v-if="run.isRunning && run.status.courseId === course.id" class="badge green">运行中</span><span v-else-if="course.id === store.library.selectedCourseId" class="selected-dot" title="本次课程" aria-label="本次课程"></span>
-        </button>
+        </button></div>
       </section>
-      <section v-if="focused" class="panel course-detail" aria-label="课程详情">
+      <section v-if="focused" class="course-detail" aria-label="课程详情">
         <div class="detail-top"><span class="badge blue">{{ KIND_LABELS[focused.kind] }}</span><div class="actions"><button class="quiet" :disabled="locked" @click="openForm(true)">编辑</button><button class="quiet danger" :disabled="locked" @click="remove">移除</button></div></div>
         <h2 class="course-name">{{ focused.name }}</h2><p class="muted small">最近运行 · {{ lastRun(focused.lastRunAt) }}</p>
         <div v-if="locked" class="notice">这门课程正在运行。停止任务后可编辑或移除。</div>
@@ -101,7 +101,7 @@ const lastRun = (date: string | null): string => date ? new Date(date).toLocaleS
         <div class="last-position"><span class="muted small">上次完成的位置</span><p>{{ focused.lastVideoTitle || '暂无记录，完成内容后会自动保存' }}</p></div>
         <div class="divider"></div><div class="address-header"><h3>课程地址</h3><button class="quiet" @click="copyUrl">复制</button></div><p class="course-url">{{ focused.url }}</p>
         <div class="detail-footer"><button :disabled="store.library.selectedCourseId === focused.id" @click="selectCurrent">{{ store.library.selectedCourseId === focused.id ? '已设为本次课程' : '设为本次课程' }}</button><button class="primary" :disabled="!run.canStart || focused.kind === 'unknown'" @click="start">{{ run.isRunning ? '已有任务运行中' : '开始运行 →' }}</button></div>
-      </section><section v-else class="panel empty"><h2>选择一门课程</h2><p>点击左侧课程，查看配置和上次进度。</p></section>
+      </section><section v-else class="empty"><h2>选择一门课程</h2><p>点击左侧课程，查看配置和上次进度。</p></section>
     </div>
     <Teleport to="body"><div v-if="modal" class="modal-backdrop" @click.self="closeForm"><form ref="dialog" class="modal stack" role="dialog" aria-modal="true" aria-labelledby="course-form-title" @submit.prevent="save" @keydown="trap">
       <header><h2 id="course-form-title">{{ editingId ? '编辑课程' : '添加课程' }}</h2><p class="muted">{{ editingId ? '修改只应用于这门课程。' : '保存后可随时开始，不会自动运行。' }}</p></header>
@@ -115,6 +115,30 @@ const lastRun = (date: string | null): string => date ? new Date(date).toLocaleS
   </div>
 </template>
 <style scoped>
-.course-layout{display:grid;grid-template-columns:minmax(240px, .85fr) minmax(310px,1.5fr);gap:22px;align-items:start}.course-list{padding:0;overflow:hidden}.list-header{padding:20px;display:grid;gap:16px}.list-header strong{font-size:13px}.course-row{display:flex;gap:12px;align-items:center;width:100%;text-align:left;border:0;border-top:1px solid var(--line-soft);border-radius:0;padding:18px 16px;font-weight:400}.course-row.active{background:#edf3ff;box-shadow:inset 3px 0 var(--sky)}.course-avatar{width:35px;height:39px;border:1px solid #dce5f5;border-radius:8px;color:var(--sky);background:#f5f8ff;display:grid;place-items:center;flex-shrink:0}.course-row-content{min-width:0;flex:1}.course-row-content strong{font-weight:600;display:block;overflow-wrap:anywhere}.course-row-content div{font-size:11px;color:var(--text-3);margin-top:5px}.url-preview{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:230px;font-size:10px;color:var(--text-3);margin-top:4px}.selected-dot{width:7px;height:7px;background:var(--sky);border-radius:50%;flex-shrink:0}.detail-top,.address-header{display:flex;align-items:center;justify-content:space-between}.course-name{font-size:23px;margin:15px 0 4px;overflow-wrap:anywhere}.course-detail>.notice{margin-top:16px}.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin:20px 0}dt{font-size:12px;color:var(--text-3);margin-bottom:4px}dd{margin:0;font-weight:550}.last-position{padding:14px 16px;background:var(--ground);border-radius:8px;overflow-wrap:anywhere}.last-position p{font-size:13px;margin-top:4px}.course-url{font-size:12px;color:var(--text-3);overflow-wrap:anywhere;user-select:text;line-height:1.8}.detail-footer{display:flex;justify-content:space-between;gap:10px;margin-top:30px;flex-wrap:wrap}.empty-icon{font-size:40px;color:var(--sky);margin-bottom:12px}.error-text{color:var(--clay)}.modal header{margin-bottom:0}.modal footer{margin-top:0}.modal .notice{margin:0}
-@media(max-width:950px){.course-layout{grid-template-columns:1fr}.course-list{max-height:300px;overflow:auto}.course-detail{padding:22px}}
+.courses-page { display: flex; flex-direction: column; overflow: hidden; }
+.course-layout { display: grid; grid-template-columns: 280px minmax(0,1fr); flex: 1; min-height: 0; border: 1px solid var(--line); border-radius: var(--r-panel); background: var(--surface); overflow: hidden; }
+.course-list { min-width: 0; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); }
+.list-header { padding: 8px; display: grid; gap: 8px; border-bottom: 1px solid var(--line); }
+.course-rows { overflow: auto; min-height: 0; flex: 1; }
+.course-row { display: flex; gap: 8px; align-items: center; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line-soft); border-radius: 0; height: 48px; padding: 5px 10px; font-weight: 400; }
+.course-row.active { background: var(--sky-dim); box-shadow: inset 2px 0 var(--sky); }
+.course-row-content { min-width: 0; flex: 1; }
+.course-row-content strong { font-weight: 600; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.course-row-content div { font-size: var(--fs-micro); color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.selected-dot { width: 6px; height: 6px; background: var(--sky); border-radius: 50%; flex-shrink: 0; }
+.course-detail { padding: 12px; overflow: auto; min-width: 0; }
+.detail-top,.address-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.course-name { font-size: var(--fs-title); margin: 8px 0 4px; overflow-wrap: anywhere; }
+.course-detail>.notice { margin-top: 8px; }
+.detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; margin: 8px 0; }
+.detail-grid>div { display: flex; gap: 8px; flex-wrap: wrap; }
+dt { color: var(--text-3); } dd { margin: 0; font-weight: 550; }
+.last-position { padding-top: 8px; overflow-wrap: anywhere; }
+.last-position p { margin-top: 4px; }
+.course-url { color: var(--text-3); overflow-wrap: anywhere; user-select: text; }
+.detail-footer { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; position: sticky; bottom: -12px; background: var(--surface); padding: 8px 0; border-top: 1px solid var(--line-soft); }
+.error-text { color: var(--clay); }
+.modal header,.modal footer { margin: 0; }
+.modal .notice { margin: 0; }
+@container(max-width:623px) { .course-layout { grid-template-columns: minmax(0,1fr); grid-template-rows: minmax(120px,180px) minmax(0,1fr); } .course-list { border-right: 0; border-bottom: 1px solid var(--line); } .detail-grid { grid-template-columns: 1fr; } }
 </style>

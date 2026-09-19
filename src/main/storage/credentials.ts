@@ -81,8 +81,11 @@ export class CredentialStore {
       } else {
         writeFileSync(this.file, safeStorage.encryptString(JSON.stringify(normalized)))
       }
+      this.memoryOnly = false
+      this.memory = { ...EMPTY }
     } catch (error) {
       logger.exception('写入凭据失败', error)
+      throw new Error('账号保存失败，请重试')
     }
     return this.state()
   }

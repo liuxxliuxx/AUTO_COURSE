@@ -79,6 +79,7 @@ export class ServiceContainer {
   private recentLogs: LogEntry[] = []
   private runnerFactory: RunnerFactory | null = null
   private disposed = false
+  private eventForwardersAttached = false
 
   constructor() {
     const userData = app.getPath('userData')
@@ -169,8 +170,9 @@ export class ServiceContainer {
     })
 
     // 事件转发：EventBus → Renderer
-    for (const event of FORWARDED_EVENTS) {
-      this.bus.on(event, (payload) => this.send(event, payload))
+    if (!this.eventForwardersAttached) {
+      for (const event of FORWARDED_EVENTS) this.bus.on(event, payload => this.send(event, payload))
+      this.eventForwardersAttached = true
     }
 
     // 回灌当前状态，避免新窗口空着

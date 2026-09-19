@@ -46,17 +46,18 @@ export class MasteryQuestionBank {
 
   knownIndices(question: MasteryQuestion, optionTexts: string[]): number[] {
     const known = new Set(question.options.filter((option) => option.isCorrect).map((option) => normalizeOptionText(option.content)))
-    return optionTexts.map((text, index) => known.has(normalizeOptionText(text)) ? index : -1).filter((index) => index >= 0)
+    const indices = optionTexts.map((text, index) => known.has(normalizeOptionText(text)) ? index : -1).filter(index => index >= 0)
+    return indices.length === known.size ? indices : []
   }
 
   choose(question: MasteryQuestion, optionTexts: string[]): number[] {
     const known = this.knownIndices(question, optionTexts)
     if (known.length) return known
     const n = optionTexts.length
+    if (n < 2) throw new Error('题目至少需要两个选项')
     if (question.type === 'multi') {
-      const combinations = (1 << n) - 1
-      const mask = (question.attemptCount % combinations) + 1
-      return optionTexts.map((_, index) => index).filter((index) => (mask & (1 << index)) !== 0)
+      const mask = BigInt(question.attemptCount) % ((1n << BigInt(n)) - 1n) + 1n
+      return optionTexts.map((_, index) => index).filter(index => (mask & (1n << BigInt(index))) !== 0n)
     }
     return [question.attemptCount % n]
   }
@@ -74,6 +75,7 @@ export class MasteryQuestionBank {
     const correct = new Set(correctIndices)
     const raw = this.db.raw()
     this.db.transaction(() => {
+      raw.prepare('UPDATE mastery_options SET is_correct=0 WHERE question_id=?').run(question.id)
       const update = raw.prepare('UPDATE mastery_options SET is_correct=? WHERE question_id=? AND normalized_content=?')
       for (let index = 0; index < optionTexts.length; index += 1) update.run(correct.has(index) ? 1 : 0, question.id, normalizeOptionText(optionTexts[index]))
       raw.prepare("UPDATE mastery_questions SET updated_at=datetime('now') WHERE id=?").run(question.id)

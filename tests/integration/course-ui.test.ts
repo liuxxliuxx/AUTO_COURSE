@@ -15,13 +15,14 @@ let courses: CourseService, settings: SettingsService, starts: number, failSave:
 let pageErrors: string[]
 let fixtureLogs: LogEntry[]
 let workflows: WorkflowService
+let runFixtures: WorkflowRun[] | null
 let lastFlowId: string
 const shots = '/private/tmp/auto-course-ui'
 beforeAll(async () => { server = await startFixtureServer(resolve('out/renderer')); browser = await chromium.launch({ headless: true }); mkdirSync(shots, { recursive: true }) })
 afterAll(async () => { await browser?.close(); await server?.close() })
 beforeEach(async () => {
   db = new Database(':memory:'); settings = new SettingsService(db)
-  starts = 0; failSave = false; fixtureLogs = []
+  starts = 0; failSave = false; fixtureLogs = []; runFixtures = null
   state = { state: 'idle', mode: null, currentTitle: null, completedCount: 0, watchedSeconds: 0, stoppedReason: null, message: '准备好后开始一门课程', tone: 'neutral' }
   courses = new CourseService(db, settings, () => state.state !== 'idle' ? state.courseId ?? null : null)
   workflows = new WorkflowService(db,courses,()=>state.state!=='idle'); lastFlowId=''
@@ -40,6 +41,7 @@ beforeEach(async () => {
       case 'workflows.confirm': return
       case 'workflows.stop': state={...state,state:'idle',stoppedReason:'user'};return
       case 'workflows.runs': {
+        if (runFixtures) return runFixtures
         if(!state.snapshot)return []
         const course=state.snapshot.course
         const flow=workflows.get(lastFlowId)??{id:'fixture-flow',version:1,name:course.name,steps:[{id:'fixture-step',courseId:course.id,options:course.options}],schedule:null,notice:null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()}
@@ -323,5 +325,33 @@ describe('工作流编辑与持久化',()=>{
     await page.reload();await page.getByRole('heading',{name:'每日两门课',exact:true}).waitFor()
     await page.setViewportSize({width:740,height:570});await page.screenshot({path:`${shots}/workflow.png`,fullPage:true})
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
+  })
+})
+
+
+describe('运行记录显示', () => {
+  it('空页接收运行记录后显示详情，切换运行 ID 同步详情，步骤按 ID 匹配', async () => {
+    await add('显示测试课程', 'display')
+    const course = courses.list().courses[0]
+    const flow = workflows.create({ name: '显示测试工作流', steps: [{ id: 's1', courseId: course.id, options: course.options }, { id: 's2', courseId: course.id, options: course.options }], schedule: null })
+    const makeRun = (id: string, name: string): WorkflowRun => ({
+      id, workflowId: flow.id, source: 'manual', state: 'running', startedAt: '2026-09-19T01:00:00Z', finishedAt: null, message: '',
+      snapshot: { workflow: { ...flow, name }, steps: flow.steps.map(s => ({ ...s, course })), settings: settings.getAll() },
+      steps: [...flow.steps].reverse().map(s => ({ stepId: s.id, state: s.id === 's1' ? 'succeeded' : 'running', status: null, error: null, transcription: null, startedAt: null, finishedAt: null }))
+    })
+    await page.getByRole('navigation').getByRole('link', { name: '运行', exact: true }).click()
+    await page.getByText('还没有运行记录').waitFor()
+    runFixtures = [makeRun('one', '工作流一'), makeRun('two', '工作流二')]
+    await page.getByRole('heading', { name: /工作流[一二]/ }).waitFor()
+    await page.evaluate(() => { location.hash = '/run?id=one' })
+    await page.getByRole('heading', { name: '工作流一', exact: true }).waitFor()
+    expect(await page.locator('.step').first().innerText()).toContain('成功')
+    expect(await page.locator('.step').nth(1).innerText()).toContain('执行中')
+    expect(await page.locator('.step').first().innerText()).toContain('不限时长')
+    await page.evaluate(() => { location.hash = '/run?id=two' })
+    await page.getByRole('heading', { name: '工作流二', exact: true }).waitFor()
+    await page.setViewportSize({ width: 569, height: 438 })
+    expect(await page.locator('.runs-layout').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
+    await page.screenshot({ path: `${shots}/run-display-fixed.png` })
   })
 })

@@ -41,3 +41,20 @@ describe('掌握度题库', () => {
     expect(bank.choose(retried, ['甲', '乙'])).toEqual([1])
   })
 })
+
+
+describe('题库答案完整性', () => {
+  it('多选正确答案缺少一个选项时不能复用剩余的部分答案', () => {
+    db = new Database(':memory:')
+    const bank = new MasteryQuestionBank(db)
+    const q = bank.saveCorrect('多选', 'multi', ['甲', '乙', '丙'], [0, 2])
+    expect(bank.knownIndices(q, ['甲', '乙'])).toEqual([])
+  })
+  it('超过 31 个选项不发生位运算溢出', () => {
+    db = new Database(':memory:')
+    const bank = new MasteryQuestionBank(db)
+    const options = Array.from({ length: 32 }, (_, i) => `选项${i}`)
+    const q = bank.getOrCreate('多选', 'multi', options)
+    expect(bank.choose(q, options)).toEqual([0])
+  })
+})

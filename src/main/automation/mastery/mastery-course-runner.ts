@@ -1,6 +1,6 @@
 import type { Locator, Page } from 'playwright-core'
 import type { LoginMethod, TaskMode } from '@shared/types'
-import type { CourseRunner, RunOutcome, RunnerContext } from '../runner'
+import { RunnerAbort, type CourseRunner, type RunOutcome, type RunnerContext } from '../runner'
 import { createLoginProvider, type LoginProvider } from '../login/provider'
 import { CaptchaService } from '../captcha'
 import { SLEEP } from '../constants'
@@ -36,49 +36,78 @@ export class MasteryCourseRunner implements CourseRunner {
     if (!bank) {
       return { completedCount: 0, watchedSeconds: 0, reason: 'error', error: { stage: 'preparing', code: 'execution', message: '掌握度题库未初始化' } }
     }
-    const captcha = new CaptchaService({ session, requestCaptcha: ctx.requestCaptcha, shouldStop: ctx.shouldStop, log })
-    const startedAt = Date.now()
+    let lastTick = 0
+    let paused = false
+    let counting = false
+    const original = ctx
+    const checkpoint = (): void => {
+      const now = Date.now()
+      if (counting && lastTick && !paused) {
+        const seconds = (now - lastTick) / 1000
+        watchedSeconds += seconds
+        original.reportVideoWatched(seconds)
+      }
+      lastTick = counting ? now : 0
+      if (original.shouldStop()) throw new RunnerAbort('user', '已停止')
+      if (settings.timeLimitMinutes > 0 && watchedSeconds >= settings.timeLimitMinutes * 60) throw new RunnerAbort('time-limit', '已达到单次时长上限')
+    }
+    ctx = { ...ctx, shouldStop: () => { checkpoint(); return false } }
+
     let completedCount = 0
     let watchedSeconds = 0
 
-    ctx.reportPhase?.('login')
-    const login = await this.createLogin(settings.loginMethod).login({ session, settings, credentials, captcha, shouldStop: ctx.shouldStop, log })
-    if (!login.ok || ctx.shouldStop()) {
-      return { completedCount, watchedSeconds, reason: ctx.shouldStop() ? 'user' : 'error', error: { stage: 'login', code: 'login', message: login.message } }
-    }
-
-    ctx.reportPhase?.('loading-course')
-    await session.navigate(settings.videoUrl)
-    await page.waitForTimeout(SLEEP.extraLong)
-    await captcha.checkAndHandle('course', '掌握度课程页面出现验证码，请完成验证')
-    await scrollMasteryPanel(page)
-    if (!(await readMasteryPoints(page)).length) {
-      return { completedCount: 0, watchedSeconds: 0, reason: 'error', error: { stage: 'loading-course', code: 'course', message: '未加载到掌握度知识点，请检查登录状态及课程地址' } }
-    }
-
-    ctx.reportPhase?.('executing')
-    for (;;) {
-      if (ctx.shouldStop()) return { completedCount, watchedSeconds, reason: 'user' }
-      await session.navigate(settings.videoUrl).catch(() => undefined)
-      await page.waitForTimeout(SLEEP.long)
-      await scrollMasteryPanel(page)
-      const points = await readMasteryPoints(page)
-      const pending = points.filter((point) => !settings.skipCompleted || !(point.rate !== null ? point.rate >= 100 : /\b(?:green|blue)\b/i.test(point.status)))
-      if (!pending.length) return { completedCount, watchedSeconds, reason: completedCount ? 'completed' : 'pool-exhausted' }
-
-      for (const point of pending) {
-        if (ctx.shouldStop()) return { completedCount, watchedSeconds, reason: 'user' }
-        ctx.reportCurrentTitle(point.name)
-        log.info(`掌握度练习开始: ${point.name}${point.rate === null ? '' : ` (${point.rate}%)`}`)
-        const result = await this.practiceUntilFull(ctx, captcha, bank, point.name)
-        const elapsed = Math.max(0, (Date.now() - startedAt) / 1000 - watchedSeconds)
-        if (elapsed > 0) { watchedSeconds += elapsed; ctx.reportVideoWatched(elapsed) }
-        if (!result.ok) return { completedCount, watchedSeconds, reason: ctx.shouldStop() ? 'user' : 'error', error: result.error }
-        completedCount += 1
-        ctx.reportVideoCompleted(point.name)
-        log.info(`掌握度已刷满: ${point.name}`)
-        if (this.timeLimitReached(settings.timeLimitMinutes, ctx.sessionWatchedSeconds())) return { completedCount, watchedSeconds, reason: 'time-limit' }
+    const captcha = new CaptchaService({ session, log, shouldStop: ctx.shouldStop,
+      requestCaptcha: async (...args) => {
+        checkpoint(); paused = true
+        try { return await original.requestCaptcha(...args) }
+        finally { paused = false; lastTick = lastTick ? Date.now() : 0 }
       }
+    })
+    try {
+      ctx.reportPhase?.('login')
+      const login = await this.createLogin(settings.loginMethod).login({ session, settings, credentials, captcha, shouldStop: ctx.shouldStop, log })
+      if (!login.ok || ctx.shouldStop()) {
+        return { completedCount, watchedSeconds, reason: ctx.shouldStop() ? 'user' : 'error', error: { stage: 'login', code: 'login', message: login.message } }
+      }
+
+      ctx.reportPhase?.('loading-course')
+      await session.navigate(settings.videoUrl)
+      await page.waitForTimeout(SLEEP.extraLong)
+      await captcha.checkAndHandle('course', '掌握度课程页面出现验证码，请完成验证')
+      await scrollMasteryPanel(page)
+      if (!(await readMasteryPoints(page)).length) {
+        return { completedCount: 0, watchedSeconds: 0, reason: 'error', error: { stage: 'loading-course', code: 'course', message: '未加载到掌握度知识点，请检查登录状态及课程地址' } }
+      }
+
+      counting = true
+      lastTick = Date.now()
+      ctx.reportPhase?.('executing')
+      for (;;) {
+        if (ctx.shouldStop()) return { completedCount, watchedSeconds, reason: 'user' }
+        await session.navigate(settings.videoUrl)
+        await page.waitForTimeout(SLEEP.long)
+        await scrollMasteryPanel(page)
+        const points = await readMasteryPoints(page)
+        if (!points.length) throw new Error('掌握度目录未加载，不能判定课程完成')
+        const pending = points.filter(point => !(point.rate !== null ? point.rate >= 100 : /\b(?:green|blue)\b/i.test(point.status)))
+        if (!pending.length) return { completedCount, watchedSeconds, reason: completedCount ? 'completed' : 'pool-exhausted' }
+
+        for (const point of pending) {
+          if (ctx.shouldStop()) return { completedCount, watchedSeconds, reason: 'user' }
+          ctx.reportCurrentTitle(point.name)
+          log.info(`掌握度练习开始: ${point.name}${point.rate === null ? '' : ` (${point.rate}%)`}`)
+          const result = await this.practiceUntilFull(ctx, captcha, bank, point.name)
+          checkpoint()
+          if (!result.ok) return { completedCount, watchedSeconds, reason: ctx.shouldStop() ? 'user' : 'error', error: result.error }
+          completedCount += 1
+          ctx.reportVideoCompleted(point.name)
+          log.info(`掌握度已刷满: ${point.name}`)
+          if (this.timeLimitReached(settings.timeLimitMinutes, ctx.sessionWatchedSeconds())) return { completedCount, watchedSeconds, reason: 'time-limit' }
+        }
+      }
+    } catch (error) {
+      if (error instanceof RunnerAbort) return { completedCount, watchedSeconds, reason: error.reason }
+      throw error
     }
   }
 
@@ -86,7 +115,7 @@ export class MasteryCourseRunner implements CourseRunner {
     const page = ctx.session.playwrightPage
     for (;;) {
       if (ctx.shouldStop()) return { ok: false, error: { stage: 'executing', code: 'execution', message: '用户停止运行' } }
-      await ctx.session.navigate(ctx.settings.videoUrl).catch(() => undefined)
+      await ctx.session.navigate(ctx.settings.videoUrl)
       await page.waitForTimeout(SLEEP.long)
       await scrollMasteryPanel(page)
       const rateBefore = await readMasteryRate(page, name)
@@ -97,7 +126,7 @@ export class MasteryCourseRunner implements CourseRunner {
 
       const exam = await this.answerExamUntilCorrect(ctx, captcha, bank)
       if (!exam.ok) return exam
-      await ctx.session.navigate(ctx.settings.videoUrl).catch(() => undefined)
+      await ctx.session.navigate(ctx.settings.videoUrl)
       await page.waitForTimeout(SLEEP.long)
       await scrollMasteryPanel(page)
       const rateAfter = await readMasteryRate(page, name)
@@ -117,6 +146,7 @@ export class MasteryCourseRunner implements CourseRunner {
       if (!questions.length) return { ok: false, error: { stage: 'executing', code: 'course', message: '未读取到掌握度练习题目' } }
       const attempted: AttemptedQuestion[] = []
       for (let index = 0; index < questions.length; index += 1) {
+        ctx.shouldStop()
         await this.goToQuestion(page, index)
         const current = await this.readExamQuestion(page, index) ?? questions[index]
         const question = bank.getOrCreate(current.content, current.type, current.optionTexts)
@@ -130,6 +160,7 @@ export class MasteryCourseRunner implements CourseRunner {
       await captcha.checkAndHandle('course', '掌握度结果页出现验证码，请完成验证')
       if (!(await this.openReview(page))) return { ok: false, error: { stage: 'executing', code: 'course', message: '无法进入掌握度作答解析页，无法学习题库答案' } }
       const analysis = await this.readAnalysis(page)
+      if (analysis.correct.length + analysis.wrong.length !== attempted.length) throw new Error('解析页结果不完整，不能判定本轮作答成功')
       for (const item of analysis.correct) bank.saveCorrect(item.content, item.type, item.optionTexts, item.correctIndices)
       for (const wrongContent of analysis.wrong) {
         const item = attempted.find((candidate) => candidate.content === wrongContent)
@@ -149,7 +180,8 @@ export class MasteryCourseRunner implements CourseRunner {
     for (let index = 0; index < count; index += 1) {
       const item = page.locator('div.exam-item').nth(index)
       const parsed = await this.parseQuestion(item)
-      if (parsed) items.push(parsed)
+      if (!parsed) throw new Error(`第 ${index + 1} 道题无法识别，停止提交以避免题目错位`)
+      items.push(parsed)
     }
     return items
   }
@@ -180,10 +212,12 @@ export class MasteryCourseRunner implements CourseRunner {
   private async selectOptions(page: Page, index: number, type: MasteryQuestionType, selected: number[]): Promise<void> {
     const item = page.locator('div.exam-item').nth(index)
     const labels = item.locator(type === 'multi' ? 'label.el-checkbox' : 'label.el-radio')
-    for (const optionIndex of selected) {
+    for (let optionIndex = 0; optionIndex < await labels.count(); optionIndex++) {
       const label = labels.nth(optionIndex)
-      const inner = label.locator('span.el-checkbox__inner, span.el-radio__inner').first()
-      await (await inner.count() ? inner : label).click().catch(() => undefined)
+      const checked = (await label.getAttribute('class') ?? '').split(/\s+/).includes('is-checked')
+      const wanted = selected.includes(optionIndex)
+      if (checked === wanted || (type !== 'multi' && !wanted)) continue
+      await label.click()
       await page.waitForTimeout(100)
     }
   }
@@ -194,7 +228,7 @@ export class MasteryCourseRunner implements CourseRunner {
       const buttons = page.locator(selector)
       for (let index = 0; index < await buttons.count().catch(() => 0); index += 1) {
         const button = buttons.nth(index)
-        if (await button.isVisible().catch(() => false) && /提交|完成|交卷/.test((await button.textContent().catch(() => '')) ?? '')) { await button.click().catch(() => undefined); return true }
+        if (await button.isVisible().catch(() => false) && /提交|完成|交卷/.test((await button.textContent().catch(() => '')) ?? '')) { await button.click(); return true }
       }
     }
     return false
@@ -204,7 +238,7 @@ export class MasteryCourseRunner implements CourseRunner {
     const links = page.locator('div.line1-count-link, div[class*="count-link"]')
     for (let index = 0; index < await links.count().catch(() => 0); index += 1) {
       const link = links.nth(index)
-      if (await link.isVisible().catch(() => false)) { await link.click().catch(() => undefined); await page.waitForTimeout(SLEEP.long); return await page.locator('div.exam-preview').count() > 0 }
+      if (await link.isVisible().catch(() => false)) { await link.click(); await page.waitForTimeout(SLEEP.long); return await page.locator('div.exam-preview').count() > 0 }
     }
     const textLink = page.getByText(/查看作答记录|解析/).first()
     if (await textLink.count() && await textLink.isVisible().catch(() => false)) { await textLink.click().catch(() => undefined); await page.waitForTimeout(SLEEP.long); return await page.locator('div.exam-preview').count() > 0 }
@@ -217,6 +251,7 @@ export class MasteryCourseRunner implements CourseRunner {
     const items = page.locator('div.exam-preview div.exam-item')
     for (let index = 0; index < await items.count().catch(() => 0); index += 1) {
       const item = items.nth(index); const question = await this.parseQuestion(item); if (!question) continue
+      if (!await item.locator('div.question-result').count()) continue
       const isWrong = await item.locator('div.question-result.error').count() > 0
       const selector = question.type === 'multi' ? 'label.el-checkbox' : 'label.el-radio'
       const labels = item.locator(selector); const checked: number[] = []
@@ -231,7 +266,7 @@ export class MasteryCourseRunner implements CourseRunner {
     const buttons = page.locator('div.submit, div.header div.submit, button')
     for (let index = 0; index < await buttons.count().catch(() => 0); index += 1) {
       const button = buttons.nth(index)
-      if (await button.isVisible().catch(() => false) && /重新答题/.test((await button.textContent().catch(() => '')) ?? '')) { await button.click().catch(() => undefined); return true }
+      if (await button.isVisible().catch(() => false) && /重新答题/.test((await button.textContent().catch(() => '')) ?? '')) { await button.click(); return true }
     }
     return false
   }

@@ -24,7 +24,7 @@ async function initialize(): Promise<void> {
     await Promise.all([run.load(), courses.load(), settings.load()])
     if (courses.error || settings.error) throw new Error(courses.error || settings.error)
     const info = await window.appApi.app.version(); version.value = info.version; platform.value = info.platform
-    if (run.running.length > 0) await router.replace('/run')
+    if (run.running.length > 0 && router.currentRoute.value.path !== '/run') await router.replace('/run')
     ready.value = true
   } catch (e) { error.value = `初始化失败：${String(e)}` }
 }

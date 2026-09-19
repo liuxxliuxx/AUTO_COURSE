@@ -54,6 +54,7 @@ describe('重启恢复', () => {
       autoEndTime: '22:15',
       autoAllDay: false,
       autoLimitMinutes: 90,
+      accentColor: 'teal',
       uiScale: 1.15
     }
 

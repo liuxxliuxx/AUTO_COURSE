@@ -12,7 +12,7 @@ import type { CourseItem, DailyProgress, LogEntry } from '@shared/types'
 const logger = createLogger('database')
 
 /** v2 schema 版本。每次改表结构都要 +1 并补一条迁移。 */
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 4
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS url_history (
@@ -74,6 +74,37 @@ export class Database {
         CREATE TABLE IF NOT EXISTS course_progress_v2 (
           course_id TEXT PRIMARY KEY REFERENCES courses(id), last_video_title TEXT NOT NULL, updated_at TEXT NOT NULL
         );
+      `)
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS mastery_questions (
+          id TEXT PRIMARY KEY,
+          content TEXT NOT NULL,
+          question_type TEXT NOT NULL,
+          attempt_count INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(content, question_type)
+        );
+        CREATE TABLE IF NOT EXISTS mastery_options (
+          id TEXT PRIMARY KEY,
+          question_id TEXT NOT NULL REFERENCES mastery_questions(id) ON DELETE CASCADE,
+          content TEXT NOT NULL,
+          normalized_content TEXT NOT NULL,
+          is_correct INTEGER NOT NULL DEFAULT 0,
+          position INTEGER NOT NULL,
+          UNIQUE(question_id, normalized_content)
+        );
+        CREATE INDEX IF NOT EXISTS idx_mastery_questions_content ON mastery_questions(content);
+      `)
+      this.db.exec(`
+        CREATE TABLE IF NOT EXISTS workflows (id TEXT PRIMARY KEY, name TEXT NOT NULL, version INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, notice TEXT);
+        CREATE TABLE IF NOT EXISTS workflow_steps (id TEXT NOT NULL, workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE, position INTEGER NOT NULL, course_id TEXT NOT NULL REFERENCES courses(id), options TEXT NOT NULL, PRIMARY KEY(workflow_id,id), UNIQUE(workflow_id,position));
+        CREATE TABLE IF NOT EXISTS workflow_schedules (workflow_id TEXT PRIMARY KEY REFERENCES workflows(id) ON DELETE CASCADE, config TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS workflow_runs (id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL, state TEXT NOT NULL, started_at TEXT NOT NULL, data TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS workflow_step_runs (run_id TEXT NOT NULL REFERENCES workflow_runs(id), step_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(run_id,step_id));
+        CREATE TABLE IF NOT EXISTS workflow_run_events (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL REFERENCES workflow_runs(id), data TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS workflow_events_run ON workflow_run_events(run_id,id);
+        CREATE TABLE IF NOT EXISTS workflow_schedule_firings (workflow_id TEXT NOT NULL, scheduled_at TEXT NOT NULL, run_id TEXT, outcome TEXT NOT NULL, PRIMARY KEY(workflow_id,scheduled_at));
       `)
       const current = this.userVersion
       if (current < SCHEMA_VERSION) {

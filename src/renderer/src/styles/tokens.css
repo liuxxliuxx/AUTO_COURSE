@@ -1,16 +1,33 @@
 :root {
   color-scheme: light;
-  --ground: #f5f6f8; --surface: #fff; --surface-2: #eef3fb; --surface-3: #dce4f0;
-  --line: #d7dfeb; --line-soft: #e9edf4;
-  --text: #1c2b43; --text-2: #52617a; --text-3: #65758d;
-  --sky: #265ee8; --sky-dim: #eaf0ff;
-  --jade: #17865b; --jade-dim: #e7f5ee; --brass: #986418; --brass-dim: #fff3dd; --clay: #c23e48; --clay-dim: #fff0f0;
+  /* One accent family drives actions, selection, links and focus. */
+  --accent-hue: 218;
+  --accent: hsl(var(--accent-hue) 52% 37%);
+  --accent-soft: hsl(var(--accent-hue) 85% 95%);
+  --accent-fill: hsl(var(--accent-hue) 82% 89%);
+  --accent-hover: hsl(var(--accent-hue) 78% 84%);
+  --accent-line: hsl(var(--accent-hue) 58% 76%);
+  --accent-focus: hsl(var(--accent-hue) 55% 52%);
+  --ground: hsl(var(--accent-hue) 65% 98%); --surface: #fff;
+  --surface-2: hsl(var(--accent-hue) 65% 96%); --surface-3: hsl(var(--accent-hue) 55% 91%);
+  --sidebar: hsl(var(--accent-hue) 65% 96%); --selection: var(--accent-soft);
+  --primary: var(--accent-fill); --primary-hover: var(--accent-hover);
+  --line: hsl(var(--accent-hue) 30% 87%); --line-soft: hsl(var(--accent-hue) 40% 95%);
+  --line-hover: hsl(var(--accent-hue) 30% 73%);
+  --text: hsl(var(--accent-hue) 25% 20%); --text-2: hsl(var(--accent-hue) 16% 38%);
+  --text-3: hsl(var(--accent-hue) 13% 45%);
+  --sky: var(--accent); --sky-dim: var(--accent-soft);
+  --jade: #307456; --jade-dim: #eaf5ed;
+  --brass: #866126; --brass-dim: #fcf5e7;
+  --clay: #ae4854; --clay-dim: #fcf0f1;
+  --overlay: hsl(var(--accent-hue) 35% 20% / .2); --shadow-dialog: none;
+  --scroll-thumb: hsl(var(--accent-hue) 30% 80%);
   --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-num: ui-monospace, SFMono-Regular, Consolas, monospace;
-  --fs-micro: 11px; --fs-small: 12px; --fs-base: 12px; --fs-title: 16px; --fs-readout: 16px;
-  --control-height: 26px; --fs-section: 13px;
+  --fs-micro: 11px; --fs-small: 12px; --fs-base: 13px; --fs-title: 18px; --fs-readout: 13px;
+  --control-height: 28px; --fs-section: 13px;
   --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 14px; --sp-6: 20px;
-  --r-control: 4px; --r-panel: 6px; --rail-height: 30px;
+  --r-control: 2px; --r-panel: 0px; --rail-height: 30px;
   --motion-fast: 120ms; --motion-base: 180ms;
 }
 @media(prefers-reduced-motion:reduce) { :root { --motion-fast: 0ms; --motion-base: 0ms; } }

@@ -14,9 +14,10 @@
 |---|---|
 | 课程 | 课程增删改查、每门课程的运行配置、选择「本次课程」 |
 | 运行 | 当前任务、阶段、进度、异常处理、日志 |
-| 设置 | 账号登录、新课程默认配置、转录目录、自动调度、外观缩放 |
+| 工作流 | 课程步骤编排、运行方式、立即/定时运行、工作流编辑 |
+| 设置 | 账号登录、新课程默认配置、转录目录、外观缩放 |
 
-- 没有课程时进入课程页；有课程且没有任务时恢复上次选择；任务运行中默认进入运行页。
+- 没有课程时进入课程页；有活动运行实例时默认进入运行页；否则进入工作流页。
 - 点击课程列表只切换查看与选择，**不会启动任务**。
 - 保存课程**不会**自动运行；运行期间可以查看和编辑其他课程，但不能启动第二个任务。
 - 正在运行的课程禁止编辑与移除，详情里给出「先停止任务」的提示。
@@ -26,14 +27,17 @@
 每门课程各自保存「运行方式 / 起始位置 / 跳过已完成内容 / 单次时长」，
 切换课程时随之切换，不再由全局开关推导：
 
-| 运行方式 | 传统课 | 图谱课 |
-|---|---|---|
-| 学习 | ✅ | ✅ |
-| 学习并转录 | ✅ | ✅ |
-| 仅转录 | ✅ | — |
+| 运行方式 | 传统课 | 图谱课 | 掌握度课 |
+|---|---|---|---|
+| 学习 | ✅ | ✅ | ✅ |
+| 学习并转录 | ✅ | ✅ | — |
+| 仅转录 | ✅ | — | — |
 
 新课程从「设置 · 课程默认配置」复制一份；之后修改默认值只影响新建课程。
 「关闭刷课就自动进入仅转录」这条隐式规则已经删除。
+
+掌握度课每次提交后都会打开作答解析页。只有整套题全部正确才结束当前知识点；
+错题会把题目的试错次数加一并继续答题。题目、选项、正确答案和试错次数保存在应用数据库。
 
 ### 异常与人工介入
 
@@ -60,16 +64,24 @@
 
 ---
 
-## 2. 模块边界
+## 2. 工作流与运行实例
+
+- `WorkflowService` 持久化工作流、步骤和定时规则；步骤保存课程配置的副本。
+- `WorkflowRunManager` 在启动前一次性校验并占用全部课程；课程有重叠时拒绝后启动的工作流。
+- `WorkflowExecutor` 在一个运行实例内顺序执行步骤；某一步失败后继续后续步骤并汇总为部分失败。
+- 每个运行实例拥有独立 Browser Host profile、转录 worker 临时目录和取消信号。
+- 日志、进度和人工处理状态携带 `workflowId / runId / stepId`，运行快照不保存密码或 Cookie。
+
+## 3. 模块边界
 
 | 模块 | 所有权 |
 |---|---|
 | 课程管理 | `CourseService`：增删改查、选择状态、每门课程配置 |
 | 账号登录 | `CredentialStore` + `SettingsService.loginMethod`：只负责凭据与登录结果 |
-| 任务运行 | `BotService`：启停、配置快照、阶段、错误与人工介入 |
+| 工作流运行 | `WorkflowRunManager`、`WorkflowExecutor`：启停、快照、阶段、错误与人工介入 |
 | 课程执行器 | `classic/` 与 `map/` 两个 Runner：只读运行上下文，不读可变的全局设置 |
 | 进度 | `course_progress_v2` + `daily_progress`：按课程 ID 保存，负责每日统计 |
-| 自动调度 | `SchedulerService`：按目标课程发起任务，不修改「本次课程」 |
+| 自动调度 | `WorkflowScheduler`：按工作流的单次/每日规则发起运行 |
 | 转录 | `TranscriptionService`：接收任务配置与课程 ID，独立上报状态 |
 | 应用设置 | `SettingsService`：全局默认值、目录、外观 |
 
@@ -83,24 +95,28 @@
 
 ---
 
-## 3. 关键契约
+## 4. 关键契约
 
 ```ts
 interface Course { id, identity, name, url, kind, options, createdAt, updatedAt, lastRunAt, progressWarning }
 interface CourseRunOptions { action, startPosition, skipCompleted, timeLimitMinutes }
-interface RunRequest { courseId }
+interface WorkflowStep { id, courseId, options }
+interface Workflow { id, name, steps, schedule, version }
+interface WorkflowRun { id, workflowId, snapshot, steps, state }
+interface RunRequest { workflowId }
 interface RunSnapshot { id, course, settings, startedAt, source: 'manual' | 'schedule' }
 interface RunStatus { runId, courseId, snapshot, phase, error, intervention, state, ... }
 interface SchedulerConfig { enabled, courseId, startTime, endTime, allDay, dailyLimitMinutes }
 ```
 
 - 课程 IPC：`courses:list / select / create / update / remove / defaults`
-- 运行 IPC：`bot:start` 只接收 `courseId`，配置在启动瞬间快照，运行期间不随设置变化
-- 「选择课程同时覆盖全局 URL 与备注」的旧接口已退出主流程
+- 工作流 IPC：`workflows:list / get / create / update / remove`
+- 运行 IPC：`workflows:start / runs / run / stop / window / confirm / logs`
+- 配置在启动瞬间快照，运行期间编辑工作流不会影响当前实例
 
 ---
 
-## 4. 数据迁移
+## 5. 数据迁移
 
 - `courses` / `course_progress_v2` 与 schema 版本一起在一个事务里建立。
 - 旧数据来源是「当前课程配置 + URL 历史」：重复地址按 `identity` 合并，
@@ -108,6 +124,7 @@ interface SchedulerConfig { enabled, courseId, startTime, endTime, allDay, daily
 - 进度按课程 ID 保存，改名不影响续学位置。
 - 旧备注进度只有在唯一对应一门课程时才关联；同名歧义数据保留原样，
   在课程详情里显示 `progressWarning`，由用户重新确定续学位置。
+- 旧自动调度迁移为单步骤工作流；原时间段和每日目标无法等价转换，新工作流定时默认停用并提示重新设置。
 - 旧表只用于核对，不再双向写入；重复迁移不会重复导入，失败会回滚。
 
 ---

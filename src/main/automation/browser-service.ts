@@ -32,6 +32,7 @@ export interface BrowserServiceOptions {
    * 放在应用数据目录下，跨重启保留 —— 会话能复用就不必重新登录。
    */
   profileDir: string
+  migrateLegacyProfile?: boolean
 }
 
 export class BrowserService {
@@ -60,7 +61,7 @@ export class BrowserService {
    */
   private async launchHost(): Promise<ElectronApplication> {
     mkdirSync(this.options.downloadDir, { recursive: true })
-    this.migrateLegacyProfile()
+    if (this.options.migrateLegacyProfile !== false) this.migrateLegacyProfile()
 
     const args = [
       `--browser-host`,
@@ -237,7 +238,7 @@ export class BrowserService {
 
   /** 关闭会话与宿主进程。可重复调用。 */
   async close(): Promise<void> {
-    const electronApp = this.electronApp
+    const electronApp = this.electronApp ?? await this.launching?.catch(() => null)
     this.electronApp = null
     this.session = null
 
@@ -247,7 +248,11 @@ export class BrowserService {
       await electronApp.close()
       logger.info('Browser Host 已关闭')
     } catch (error) {
-      logger.exception('关闭 Browser Host 失败，进程可能残留', error)
+      logger.exception('关闭 Browser Host 失败，强制终止本实例进程', error)
+      const child = electronApp.process()
+      if(child.exitCode === null && child.signalCode === null) {
+        await new Promise<void>(resolve => { child.once('exit',()=>resolve()); child.kill('SIGKILL') })
+      }
     }
   }
 

@@ -1,3 +1,5 @@
+import type { AccentColor } from './appearance'
+
 /**
  * 领域模型类型 —— Main / Preload / Renderer 三方共享。
  *
@@ -11,8 +13,8 @@
 /** Bot 真实生命周期状态。由 BotService 唯一持有，UI 只读。 */
 export type BotState = 'idle' | 'starting' | 'running' | 'stopping'
 
-/** 任务模式。图谱课与经典课是两套独立业务，不做 if/else 混写。 */
-export type TaskMode = 'classic' | 'map' | 'transcribe-only'
+/** 任务模式。各课程策略独立实现，不在一个 Runner 里混写。 */
+export type TaskMode = 'classic' | 'map' | 'mastery' | 'transcribe-only'
 
 export type RunPhase = 'idle' | 'preparing' | 'login' | 'loading-course' | 'executing' | 'waiting' | 'stopping' | 'finished'
 export interface RunError { stage: RunPhase; code: 'login' | 'course' | 'execution'; message: string }
@@ -101,7 +103,7 @@ export interface Course {
   name: string
   url: string
   identity: string
-  kind: 'classic' | 'map' | 'unknown'
+  kind: 'classic' | 'map' | 'mastery' | 'unknown'
   options: CourseRunOptions
   createdAt: string
   updatedAt: string
@@ -125,6 +127,7 @@ export interface CourseItem {
 // ============================================================================
 
 export interface InterventionRequest {
+  id?: string
   kind: 'captcha' | 'manual-login'
   message: string
   scene: 'login' | 'course' | 'video'
@@ -156,6 +159,7 @@ export type TranscriptionPhase =
   | 'worker-unavailable'
 
 export interface TranscriptionStatus {
+  outputFiles?: string[]
   phase: TranscriptionPhase
   /** 当前视频标题（可能被截断） */
   title: string | null
@@ -240,6 +244,7 @@ export interface AppSettings {
   /** 界面缩放系数（0.9 – 1.3）。v1 的 bg_blur_radius 属于旧的毛玻璃界面，
    *  v2 界面是平铺布局，该字段不再沿用。 */
   uiScale: number
+  accentColor: AccentColor
 }
 
 export type SettingsPatch = Partial<AppSettings>

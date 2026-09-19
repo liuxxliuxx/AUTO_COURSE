@@ -10,7 +10,7 @@ type Row = { id: string; identity: string; name: string; url: string; kind: Cour
 
 export class CourseService {
   constructor(private readonly db: Database, private readonly settings: SettingsService,
-    private readonly runningCourseId: () => string | null = () => null) { this.migrate() }
+    private readonly runningCourseId: () => string | string[] | null = () => null) { this.migrate() }
 
   private migrate(): void {
     if (this.db.getSetting('courseLibraryMigrated') === '1') return
@@ -31,7 +31,8 @@ export class CourseService {
         const id = randomUUID()
         const now = new Date().toISOString()
         const options = { ...defaults }
-        if (kind === 'map' && options.action === 'transcribe') options.action = 'learn'
+        if ((kind === 'map' || kind === 'mastery') && options.action === 'transcribe') options.action = 'learn'
+        if (kind === 'mastery' && options.action === 'learn-transcribe') options.action = 'learn'
         this.db.raw().prepare('INSERT INTO courses (id, identity, name, url, kind, options, created_at, updated_at, progress_warning) VALUES (?,?,?,?,?,?,?,?,?)')
           .run(id, identity, item.note.trim() || '未命名课程', item.url.trim(), kind, JSON.stringify(options), now, now,
             kind === 'unknown' ? '旧地址无法识别，请编辑为有效的课程学习页链接' : null)
@@ -118,11 +119,12 @@ export class CourseService {
   }
   private assertEditable(id: string): void {
     if (!this.get(id)) throw new Error('课程不存在或已移除')
-    if (this.runningCourseId() === id) throw new Error('这门课程正在运行，请先停止任务')
+    if ([this.runningCourseId()].flat().includes(id)) throw new Error('这门课程正在运行，请先停止任务')
   }
   remove(id: string): CourseMutationResult {
     return this.mutate(() => {
       this.assertEditable(id)
+      if (this.db.raw().prepare('SELECT 1 FROM workflow_steps WHERE course_id=? LIMIT 1').get(id)) throw new Error('课程被工作流引用，请先移除对应步骤')
       this.db.raw().prepare('UPDATE courses SET deleted_at=? WHERE id=?').run(new Date().toISOString(), id)
       if (this.db.getSetting('selectedCourseId') === id) this.db.setSetting('selectedCourseId', '')
       if (this.db.getSetting('schedulerCourseId') === id) {

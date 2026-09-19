@@ -7,6 +7,7 @@
  *  - 每个 handler 的签名由 @shared/ipc 的 InvokeMap 约束
  */
 
+import { registerWorkflowIpc } from './workflows'
 import { registerBotIpc } from './bot'
 import { registerSettingsIpc } from './settings'
 import type { ServiceContainer } from '../services/container'
@@ -17,6 +18,7 @@ const logger = createLogger('ipc')
 export function registerIpcHandlers(container: ServiceContainer): void {
   registerSettingsIpc(container)
   registerBotIpc(container)
+  registerWorkflowIpc(container)
   logger.info('IPC handlers 已注册')
 }
 

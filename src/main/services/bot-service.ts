@@ -35,6 +35,7 @@ import { randomUUID } from 'node:crypto'
 import { identifyCourse, settingsForCourse, validateRunOptions } from '@shared/courses'
 import type { CourseService } from './course-service'
 import { createLogger } from './logger'
+import { MasteryQuestionBank } from '../automation/mastery/question-bank'
 
 const logger = createLogger('bot')
 
@@ -131,18 +132,18 @@ export class BotService {
 
   // ------------------------------------------------------------------ 启动
 
-  async start(request: RunRequest, source: 'manual' | 'schedule' = 'manual'): Promise<{ ok: true } | { ok: false; errors: ValidationError[] }> {
+  async start(request: RunRequest, source: 'manual' | 'schedule' = 'manual', explicit?: { snapshot: RunSnapshot; credentials: Credentials }): Promise<{ ok: true } | { ok: false; errors: ValidationError[] }> {
     if (this.isRunning()) {
       return { ok: false, errors: [{ field: 'videoUrl', message: '任务已在运行中' }] }
     }
 
-    const course = this.courses.get(request?.courseId)
+    const course = explicit?.snapshot.course ?? this.courses.get(request?.courseId)
     if (!course) return { ok: false, errors: [{ field: 'courseId', message: '请选择一门有效的课程' }] }
     try { identifyCourse(course.url); validateRunOptions(course.options, course.kind) }
     catch (error) { return { ok: false, errors: [{ field: 'courseId', message: String(error) }] } }
-    const runSettings = settingsForCourse(this.settings.getAll(), course)
+    const runSettings = explicit?.snapshot.settings ?? settingsForCourse(this.settings.getAll(), course)
     const errors = this.settings.validate(runSettings)
-    const creds = this.credentials.get()
+    const creds = explicit?.credentials ?? this.credentials.get()
     if (!creds.username.trim()) {
       errors.push({ field: 'credentials', message: '账号不能为空' })
     }
@@ -151,8 +152,8 @@ export class BotService {
     }
     if (errors.length) return { ok: false, errors }
 
-    const mode = this.settings.deriveTaskMode(runSettings)
-    this.snapshot = { id: randomUUID(), course: structuredClone(course), settings: { ...runSettings }, startedAt: new Date().toISOString(), source }
+    const mode = this.settings.deriveTaskMode(runSettings, course.kind)
+    this.snapshot = explicit?.snapshot ?? { id: randomUUID(), course: structuredClone(course), settings: { ...runSettings }, startedAt: new Date().toISOString(), source }
     this.phase = 'preparing'
     this.error = null
     this.intervention = null
@@ -171,6 +172,13 @@ export class BotService {
     })
 
     return { ok: true }
+  }
+
+  async execute(snapshot: RunSnapshot, credentials: Credentials): Promise<BotStatus> {
+    const result = await this.start({courseId:snapshot.course.id}, snapshot.source, {snapshot,credentials})
+    if (!result.ok) throw new Error(result.errors.map(e => e.message).join('；'))
+    await this.runPromise
+    return this.getStatus()
   }
 
   /** 由调度器调用；与手动 start 的唯一区别是不做交互式报错 */
@@ -309,6 +317,7 @@ export class BotService {
       session,
       log: createLogger('runner'),
       media,
+      masteryQuestionBank: new MasteryQuestionBank(this.db),
       lastVideoTitle,
       shouldStop: () => this.stopRequested,
       sessionWatchedSeconds: () => this.watchedSeconds,
@@ -366,7 +375,7 @@ export class BotService {
   private async requestCaptcha(scene: CaptchaRequiredEvent['scene'], message: string, kind: InterventionRequest['kind'] = 'captcha'): Promise<boolean> {
     if (this.stopRequested) return false
 
-    const event: InterventionRequest = { kind, message, scene, at: Date.now() }
+    const event: InterventionRequest = { id: randomUUID(), kind, message, scene, at: Date.now() }
     const previousPhase = this.phase
     this.phase = 'waiting'
     this.intervention = event

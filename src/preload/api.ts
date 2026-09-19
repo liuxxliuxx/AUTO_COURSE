@@ -31,6 +31,13 @@ function subscribe<E extends EventName>(
 
 export function createApi(ipcRenderer: IpcRenderer): AppApi {
   return {
+    workflows: {
+      list:()=>invoke(ipcRenderer,'workflows:list'),get:(id)=>invoke(ipcRenderer,'workflows:get',{id}),
+      create:(input)=>invoke(ipcRenderer,'workflows:create',input),update:(id,version,input)=>invoke(ipcRenderer,'workflows:update',{id,version,input}),remove:(id)=>invoke(ipcRenderer,'workflows:remove',{id}),
+      runs:()=>invoke(ipcRenderer,'workflows:runs'),run:(id)=>invoke(ipcRenderer,'workflows:run',{id}),
+      start:(workflowId)=>invoke(ipcRenderer,'workflows:start',{workflowId}),stop:(runId)=>invoke(ipcRenderer,'workflows:stop',{runId}),openWindow:(runId)=>invoke(ipcRenderer,'workflows:window',{runId}),
+      confirm:(runId,stepId,requestId)=>invoke(ipcRenderer,'workflows:confirm',{runId,stepId,requestId}),logs:(runId)=>invoke(ipcRenderer,'workflows:logs',{runId})
+    },
     bot: {
       start: (request) => invoke(ipcRenderer, IPC_INVOKE.botStart, request),
       stop: () => invoke(ipcRenderer, IPC_INVOKE.botStop),
@@ -97,6 +104,7 @@ export function createApi(ipcRenderer: IpcRenderer): AppApi {
     },
 
     events: {
+      onWorkflowRun: (cb) => subscribe(ipcRenderer, IPC_EVENT.workflowRun, cb),
       onBotStatus: (cb) => subscribe(ipcRenderer, IPC_EVENT.botStatus, cb),
       onLog: (cb) => subscribe(ipcRenderer, IPC_EVENT.log, cb),
       onProgress: (cb) => subscribe(ipcRenderer, IPC_EVENT.progress, cb),

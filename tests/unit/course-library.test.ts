@@ -78,6 +78,13 @@ describe('课程库与迁移', () => {
     expect(courses.create({ name: '图谱', url, options: { ...DEFAULT_COURSE_OPTIONS, action: 'transcribe' } })).toMatchObject({ ok: false })
     expect(courses.create({ ...input('x'), options: { ...DEFAULT_COURSE_OPTIONS, timeLimitMinutes: -1 } })).toMatchObject({ ok: false })
   })
+  it('识别掌握度课地址并拒绝转录配置', () => {
+    const { db, settings } = setup(); const courses = new CourseService(db, settings)
+    const url = 'https://studywisdomh5.zhihuishu.com/study/mastery?recruitAndCourseId=abc123'
+    expect(identifyCourse(url)).toMatchObject({ kind: 'mastery', identity: 'mastery:abc123' })
+    expect(courses.create({ name: '掌握度', url, options: { ...DEFAULT_COURSE_OPTIONS, action: 'transcribe' } })).toMatchObject({ ok: false })
+    expect(() => identifyCourse('https://studywisdomh5.zhihuishu.com/study/mastery')).toThrow('recruitAndCourseId')
+  })
   it('转录目录沿用课程名，同名课程按创建顺序追加稳定序号', () => {
     const {db, settings} = setup(); const courses = new CourseService(db, settings)
     const first = created(courses.create(input('a', '高等数学')))

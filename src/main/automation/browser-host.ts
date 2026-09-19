@@ -134,7 +134,7 @@ function createCourseWindow(): BrowserWindow {
   // 远程页面自己发起的 window.open 一律拒绝：多窗口由 BrowserService 显式管理，
   // 不能让网页凭空多开一个无受控的窗口。
   window.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('http')) void shell.openExternal(url)
+    if (url.startsWith('http')) void shell.openExternal(url, { activate: false })
     return { action: 'deny' }
   })
 

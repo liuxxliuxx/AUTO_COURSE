@@ -1,0 +1,75 @@
+import { randomUUID } from 'node:crypto'
+import type { BotStatus, Credentials, TranscriptionStatus } from '@shared/types'
+import type { WorkflowRun, WorkflowStartResult } from '@shared/workflows'
+import type { WorkflowService } from './workflow-service'
+import type { CourseService } from '../services/course-service'
+import type { SettingsService } from '../services/settings-service'
+import type { RunRepository } from './run-repository'
+import { WorkflowExecutor, type WorkflowRuntime } from './workflow-executor'
+import { identifyCourse, validateRunOptions, settingsForCourse } from '@shared/courses'
+
+type RuntimeFactory = (run: WorkflowRun, report: (status?: BotStatus, transcription?: TranscriptionStatus) => void) => WorkflowRuntime
+export class WorkflowRunManager {
+  private active = new Map<string, { executor: WorkflowExecutor; done: Promise<void> }>()
+  private closing = false
+  constructor(private flows: WorkflowService, private courses: CourseService, private settings: SettingsService, private credentials: () => Credentials, readonly repository: RunRepository, private factory: RuntimeFactory, private publish: (run: WorkflowRun) => void = () => { }) { repository.recover() }
+  isActive(id: string): boolean { return [...this.active.values()].some(a => a.executor.run.workflowId === id) }
+  occupiedCourses(): string[] { return [...this.active.values()].flatMap(a => a.executor.run.snapshot.steps.map(s => s.courseId)) }
+  start(workflowId: string, source: 'manual' | 'schedule' = 'manual'): WorkflowStartResult {
+    if (this.closing) return { ok: false, message: '应用正在退出' }
+    const flow = this.flows.get(workflowId)
+    if (!flow) return { ok: false, message: '工作流不存在' }
+    let run: WorkflowRun
+    try {
+      const steps = flow.steps.map(s => {
+        const course = this.courses.get(s.courseId)
+        if (!course) throw new Error('课程不存在')
+        identifyCourse(course.url); validateRunOptions(s.options, course.kind)
+        return { ...s, course: structuredClone(course) }
+      })
+      if (!steps.length) throw new Error('工作流没有步骤')
+      const settings = { ...this.settings.getAll(), autoMode: false }
+      run = { id: randomUUID(), workflowId, source, state: 'running', snapshot: { workflow: structuredClone(flow), steps, settings }, startedAt: new Date().toISOString(), finishedAt: null, message: '', steps: steps.map(s => ({ stepId: s.id, state: 'pending', startedAt: null, finishedAt: null, status: null, transcription: null, error: null })) }
+    } catch (e) { return { ok: false, message: String(e) } }
+    const reject = (message: string): WorkflowStartResult => { run.state = 'rejected'; run.message = message; run.finishedAt = new Date().toISOString(); run.steps.forEach(s => s.state = 'cancelled'); this.repository.save(run); return { ok: false, message, runId: run.id } }
+    for (const { executor } of this.active.values()) {
+      if (executor.run.workflowId === workflowId) return reject('该工作流已在运行')
+      const overlap = run.snapshot.steps.find(s => executor.run.snapshot.steps.some(other => other.courseId === s.courseId))
+      if (overlap) return reject(`课程“${overlap.course.name}”已被工作流“${executor.run.snapshot.workflow.name}”占用`)
+    }
+    const creds = { ...this.credentials() }
+    if (!creds.username.trim() || !creds.password) return reject('请先保存登录账号和密码')
+    for (const step of run.snapshot.steps) {
+      const errors = this.settings.validate(settingsForCourse(run.snapshot.settings, { ...step.course, options: step.options }))
+      if (errors.length) return reject(errors.map(e => e.message).join('；'))
+    }
+    this.repository.save(run)
+    const changed = (): void => { this.repository.save(run); this.publish(structuredClone(run)) }
+    let runtime: WorkflowRuntime
+    try {
+      runtime = this.factory(run, (status, transcription) => {
+        const step = run.steps.find(s => s.state === 'running')
+        if (!step) return
+        if (status) step.status = status
+        if (transcription) step.transcription = transcription
+        changed()
+      })
+    } catch (e) { return reject(`初始化失败：${String(e)}`) }
+    const executor = new WorkflowExecutor(run, runtime, changed)
+    // No await before reservation. Concurrent IPC starts cannot pass the same check.
+    const slot = { executor, done: Promise.resolve() }
+    this.active.set(run.id, slot)
+    slot.done = Promise.resolve().then(() => executor.execute(creds)).catch(e => {
+      run.state = 'failed'; run.message = String(e); run.finishedAt = new Date().toISOString(); changed()
+    }).finally(() => this.active.delete(run.id))
+    return { ok: true, runId: run.id }
+  }
+  async stop(id: string): Promise<void> { const a = this.active.get(id); if (!a) return; await a.executor.stop(); await a.done }
+  async openWindow(id: string): Promise<void> { const a = this.active.get(id); if (!a) throw new Error('运行已结束'); await a.executor.runtime.openWindow() }
+  confirm(id: string, stepId: string, requestId: string): void {
+    const a = this.active.get(id), step = a?.executor.run.steps.find(s => s.stepId === stepId && s.state === 'running')
+    if (!step || !requestId || step.status?.intervention?.id !== requestId) throw new Error('处理请求已过期')
+    a!.executor.runtime.task.bot.confirmIntervention()
+  }
+  async dispose(): Promise<void> { this.closing = true; await Promise.all([...this.active.keys()].map(id => this.stop(id))) }
+}

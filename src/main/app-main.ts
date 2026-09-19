@@ -17,6 +17,7 @@ import { installApplicationMenu } from './menu'
 import { createLogger } from './services/logger'
 import { ClassicCourseRunner } from './automation/classic/classic-course-runner'
 import { MapCourseRunner } from './automation/map/map-course-runner'
+import { MasteryCourseRunner } from './automation/mastery/mastery-course-runner'
 import type { TaskMode } from '@shared/types'
 import type { CourseRunner, RunnerContext } from './automation/runner'
 
@@ -123,17 +124,18 @@ export function startApplication(): void {
 
   app.whenReady().then(async () => {
     container = new ServiceContainer()
-    await container.initialize()
 
-    // Runner 选择：图谱课与传统课是两套独立业务，各自实现 CourseRunner。
+    // Runner 选择：三类课程各自实现 CourseRunner，保持执行链隔离。
     container.setRunnerFactory((mode: TaskMode, _ctx: RunnerContext): CourseRunner => {
       if (mode === 'map') return new MapCourseRunner()
+      if (mode === 'mastery') return new MasteryCourseRunner()
       // 'classic' 与 'transcribe-only' 共用传统课程流程：
       // 仅转录只是「不播放视频、直接下载音轨」，导航与列表解析完全一致
       // （v1 bot_core.py 里也是同一段循环，靠 _transcribe_only 分支区分）。
       return new ClassicCourseRunner()
     })
 
+    await container.initialize()
     registerIpcHandlers(container)
     installApplicationMenu()
 

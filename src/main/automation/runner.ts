@@ -1,5 +1,5 @@
 /**
- * CourseRunner 契约 —— 传统课程与图谱课程各自实现，互不混写。
+ * CourseRunner 契约 —— 传统课程、图谱课程和掌握度课程各自实现，互不混写。
  *
  * handoff §9 明确要求不要出现 `if (mapMode) {...} else {...}` 塞进一个巨大 Bot 类。
  * BotService 只认这个接口，按 TaskMode 挑实现。
@@ -9,6 +9,7 @@ import type { AppSettings, Credentials, StopReason, TaskMode, RunPhase, RunError
 import type { BrowserSession } from './browser-session'
 import type { EventBus } from '../services/event-bus'
 import type { Logger } from '../services/logger'
+import type { MasteryQuestionBank } from './mastery/question-bank'
 
 export interface RunOutcome {
   error?: RunError
@@ -49,6 +50,8 @@ export interface RunnerContext {
   readonly log: Logger
   /** 未启用转录时为 null */
   readonly media: MediaPort | null
+  /** 掌握度课持久题库；其他课程策略忽略。 */
+  readonly masteryQuestionBank?: MasteryQuestionBank
 
   /**
    * 「从上次进度继续」的起点标题，来自 course_progress。

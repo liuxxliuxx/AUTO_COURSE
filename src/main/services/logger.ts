@@ -5,6 +5,9 @@
  * 这里只需要「时间 + 级别 + 模块 + 消息」四项。
  */
 
+import { AsyncLocalStorage } from 'node:async_hooks'
+export const runLogContext = new AsyncLocalStorage<{ workflowId: string; runId: string; stepId: string | null }>()
+
 import type { LogLevel } from '@shared/types'
 
 const ORDER: Record<LogLevel, number> = { debug: 10, info: 20, warning: 30, error: 40 }
@@ -16,7 +19,7 @@ export function setLogLevel(level: LogLevel): void {
 }
 
 /** 日志订阅者（EventBus 在 Phase 3 接入） */
-type Sink = (level: LogLevel, message: string) => void
+type Sink = (level: LogLevel, message: string, context?: { workflowId: string; runId: string; stepId: string | null }) => void
 const sinks = new Set<Sink>()
 
 export function addLogSink(sink: Sink): () => void {
@@ -47,7 +50,7 @@ export function createLogger(scope: string): Logger {
     else process.stdout.write(`${line}\n`)
     for (const sink of sinks) {
       try {
-        sink(level, message)
+        sink(level, message, runLogContext.getStore())
       } catch {
         // 日志系统自身不得抛错
       }

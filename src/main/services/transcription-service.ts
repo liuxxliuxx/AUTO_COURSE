@@ -145,6 +145,7 @@ const CLEANUP_JS = `
 export interface TranscriptionDeps {
   bus: EventBus
   /** 每次设置变更后重新读取 */
+  tempNamespace?: string
   getSettings: () => AppSettings
   /** STT worker 的路径；测试时可注入假实现 */
   worker: ConstructorParameters<typeof SttWorker>[0]
@@ -179,6 +180,7 @@ export class TranscriptionService implements MediaPort {
 
   getStatus(): TranscriptionStatus {
     return {
+      outputFiles: [...this.outputFiles],
       phase: this.phase,
       title: this.title,
       completed: this.completed,
@@ -208,6 +210,7 @@ export class TranscriptionService implements MediaPort {
    * 按当前设置决定是否启用。
    * 返回是否可用（ffmpeg + worker 都在）。
    */
+  private outputFiles: string[] = []
   private configuredCourseName = DEFAULT_COURSE_NAME
 
   /**
@@ -232,7 +235,10 @@ export class TranscriptionService implements MediaPort {
 
     this.configuredCourseName = courseFolder?.trim() || sanitizeFilename(settings.courseNote || DEFAULT_COURSE_NAME)
     this.outputRoot = join(settings.transcribeBaseDir, OUTPUT_ROOT_DIRNAME)
-    this.tempDir = join(this.outputRoot, TEMP_DIRNAME)
+    const tempRoot = this.deps.tempNamespace
+      ? join(this.outputRoot, TEMP_DIRNAME, this.deps.tempNamespace)
+      : join(this.outputRoot, TEMP_DIRNAME)
+    this.tempDir = tempRoot
     this.courseDir = join(this.outputRoot, this.configuredCourseName)
     mkdirSync(this.tempDir, { recursive: true })
     mkdirSync(this.courseDir, { recursive: true })
@@ -583,6 +589,7 @@ export class TranscriptionService implements MediaPort {
 
     mkdirSync(this.courseDir, { recursive: true })
     writeFileSync(target, `${header}${text}\n`, 'utf8')
+    this.outputFiles.push(target)
     logger.info(`转写结果已保存: ${target}`)
   }
 

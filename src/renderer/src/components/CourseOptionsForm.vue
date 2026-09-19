@@ -8,7 +8,7 @@ const uid = useId()
 <template>
   <fieldset class="options-grid" :disabled="disabled">
     <div class="field"><label :for="`${uid}-action`">运行方式</label>
-      <select :id="`${uid}-action`" v-model="options.action"><option value="learn">学习</option><option value="learn-transcribe">学习并转录</option><option v-if="kind !== 'map'" value="transcribe">仅转录</option></select>
+      <select :id="`${uid}-action`" v-model="options.action"><option value="learn">学习</option><option v-if="kind !== 'mastery'" value="learn-transcribe">学习并转录</option><option v-if="kind === 'classic' || !kind" value="transcribe">仅转录</option></select>
     </div>
     <div class="field"><label :for="`${uid}-start`">起始位置</label>
       <select :id="`${uid}-start`" v-model="options.startPosition"><option value="beginning">从课程开头</option><option value="resume">从上次位置继续</option></select>

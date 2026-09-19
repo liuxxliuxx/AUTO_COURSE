@@ -6,6 +6,7 @@
  */
 
 import type { AppSettings, SettingsPatch, ValidationError } from '@shared/types'
+import { DEFAULT_ACCENT, isAccentColor } from '@shared/appearance'
 import type { Database } from '../storage/database'
 import { createLogger } from './logger'
 
@@ -28,11 +29,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoEndTime: '23:00',
   autoAllDay: false,
   autoLimitMinutes: 0,
-  uiScale: 1
+  uiScale: 1,
+  accentColor: DEFAULT_ACCENT
 }
 
 /** 键 → 解析方式。读库时要按这个表把字符串转回正确类型。 */
-type Kind = 'string' | 'boolean' | 'number' | 'loginMethod'
+type Kind = 'string' | 'boolean' | 'number' | 'loginMethod' | 'accentColor'
 
 const KINDS: Record<keyof AppSettings, Kind> = {
   loginMethod: 'loginMethod',
@@ -51,7 +53,8 @@ const KINDS: Record<keyof AppSettings, Kind> = {
   autoEndTime: 'string',
   autoAllDay: 'boolean',
   autoLimitMinutes: 'number',
-  uiScale: 'number'
+  uiScale: 'number',
+  accentColor: 'accentColor'
 }
 
 function parse(kind: Kind, raw: string | undefined, fallback: unknown): unknown {
@@ -67,6 +70,8 @@ function parse(kind: Kind, raw: string | undefined, fallback: unknown): unknown 
       const n = Number(trimmed)
       return Number.isFinite(n) ? n : fallback
     }
+    case 'accentColor':
+      return isAccentColor(raw) ? raw : DEFAULT_ACCENT
     case 'loginMethod':
       return raw === 'upc' || raw === 'upc-institution' ? raw : 'zhihuishu'
     default:
@@ -94,6 +99,7 @@ export class SettingsService {
   }
 
   update(patch: SettingsPatch): AppSettings {
+    if (patch.accentColor !== undefined && !isAccentColor(patch.accentColor)) throw new Error('请选择有效的强调色')
     for (const [key, value] of Object.entries(patch)) {
       if (!(key in DEFAULT_SETTINGS)) {
         logger.warn(`忽略未知设置项: ${key}`)
@@ -136,7 +142,8 @@ export class SettingsService {
   }
 
   /** 提示词用的「当前任务模式」推导（与 v1 bridge.py:274 一致） */
-  deriveTaskMode(s = this.getAll()): 'classic' | 'map' | 'transcribe-only' {
+  deriveTaskMode(s = this.getAll(), courseKind?: 'classic' | 'map' | 'mastery' | 'unknown'): 'classic' | 'map' | 'mastery' | 'transcribe-only' {
+    if (courseKind === 'mastery') return 'mastery'
     if (s.mapMode) return 'map'
     if (!s.brushEnabled) return 'transcribe-only'
     return 'classic'

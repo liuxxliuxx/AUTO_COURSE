@@ -109,3 +109,19 @@ describe('SettingsService', () => {
     expect(settings.deriveTaskMode()).toBe('map')
   })
 })
+
+
+describe('强调色设置', () => {
+  it('旧数据库默认蓝色，损坏值回退蓝色', () => {
+    expect(settings.getAll().accentColor).toBe('blue')
+    db.setSetting('accentColor', 'unknown')
+    expect(settings.getAll().accentColor).toBe('blue')
+  })
+  it('保存有效预设并拒绝无效值，拒绝时不部分写入', () => {
+    settings.update({ accentColor: 'rose' })
+    expect(settings.getAll().accentColor).toBe('rose')
+    expect(() => settings.update({ uiScale: 1.2, accentColor: 'unknown' } as never)).toThrow('请选择有效的强调色')
+    expect(settings.getAll().accentColor).toBe('rose')
+    expect(settings.getAll().uiScale).toBe(1)
+  })
+})

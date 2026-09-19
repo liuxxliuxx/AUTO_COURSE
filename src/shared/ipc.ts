@@ -1,3 +1,4 @@
+import type { WorkflowApi, Workflow, WorkflowInput, WorkflowRun, WorkflowStartResult, RunEvent } from './workflows'
 /**
  * Typed IPC 契约 —— 单一事实来源。
  *
@@ -28,6 +29,8 @@ import type {
 
 /** Renderer → Main，invoke/handle（请求-响应） */
 export const IPC_INVOKE = {
+  workflowsList: 'workflows:list', workflowsGet: 'workflows:get', workflowsCreate: 'workflows:create', workflowsUpdate: 'workflows:update', workflowsRemove: 'workflows:remove',
+  workflowRuns: 'workflows:runs', workflowRun: 'workflows:run', workflowStart: 'workflows:start', workflowStop: 'workflows:stop', workflowWindow: 'workflows:window', workflowConfirm: 'workflows:confirm', workflowLogs: 'workflows:logs',
   botStart: 'bot:start',
   botStop: 'bot:stop',
   botStatus: 'bot:status',
@@ -69,6 +72,7 @@ export const IPC_INVOKE = {
 
 /** Main → Renderer，send/on（事件推送） */
 export const IPC_EVENT = {
+  workflowRun: 'event:workflow-run',
   botStatus: 'event:bot-status',
   log: 'event:log',
   progress: 'event:progress',
@@ -83,6 +87,7 @@ export const IPC_EVENT = {
 // ============================================================================
 
 export interface EventPayloads {
+  'event:workflow-run': WorkflowRun
   [IPC_EVENT.botStatus]: BotStatus
   [IPC_EVENT.log]: LogEntry
   [IPC_EVENT.progress]: ProgressSnapshot
@@ -99,6 +104,19 @@ export type EventName = keyof EventPayloads
 // ============================================================================
 
 export interface InvokeMap {
+  'workflows:list': {req:void;res:Workflow[]}
+  'workflows:get': {req:{id:string};res:Workflow|null}
+  'workflows:create': {req:WorkflowInput;res:Workflow}
+  'workflows:update': {req:{id:string;version:number;input:WorkflowInput};res:Workflow}
+  'workflows:remove': {req:{id:string};res:void}
+  'workflows:runs': {req:void;res:WorkflowRun[]}
+  'workflows:run': {req:{id:string};res:WorkflowRun|null}
+  'workflows:start': {req:{workflowId:string};res:WorkflowStartResult}
+  'workflows:stop': {req:{runId:string};res:void}
+  'workflows:window': {req:{runId:string};res:void}
+  'workflows:confirm': {req:{runId:string;stepId:string;requestId:string};res:void}
+  'workflows:logs': {req:{runId:string};res:RunEvent[]}
+
   [IPC_INVOKE.botStart]: { req: RunRequest; res: { ok: true } | { ok: false; errors: ValidationError[] } }
   [IPC_INVOKE.botStop]: { req: void; res: void }
   [IPC_INVOKE.botStatus]: { req: void; res: BotStatus }
@@ -150,6 +168,7 @@ export type InvokeName = keyof InvokeMap
 export type Unsubscribe = () => void
 
 export interface AppApi {
+  workflows: WorkflowApi
   bot: {
     start(request: RunRequest): Promise<InvokeMap[typeof IPC_INVOKE.botStart]['res']>
     stop(): Promise<void>
@@ -217,6 +236,7 @@ export interface AppApi {
   }
 
   events: {
+    onWorkflowRun(cb: (payload: WorkflowRun) => void): Unsubscribe
     onBotStatus(cb: (payload: BotStatus) => void): Unsubscribe
     onLog(cb: (payload: LogEntry) => void): Unsubscribe
     onProgress(cb: (payload: ProgressSnapshot) => void): Unsubscribe
@@ -231,5 +251,6 @@ export interface AppApi {
 export const TASK_MODE_LABEL: Record<TaskMode, string> = {
   classic: '刷课',
   map: '图谱刷课',
+  mastery: '掌握度练习',
   'transcribe-only': '仅转录'
 }

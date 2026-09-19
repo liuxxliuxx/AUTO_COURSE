@@ -68,6 +68,7 @@ try {
   // 4. 三个页面都能导航
   for (const [label, heading] of [
     ['课程', '我的课程'],
+    ['工作流', '工作流'],
     ['运行', '运行'],
     ['设置', '设置']
   ]) {
@@ -105,6 +106,13 @@ try {
 
   const validation = await window.evaluate(() => window.appApi.settings.validate())
   pass(`设置校验返回 ${validation.length} 条违规项`)
+
+  const flows = await window.evaluate(() => window.appApi.workflows.list())
+  if (Array.isArray(flows)) pass('工作流库可读')
+  else fail('工作流库读取失败')
+  const invalidFlow = await window.evaluate(() => window.appApi.workflows.start('missing-workflow'))
+  if (!invalidFlow.ok) pass('无效工作流启动被拒绝')
+  else fail('无效工作流不应启动')
 
   // 课程库契约：每门课程独立配置 + 默认值
   const library = await window.evaluate(() => window.appApi.courses.list())

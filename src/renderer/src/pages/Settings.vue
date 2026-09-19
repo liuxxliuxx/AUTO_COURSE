@@ -4,26 +4,24 @@ import { onBeforeRouteLeave } from 'vue-router'
 import { useSettingsStore } from '../stores/settings'
 import { useAccountStore } from '../stores/account'
 import { useCoursesStore } from '../stores/courses'
-import { useSchedulerStore } from '../stores/scheduler'
+import { ACCENT_COLORS, DEFAULT_ACCENT, accentHue } from '@shared/appearance'
 import CourseOptionsForm from '../components/CourseOptionsForm.vue'
-import type { CourseRunOptions, LoginMethod, SchedulerConfig } from '@shared/types'
-const settings = useSettingsStore(), account = useAccountStore(), courses = useCoursesStore(), scheduler = useSchedulerStore()
+import type { CourseRunOptions, LoginMethod } from '@shared/types'
+const settings = useSettingsStore(), account = useAccountStore(), courses = useCoursesStore()
 const uid = useId()
-type Section = 'account' | 'defaults' | 'transcription' | 'schedule' | 'appearance'
+type Section = 'account' | 'defaults' | 'transcription' | 'appearance'
 const sections: Array<{ id: Section; label: string; description: string }> = [
   { id: 'account', label: '账号与登录', description: '管理登录账号和认证方式' },
   { id: 'defaults', label: '课程默认配置', description: '仅用于之后添加的新课程' },
   { id: 'transcription', label: '转录', description: '设置转录文件的保存位置' },
-  { id: 'schedule', label: '自动调度', description: '在允许时段运行指定课程' },
   { id: 'appearance', label: '外观', description: '调整适合自己的界面大小' }
 ]
 const section = ref<Section>('account'), loading = ref(true), saving = ref(false), error = ref(''), success = ref('')
 const username = ref(''), password = ref('')
-const globalDraft = ref({ loginMethod: 'zhihuishu' as LoginMethod, loggedUrl: '', transcribeBaseDir: '', uiScale: 1 })
+const globalDraft = ref({ loginMethod: 'zhihuishu' as LoginMethod, loggedUrl: '', transcribeBaseDir: '', uiScale: 1, accentColor: DEFAULT_ACCENT })
 const defaults = ref<CourseRunOptions>({ ...courses.library.defaults })
-const schedule = ref<SchedulerConfig>({ enabled: false, courseId: null, startTime: '06:00', endTime: '23:00', allDay: false, dailyLimitMinutes: 0 })
 const baseline = ref('')
-function serialize(): string { return JSON.stringify({ username: username.value, password: password.value, global: globalDraft.value, defaults: defaults.value, schedule: schedule.value }) }
+function serialize(): string { return JSON.stringify({ username: username.value, password: password.value, global: globalDraft.value, defaults: defaults.value }) }
 const dirty = computed(() => !loading.value && serialize() !== baseline.value)
 function mayLeave(): boolean { return !dirty.value || window.confirm('有未保存的设置，确定放弃修改吗？') }
 onBeforeRouteLeave(() => mayLeave())
@@ -31,12 +29,11 @@ function beforeUnload(e: BeforeUnloadEvent): void { if (dirty.value) { e.prevent
 async function load(): Promise<void> {
   loading.value = true; error.value = ''
   try {
-    await Promise.all([settings.load(), account.load(), scheduler.load(), courses.load()])
+    await Promise.all([settings.load(), account.load(), courses.load()])
     if (!settings.settings) throw new Error(settings.error || '设置加载失败')
     const s = settings.settings
-    globalDraft.value = { loginMethod: s.loginMethod, loggedUrl: s.loggedUrl, transcribeBaseDir: s.transcribeBaseDir, uiScale: s.uiScale }
+    globalDraft.value = { loginMethod: s.loginMethod, loggedUrl: s.loggedUrl, transcribeBaseDir: s.transcribeBaseDir, uiScale: s.uiScale, accentColor: s.accentColor }
     username.value = account.username; password.value = ''; defaults.value = { ...courses.library.defaults }
-    if (scheduler.status) schedule.value = { ...scheduler.status.config }
     baseline.value = serialize()
   } catch(e) { error.value = String(e) }
   finally { loading.value = false }
@@ -61,8 +58,7 @@ async function save(): Promise<void> {
         break
       }
       case 'transcription': await settings.save({ transcribeBaseDir: globalDraft.value.transcribeBaseDir }); break
-      case 'appearance': await settings.save({ uiScale: globalDraft.value.uiScale }); break
-      case 'schedule': await scheduler.save({ ...schedule.value }); break
+      case 'appearance': await settings.save({ uiScale: globalDraft.value.uiScale, accentColor: globalDraft.value.accentColor }); break
     }
     baseline.value = serialize(); success.value = '设置已保存'
   } catch(e) { error.value = String(e).replace(/^Error: /, '') }
@@ -74,7 +70,7 @@ async function pickDirectory(): Promise<void> { try { const dir = await window.a
   <div class="page">
     <header class="page-header"><h1>设置</h1></header>
     <div class="settings-layout">
-      <nav class="settings-nav" aria-label="设置分类"><button v-for="item in sections" :key="item.id" :class="{ active: section === item.id }" :aria-current="section === item.id ? 'page' : undefined" @click="changeSection(item.id)">{{ item.label }}</button><RouterLink to="/courses" class="course-link">管理我的课程 ↗</RouterLink></nav>
+      <nav class="settings-nav" aria-label="设置分类"><button v-for="item in sections" :key="item.id" :class="{ active: section === item.id }" :aria-current="section === item.id ? 'page' : undefined" @click="changeSection(item.id)">{{ item.label }}</button><RouterLink to="/courses" class="course-link">管理我的课程</RouterLink></nav>
       <section class="settings-panel">
         <div v-if="loading" class="empty" role="status">正在加载设置…</div>
         <form v-else class="stack" @submit.prevent="save">
@@ -89,39 +85,46 @@ async function pickDirectory(): Promise<void> { try { const dir = await window.a
           </template>
           <template v-else-if="section === 'defaults'"><div class="notice">这些配置只会复制给新课程。已有课程请在课程详情中编辑。</div><CourseOptionsForm v-model="defaults" /><p class="muted small">图谱课不支持仅转录，添加图谱课时会改用“学习”。</p></template>
           <template v-else-if="section === 'transcription'"><div class="field"><label :for="`${uid}-dir`">输出目录</label><div class="directory-row"><input :id="`${uid}-dir`" v-model="globalDraft.transcribeBaseDir" placeholder="请选择文件夹" /><button type="button" @click="pickDirectory">选择文件夹</button></div><small>是否转录由每门课程的运行方式决定。</small></div><div class="notice">修改目录对下一次运行生效，不会移动已有文件。</div></template>
-          <template v-else-if="section === 'schedule'">
-            <div v-if="scheduler.status?.pausedReason" class="notice warning">自动调度已暂停：{{ scheduler.status.pausedReason }}。处理后保存设置即可恢复。</div>
-            <label class="check-row"><input v-model="schedule.enabled" type="checkbox" /> 启用自动调度</label>
-            <div class="field"><label :for="`${uid}-schedule-course`">调度课程</label><select :id="`${uid}-schedule-course`" v-model="schedule.courseId" :required="schedule.enabled"><option :value="null">选择一门课程</option><option v-for="course in courses.library.courses" :key="course.id" :value="course.id">{{ course.name }}</option></select><small>切换“本次课程”不会改变这里的调度目标。</small></div>
-            <label class="check-row"><input v-model="schedule.allDay" type="checkbox" /> 全天允许运行</label>
-            <div v-if="!schedule.allDay" class="options-grid"><div class="field"><label :for="`${uid}-start`">开始时间</label><input :id="`${uid}-start`" v-model="schedule.startTime" type="time" required /></div><div class="field"><label :for="`${uid}-end`">结束时间</label><input :id="`${uid}-end`" v-model="schedule.endTime" type="time" required /></div></div>
-            <div class="field"><label :for="`${uid}-daily`">每日目标（分钟）</label><input :id="`${uid}-daily`" v-model.number="schedule.dailyLimitMinutes" type="number" min="0" step="1" required /><small>0 表示不限；结束早于开始时按跨午夜计算。</small></div>
-            <p class="muted small">登录或执行失败后暂停自动重试。手动任务不会被调度时间段抢占。</p>
-          </template>
-          <template v-else><div class="field"><label :for="`${uid}-scale`">界面缩放</label><select :id="`${uid}-scale`" v-model.number="globalDraft.uiScale"><option :value=".9">90%</option><option :value="1">100%（默认）</option><option :value="1.1">110%</option><option :value="1.2">120%</option><option :value="1.3">130%</option></select></div><div class="theme-row"><span>主题</span><span>浅色</span></div></template>
-          <footer class="settings-footer"><span class="muted small">{{ dirty ? '有未保存的修改' : '修改后点击保存' }}</span><div class="actions"><button type="button" :disabled="saving || !dirty" @click="load">取消修改</button><button type="submit" class="primary" :disabled="saving || (!dirty && !(section === 'schedule' && scheduler.status?.pausedReason))">{{ saving ? '正在保存…' : section === 'schedule' && scheduler.status?.pausedReason ? '保存并恢复调度' : '保存设置' }}</button></div></footer>
+          <template v-else><div class="field"><label :for="`${uid}-scale`">界面缩放</label><select :id="`${uid}-scale`" v-model.number="globalDraft.uiScale"><option :value=".9">90%</option><option :value="1">100%（默认）</option><option :value="1.1">110%</option><option :value="1.2">120%</option><option :value="1.3">130%</option></select></div><fieldset class="accent-options" :disabled="saving"><legend>强调色</legend>
+            <div class="accent-swatches"><label v-for="color in ACCENT_COLORS" :key="color.id" class="accent-option" :class="{ selected: globalDraft.accentColor === color.id }" :style="{ '--swatch-hue': color.hue }">
+              <input v-model="globalDraft.accentColor" type="radio" :name="`${uid}-accent`" :value="color.id" /><span class="swatch" aria-hidden="true"></span><span>{{ color.label }}</span>
+            </label></div><p class="muted small">保存后应用到整个界面，重启后保留。</p>
+            <div class="accent-preview" :style="{ '--preview-hue': accentHue(globalDraft.accentColor) }" aria-label="强调色预览"><span class="preview-selection">选中项</span><span class="preview-action">主要操作</span><span class="preview-link">链接文字</span></div>
+          </fieldset><div class="theme-row"><span>主题</span><span>浅色</span></div></template>
+          <footer class="settings-footer"><span class="muted small">{{ dirty ? '有未保存的修改' : '修改后点击保存' }}</span><div class="actions"><button type="button" :disabled="saving || !dirty" @click="load">取消修改</button><button type="submit" class="primary" :disabled="saving || !dirty">{{ saving ? '正在保存…' : '保存设置' }}</button></div></footer>
         </form>
       </section>
     </div>
   </div>
 </template>
 <style scoped>
-.settings-layout { display: grid; grid-template-columns: 120px minmax(0,700px); gap: 12px; align-items: start; }
+.settings-layout { display: grid; grid-template-columns: 120px minmax(0,700px); gap: 20px; align-items: start; padding: 16px; }
 .settings-nav { display: grid; gap: 4px; }
 .settings-nav button { text-align: left; border: 0; background: transparent; color: var(--text-2); }
-.settings-nav button.active { background: var(--sky-dim); color: var(--sky); }
+.settings-nav button.active { background: var(--selection); color: var(--accent); font-weight: 650; box-shadow: inset 2px 0 var(--accent); }
 .course-link { padding: 8px; margin-top: 4px; border-top: 1px solid var(--line); }
-.settings-panel { min-width: 0; padding: 0 0 0 12px; border-left: 1px solid var(--line); }
-.settings-panel header { padding: 4px 0 8px; border-bottom: 1px solid var(--line); }
+.settings-panel { min-width: 0; padding: 0 0 0 20px; border-left: 1px solid var(--line); }
+.settings-panel header { padding: 4px 0 12px; border-bottom: 1px solid var(--line); }
 .settings-panel .notice { margin: 0; }
 .settings-panel :deep(.field) { display: grid; grid-template-columns: 100px minmax(0,1fr); align-items: start; gap: 4px 8px; }
-.settings-panel :deep(.field>label) { padding-top: 4px; }
+.settings-panel :deep(.field>label) { padding-top: 4px; font-weight: 400; color: var(--text-2); }
 .settings-panel :deep(.field>small) { grid-column: 2; }
 .settings-panel :deep(.options-grid) { grid-template-columns: 1fr; }
 .settings-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid var(--line); padding-top: 12px; flex-wrap: wrap; }
 .saved-password { font-size: var(--fs-micro); color: var(--jade); font-weight: 400; }
 .directory-row { display: flex; gap: 8px; min-width: 0; }
 .directory-row button { flex-shrink: 0; }
+.accent-options legend { padding: 0; margin-bottom: 8px; color: var(--text-2); }
+.accent-swatches { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.accent-option { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid var(--line); cursor: pointer; }
+.accent-option.selected { border-color: hsl(var(--swatch-hue) 52% 45%); background: hsl(var(--swatch-hue) 85% 95%); }
+.accent-option input[type=radio] { position: absolute; opacity: 0; width: 1px; height: 1px; min-height: 0; padding: 0; }
+.accent-option:has(:focus-visible) { outline: 2px solid var(--accent-focus); outline-offset: 2px; }
+.swatch { width: 12px; height: 12px; background: hsl(var(--swatch-hue) 68% 66%); }
+.accent-option.selected .swatch::after { content: '✓'; display: block; color: #182538; text-align: center; font-size: 10px; line-height: 12px; }
+.accent-preview { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 12px; padding: 12px; background: hsl(var(--preview-hue) 65% 98%); color: hsl(var(--preview-hue) 52% 37%); }
+.preview-selection { padding: 4px 8px; background: hsl(var(--preview-hue) 85% 95%); border-left: 2px solid currentColor; }
+.preview-action { padding: 4px 8px; background: hsl(var(--preview-hue) 82% 89%); border: 1px solid hsl(var(--preview-hue) 58% 76%); }
 .theme-row { display: grid; grid-template-columns: 100px 1fr; gap: 8px; }
 @container(max-width:600px) { .settings-layout { grid-template-columns: 1fr; } .settings-nav { display: flex; flex-wrap: wrap; gap: 4px; } .course-link { margin: 0; border: 0; padding: 4px 8px; } .settings-panel { border-left: 0; padding: 0; } .settings-panel :deep(.field) { grid-template-columns: 1fr; } .settings-panel :deep(.field>small) { grid-column: 1; } }
 </style>

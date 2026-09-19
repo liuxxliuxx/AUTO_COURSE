@@ -1,3 +1,8 @@
+import { WorkflowService } from '../workflows/workflow-service'
+import { WorkflowRunManager } from '../workflows/workflow-run-manager'
+import { WorkflowScheduler } from '../workflows/workflow-scheduler'
+import { RunRepository } from '../workflows/run-repository'
+import { CourseTaskExecutor } from '../workflows/course-task-executor'
 /**
  * Service 容器 —— 主进程唯一的依赖装配点。
  *
@@ -16,7 +21,6 @@ import { EventBus } from './event-bus'
 import { SettingsService } from './settings-service'
 import { CourseService } from './course-service'
 import { BotService, type RunnerFactory } from './bot-service'
-import { SchedulerService } from './scheduler-service'
 import { Database } from '../storage/database'
 import { CredentialStore } from '../storage/credentials'
 import { maybeImportLegacy } from '../storage/migrations/v1-import'
@@ -64,11 +68,10 @@ export class ServiceContainer {
   readonly db: Database
   readonly credentials: CredentialStore
   readonly settings: SettingsService
-  readonly browser: BrowserService
-  readonly transcription: TranscriptionService
   readonly courses: CourseService
-  readonly bot: BotService
-  readonly scheduler: SchedulerService
+  readonly workflows: WorkflowService
+  readonly workflowRuns: WorkflowRunManager
+  readonly workflowScheduler: WorkflowScheduler
   readonly migration: MigrationReport
 
   private mainWindow: BrowserWindow | null = null
@@ -95,49 +98,45 @@ export class ServiceContainer {
 
     this.credentials = new CredentialStore(this.paths.credentialsFile)
     this.settings = new SettingsService(this.db)
-    this.courses = new CourseService(this.db, this.settings, () => this.bot?.isRunning() ? this.bot.getStatus().courseId ?? null : null)
-    this.browser = new BrowserService({
-      downloadDir: this.paths.downloadDir,
-      profileDir: this.paths.browserProfileDir
-    })
-    this.transcription = new TranscriptionService({
-      bus: this.bus,
-      getSettings: () => this.settings.getAll(),
-      worker: { pythonPath: findPython(), scriptPath: resolveWorkerScript() }
-    })
+    this.courses = new CourseService(this.db, this.settings, () => this.workflowRuns?.occupiedCourses() ?? [])
+    this.workflows = new WorkflowService(this.db, this.courses, id => this.workflowRuns?.isActive(id) ?? false)
+    this.workflows.migrateLegacy()
+    this.workflowRuns = new WorkflowRunManager(this.workflows,this.courses,this.settings,()=>this.credentials.get(),new RunRepository(this.db),(run,report)=> {
+      const bus = new EventBus()
+      const browser = new BrowserService({downloadDir:join(userData,'workflow-downloads',run.id),profileDir:join(userData,'workflow-profiles',run.workflowId),migrateLegacyProfile:false})
+      let media = new TranscriptionService({bus,tempNamespace:run.id,getSettings:()=>run.snapshot.settings,worker:{pythonPath:findPython(),scriptPath:resolveWorkerScript()}})
+      bus.on('event:bot-status', status=>report(status))
+      bus.on('event:transcription-status', status=>report(undefined,status))
+      bus.on('event:progress', progress=> {
+        const status=bot.getStatus();report({...status,watchedSeconds:progress.sessionSeconds})
+      })
+      const bot = new BotService(this.db,this.credentials,this.settings,bus,browser,(mode,ctx)=>{
+        if(!this.runnerFactory)throw new Error('执行器尚未注册')
+        return this.runnerFactory(mode,ctx)
+      },async(settings,only,courseId)=>{
+        const enabled=await media.configure(settings,only,this.courses.transcriptFolderName(courseId))
+        if((settings.transcribeEnabled||only)&&!enabled)throw new Error(media.getStatus().message)
+        return enabled?media:null
+      },this.courses)
+      return {
+        task:new CourseTaskExecutor(bot,this.courses),
+        openWindow:async()=>{await browser.ensureSession();await browser.focusCourseWindow()},
+        cleanupStep:async()=>{
+          await media.dispose()
+          await browser.close()
+          media=new TranscriptionService({bus,tempNamespace:run.id,getSettings:()=>run.snapshot.settings,worker:{pythonPath:findPython(),scriptPath:resolveWorkerScript()}})
+        },
+        dispose:async()=>{try{await bot.dispose();await media.dispose()}finally{await browser.close();browser.dispose();bus.clear()}}
+      }
+    },run=>this.bus.emit('event:workflow-run',run))
+    this.workflowScheduler = new WorkflowScheduler(this.db,this.workflows,this.workflowRuns)
 
-    this.bot = new BotService(
-      this.db,
-      this.credentials,
-      this.settings,
-      this.bus,
-      this.browser,
-      (mode, ctx) => {
-        if (!this.runnerFactory) {
-          throw new Error(`未注册 ${mode} 模式的 Runner`)
-        }
-        return this.runnerFactory(mode, ctx)
-      },
-      // 不启用转录时返回 null —— Python worker 根本不会被启动
-      async (settings, transcribeOnly, courseId) => {
-        const usable = await this.transcription.configure(settings, transcribeOnly, this.courses.transcriptFolderName(courseId))
-        if ((settings.transcribeEnabled || transcribeOnly) && !usable) throw new Error(this.transcription.getStatus().message)
-        return usable ? this.transcription : null
-      },
-      this.courses
-    )
 
-    this.scheduler = new SchedulerService(this.settings, this.db, this.bus, {
-      isRunning: () => this.bot.isRunning(),
-      isScheduledRun: () => this.bot.getStatus().snapshot?.source === 'schedule',
-      startForSchedule: (courseId) => this.bot.startForSchedule(courseId),
-      stopForSchedule: (reason) => this.bot.stopForSchedule(reason)
-    })
   }
 
   /**
    * 注册 Runner 工厂。
-   * 传统课程与图谱课程各自实现 CourseRunner，BotService 按 TaskMode 取用。
+   * 传统课程、图谱课程和掌握度课程各自实现 CourseRunner，BotService 按 TaskMode 取用。
    */
   setRunnerFactory(factory: RunnerFactory): void {
     this.runnerFactory = factory
@@ -151,14 +150,15 @@ export class ServiceContainer {
     }
 
     // 主进程日志 → EventBus，再由事件转发器送到 Renderer
-    this.removeLogSink = addLogSink((level, message) => {
+    this.removeLogSink = addLogSink((level, message, context) => {
+      if(context) this.workflowRuns.repository.event({...context,time:Date.now(),level,message})
       const entry: LogEntry = { time: Date.now(), level, message }
       this.recentLogs.push(entry)
       if (this.recentLogs.length > 500) this.recentLogs = this.recentLogs.slice(-500)
       this.bus.emit('event:log', entry)
     })
 
-    this.scheduler.start()
+    this.workflowScheduler.start()
   }
 
   /** 主窗口创建/重建后调用：挂上事件转发并回灌历史日志 */
@@ -174,9 +174,7 @@ export class ServiceContainer {
     }
 
     // 回灌当前状态，避免新窗口空着
-    this.send(IPC_EVENT.botStatus, this.bot.getStatus())
     this.send(IPC_EVENT.progress, this.progressSnapshot())
-    this.send(IPC_EVENT.schedulerStatus, this.scheduler.getStatus())
     this.applyUiScale()
   }
 
@@ -211,7 +209,7 @@ export class ServiceContainer {
     const settings = this.settings.getAll()
     return {
       today: { date, watchedSeconds: this.db.getDailyProgress(date) },
-      sessionSeconds: this.bot.getStatus().watchedSeconds,
+      sessionSeconds: this.workflowRuns.repository.list().filter(r=>r.state==='running'||r.state==='stopping').reduce((sum,r)=>sum+r.steps.reduce((n,s)=>n+(s.status?.watchedSeconds??0),0),0),
       targetMinutes: settings.autoMode ? settings.autoLimitMinutes : settings.timeLimitMinutes
     }
   }
@@ -219,7 +217,6 @@ export class ServiceContainer {
   /** 触发一次状态广播（设置变更后调用） */
   broadcastSettings(): void {
     this.send(IPC_EVENT.settingsChanged, this.settings.getAll())
-    this.send(IPC_EVENT.schedulerStatus, this.scheduler.getStatus())
     this.send(IPC_EVENT.progress, this.progressSnapshot())
     this.applyUiScale()
   }
@@ -240,11 +237,8 @@ export class ServiceContainer {
     if (this.disposed) return
     this.disposed = true
 
-    this.scheduler.stop()
-    await this.bot.dispose().catch((error) => logger.exception('停止 Bot 失败', error))
-    await this.transcription.dispose().catch((error) => logger.exception('关闭转录服务失败', error))
-    await this.browser.close().catch((error) => logger.exception('关闭浏览器失败', error))
-    this.browser.dispose()
+    this.workflowScheduler.stop()
+    await this.workflowRuns.dispose()
 
     this.removeLogSink?.()
     this.removeLogSink = null

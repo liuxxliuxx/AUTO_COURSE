@@ -36,6 +36,20 @@ function addStep(): void { const course = courses.library.courses.find(c => c.id
 function move(index: number, offset: number): void { const steps = draft.value!.steps; const [s] = steps.splice(index, 1); steps.splice(index + offset, 0, s) }
 async function save(): Promise<void> { if (!draft.value) return; busy.value = true; error.value = ''; try { const input = JSON.parse(JSON.stringify(draft.value)); const saved = version.value ? await window.appApi.workflows.update(selected.value, version.value, input) : await window.appApi.workflows.create(input); draft.value = null; selected.value = saved.id; await store.load(); message.value = '工作流已保存' } catch (e) { error.value = String(e) } finally { busy.value = false } }
 async function start(): Promise<void> { if (!flow.value) return; busy.value = true; error.value = ''; try { const id = await store.start(flow.value.id); await router.push({ path: '/run', query: { id } }) } catch (e) { error.value = String(e) } finally { busy.value = false } }
+async function toggleSchedule(): Promise<void> {
+  const current = flow.value
+  if (!current?.schedule || busy.value) return
+  busy.value = true; error.value = ''; message.value = ''
+  const enabled = !current.schedule.enabled
+  try {
+    await window.appApi.workflows.update(current.id, current.version, JSON.parse(JSON.stringify({
+      name: current.name, steps: current.steps, schedule: { ...current.schedule, enabled }
+    })))
+    await store.load()
+    message.value = enabled ? '定时已启用' : '定时已停用；当前运行不受影响，仍可手动运行'
+  } catch (e) { error.value = String(e) }
+  finally { busy.value = false }
+}
 async function remove(): Promise<void> { if (!flow.value || !window.confirm('删除此工作流及其定时规则？运行历史和课程将保留。')) return; try { await window.appApi.workflows.remove(flow.value.id); await store.load(); selected.value = store.flows[0]?.id ?? '' } catch (e) { error.value = String(e) } }
 const courseName = (id: string): string => courses.library.courses.find(c => c.id === id)?.name ?? '课程已不可用'
 const scheduleLabel = (s: WorkflowSchedule | null): string => !s ? '仅手动运行' : `${s.enabled ? '已启用' : '已停用'} · ${s.kind === 'daily' ? '每日 ' + s.time : new Date(s.time).toLocaleString()} · ${s.timeZone}`
@@ -55,7 +69,7 @@ const scheduleLabel = (s: WorkflowSchedule | null): string => !s ? '仅手动运
 <template v-if="scheduleKind!=='none'"><label class="check-row"><input v-model="scheduleEnabled" type="checkbox" @change="syncSchedule"/>启用定时</label><label for="schedule-time">{{scheduleKind==='daily'?'每日开始时间':'运行日期时间'}}</label><input v-if="scheduleKind==='daily'" id="schedule-time" v-model="scheduleTime" type="time" required @change="syncSchedule"/><input v-else id="schedule-time" v-model="onceTime" type="datetime-local" required @change="syncSchedule"/><small>时区：{{draft.schedule?.timeZone??zone}}。错过后补跑最近一次；课程冲突则拒绝本次启动。</small></template>
 <div class="actions"><button type="submit" class="primary" :disabled="busy">保存工作流</button><button type="button" :disabled="busy" @click="mayLeave()&&(draft=null)">取消</button></div>
 </form>
-<section v-else-if="flow" class="panel stack"><h2>{{flow.name}}</h2><div v-if="flow.notice" class="notice warning">{{flow.notice}}</div><p>{{scheduleLabel(flow.schedule)}}</p><p v-if="flow.schedule?.nextAt">下次运行：{{new Date(flow.schedule.nextAt).toLocaleString()}}</p><ol class="stack"><li v-for="step in flow.steps" :key="step.id">{{courseName(step.courseId)}} · {{ {learn:'学习','learn-transcribe':'学习并转录',transcribe:'仅转录'}[step.options.action] }} · {{step.options.timeLimitMinutes?step.options.timeLimitMinutes+' 分钟':'不限时长'}}</li></ol><div class="actions"><button class="primary" :disabled="busy||store.running.some(r=>r.workflowId===flow!.id)" @click="start">立即运行</button><button @click="edit(flow)">编辑</button><button :disabled="store.running.some(r=>r.workflowId===flow!.id)" @click="remove">删除</button></div><small>修改工作流只影响下一次运行。</small></section>
+<section v-else-if="flow" class="panel stack"><h2>{{flow.name}}</h2><div v-if="flow.notice" class="notice warning">{{flow.notice}}</div><p>{{scheduleLabel(flow.schedule)}}</p><p v-if="flow.schedule?.nextAt">下次运行：{{new Date(flow.schedule.nextAt).toLocaleString()}}</p><ol class="stack"><li v-for="step in flow.steps" :key="step.id">{{courseName(step.courseId)}} · {{ {learn:'学习','learn-transcribe':'学习并转录',transcribe:'仅转录'}[step.options.action] }} · {{step.options.timeLimitMinutes?step.options.timeLimitMinutes+' 分钟':'不限时长'}}</li></ol><div class="actions"><button class="primary" :disabled="busy||store.running.some(r=>r.workflowId===flow!.id)" @click="start">立即运行</button><button v-if="flow.schedule" :disabled="busy" @click="toggleSchedule">{{flow.schedule.enabled?'停用定时':'启用定时'}}</button><button :disabled="busy" @click="edit(flow)">编辑</button><button :disabled="store.running.some(r=>r.workflowId===flow!.id)" @click="remove">删除</button></div><small>修改工作流只影响下一次运行。</small></section>
 <section v-else class="panel empty"><h2>把课程组合成工作流</h2><p>每个工作流顺序执行，不同工作流可并行。</p><button @click="create">创建第一个工作流</button></section>
 </div></div>
 </template>

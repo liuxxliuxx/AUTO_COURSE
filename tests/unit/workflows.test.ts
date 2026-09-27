@@ -37,6 +37,22 @@ function harness(work: (ctx: RunnerContext) => Promise<RunOutcome> = async () =>
   return { db, settings, courses, flows, repo, manager, add, input, done, cleanup, contexts, opened }
 }
 describe('workflow persistence and lifecycle', () => {
+  it('disabled schedules persist and never fire, including overdue one-time schedules', () => {
+    const h = harness(), a = h.add('A')
+    const now = Date.now()
+    for (const kind of ['daily', 'once'] as const) {
+      const flow = h.flows.create({ ...h.input([a]), schedule: { kind, enabled: true, timeZone: 'Asia/Shanghai', time: kind === 'daily' ? '09:00' : new Date(now + 60000).toISOString(), nextAt: null } })
+      h.flows.setSchedule(flow.id, { ...flow.schedule!, time: kind === 'once' ? new Date(now - 60000).toISOString() : '09:00', nextAt: new Date(now - 60000).toISOString() })
+      const current = h.flows.get(flow.id)!
+      h.flows.update(flow.id, current.version, { ...current, schedule: { ...current.schedule!, enabled: false } })
+      const reloaded = new WorkflowService(h.db, h.courses, () => false).get(flow.id)!
+      expect(reloaded.schedule).toMatchObject({ enabled: false, nextAt: null })
+      expect(reloaded.steps).toEqual(flow.steps)
+    }
+    new WorkflowScheduler(h.db, h.flows, h.manager).tick(now + 86400000)
+    expect(h.repo.list()).toHaveLength(0)
+    expect(h.db.raw().prepare('SELECT * FROM workflow_schedule_firings').all()).toHaveLength(0)
+  })
   it('persists ordered independent options, rejects stale edits and deletion of referenced courses', () => {
     const h = harness(), a = h.add('A'), b = h.add('B'), input = h.input([a, b]); input.steps[0].options.timeLimitMinutes = 3
     const flow = h.flows.create(input); input.steps[0].options.timeLimitMinutes = 99

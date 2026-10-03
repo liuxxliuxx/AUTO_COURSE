@@ -15,18 +15,22 @@ import type { CourseInput, CourseRunOptions, BotStatus, SchedulerConfig, Setting
 let browser: Browser, server: FixtureServer, context: BrowserContext, page: Page, db: Database
 let courses: CourseService, settings: SettingsService, starts: number, failSave: boolean, state: BotStatus
 let pageErrors: string[]
+let perRunLogs: Record<string, LogEntry[]> | null
+let delayedLogs: Record<string, number>
 let fixtureLogs: LogEntry[]
 let workflows: WorkflowService
 let runFixtures: WorkflowRun[] | null
 let lastFlowId: string
 let cancelExport: boolean
+let failFlowListOnce: boolean
 const shots = '/private/tmp/auto-course-ui'
 beforeAll(async () => { server = await startFixtureServer(resolve('out/renderer')); browser = await chromium.launch({ headless: true }); mkdirSync(shots, { recursive: true }) })
 afterAll(async () => { await browser?.close(); await server?.close() })
 beforeEach(async () => {
   db = new Database(':memory:'); settings = new SettingsService(db)
-  starts = 0; failSave = false; fixtureLogs = []; runFixtures = null
+  starts = 0; failSave = false; fixtureLogs = []; perRunLogs = null; delayedLogs = {}; runFixtures = null
   cancelExport = false
+  failFlowListOnce = false
   state = { state: 'idle', mode: null, currentTitle: null, completedCount: 0, watchedSeconds: 0, stoppedReason: null, message: '准备好后开始一门课程', tone: 'neutral' }
   courses = new CourseService(db, settings, () => state.state !== 'idle' ? state.courseId ?? null : null)
   workflows = new WorkflowService(db,courses,()=>state.state!=='idle'); lastFlowId=''
@@ -36,12 +40,12 @@ beforeEach(async () => {
   await page.exposeFunction('_invoke', async (name: string, args: unknown[]) => {
     let result: unknown
     switch (name) {
-      case 'workflows.list': return workflows.list()
+      case 'workflows.list': if (failFlowListOnce) { failFlowListOnce = false; throw Error('fixture 列表刷新失败') }; return workflows.list()
       case 'workflows.get': return workflows.get(args[0] as string)
       case 'workflows.create': if(failSave)throw Error('fixture 保存失败');return workflows.create(args[0] as WorkflowInput)
       case 'workflows.update': if(failSave)throw Error('fixture 保存失败');return workflows.update(args[0] as string,args[1] as number,args[2] as WorkflowInput)
       case 'workflows.remove': return workflows.remove(args[0] as string)
-      case 'workflows.logs': return fixtureLogs.map(l=>({...l,workflowId:lastFlowId,runId:'fixture-run',stepId:'fixture-step'}))
+      case 'workflows.logs': {const id=args[0] as string; const data=perRunLogs?.[id]??fixtureLogs;if(delayedLogs[id])await new Promise(resolve=>setTimeout(resolve,delayedLogs[id]));return data.map(l=>({...l,workflowId:lastFlowId,runId:id,stepId:'fixture-step'}))}
       case 'workflows.confirm': return
       case 'workflows.stop': state={...state,state:'idle',stoppedReason:'user'};return
       case 'workflows.runs': {
@@ -109,6 +113,7 @@ async function add(name: string, key: string, action = 'learn'): Promise<void> {
   await form.getByLabel('运行方式', { exact: true }).selectOption(action)
   await form.getByRole('button', { name: '保存课程', exact: true }).click()
   await form.waitFor({ state: 'hidden' })
+  await page.waitForFunction(() => document.activeElement?.matches('.page-header button'))
 }
 describe('课程与运行界面', () => {
   it('只有掌握度课程显示导出，空题库/写入失败提示，取消不报成功，成功按课程导出', async () => {
@@ -140,7 +145,7 @@ describe('课程与运行界面', () => {
     expect(starts).toBe(0)
     await page.getByRole('button', { name: /艺术与审美 传统课/ }).click()
     expect(await page.getByRole('region', { name: '课程详情' }).getByText('学习并转录', { exact: true }).isVisible()).toBe(true)
-    await page.getByRole('button', { name: '设为本次课程', exact: true }).click()
+    await page.getByRole('button', { name: '设为默认课程', exact: true }).click()
     await page.reload(); await page.getByRole('heading', { name: '艺术与审美', exact: true }).waitFor()
     expect(courses.list().courses).toHaveLength(2)
     await page.screenshot({ path: `${shots}/courses.png`, fullPage: true })
@@ -173,6 +178,9 @@ describe('课程与运行界面', () => {
     await form.getByLabel('课程名称', { exact: true }).fill('输入应保留')
     failSave = true; await form.getByRole('button', { name: '保存课程', exact: true }).click()
     await form.getByRole('alert').waitFor(); expect(await form.getByLabel('课程名称', { exact: true }).inputValue()).toBe('输入应保留')
+    await page.waitForFunction(() => !!document.querySelector('[role=dialog]')?.contains(document.activeElement))
+    await page.keyboard.press('Tab')
+    expect(await form.evaluate(el=>el.contains(document.activeElement))).toBe(true)
     await page.screenshot({ path: `${shots}/save-error.png`, fullPage: true })
     failSave = false; await form.getByRole('button', { name: '保存课程', exact: true }).click(); await form.waitFor({ state: 'hidden' })
   })
@@ -220,7 +228,7 @@ describe('紧凑工作区布局', () => {
     }).length)
     expect(visibleRows).toBeGreaterThanOrEqual(10)
     await page.getByRole('button', { name: /长课程名称/ }).click()
-    await page.getByRole('button', { name: '设为本次课程', exact: true }).click()
+    await page.getByRole('button', { name: '设为默认课程', exact: true }).click()
     for (const size of [{ width: 1180, height: 780 }, { width: 960, height: 640 }, { width: 740, height: 570 }]) {
       for (const scale of [1, 1.3]) {
         // Electron zoom reduces CSS viewport dimensions; emulate that effective viewport in Chromium.
@@ -282,12 +290,14 @@ describe('紧凑界面操作与提示', () => {
       expect(await confirm.evaluate(el => { const r = el.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight })).toBe(true)
       await page.screenshot({ path: `${shots}/${kind}.png` })
     }
-    state = { ...state, state: 'stopping', phase: 'stopping', intervention: null }
+    state = { ...state, state: 'stopping', phase: 'stopping' }
     await page.reload()
     const stop = page.getByRole('button', { name: '停止工作流', exact: true })
     await stop.waitFor()
     expect(await stop.isDisabled()).toBe(true)
-    state = { ...state, state: 'idle', phase: 'finished', error: { stage: 'executing', code: 'execution', message: '测试执行失败' } }
+    expect(await page.getByRole('button',{name:'已完成，继续',exact:true}).isDisabled()).toBe(true)
+    expect(await page.locator('.attention').count()).toBe(0)
+    state = { ...state, state: 'idle', phase: 'finished', intervention:null, error: { stage: 'executing', code: 'execution', message: '测试执行失败' } }
     await page.reload()
     await page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '运行', exact: true }).click()
     await page.getByRole('button', { name: '重新运行', exact: true }).click()
@@ -339,10 +349,12 @@ describe('工作流编辑与持久化',()=>{
     await page.getByRole('button',{name:'创建工作流',exact:true}).click()
     await page.getByLabel('工作流名称',{exact:true}).fill('每日两门课')
     const a=courses.list().courses.find(c=>c.name==='课程 A')!,b=courses.list().courses.find(c=>c.name==='课程 B')!
-    for(const c of [a,b]){await page.getByLabel('选择步骤课程').selectOption(c.id);await page.getByRole('button',{name:'添加步骤',exact:true}).click()}
-    await page.locator('.step').first().getByLabel('单次时长',{exact:true}).selectOption('limited')
-    await page.locator('.step').first().getByLabel('分钟数',{exact:true}).fill('7')
+    for(const c of [a,b]) await page.getByRole('button',{name:`添加 ${c.name}`,exact:true}).click()
+    await page.locator('.step-select').first().click()
+    await page.getByRole('region',{name:'步骤配置'}).getByLabel('单次时长',{exact:true}).selectOption('limited')
+    await page.getByRole('region',{name:'步骤配置'}).getByLabel('分钟数',{exact:true}).fill('7')
     await page.getByRole('button',{name:'上移步骤 2',exact:true}).click()
+    await page.getByRole('button',{name:'仅手动',exact:true}).click()
     await page.getByLabel('触发方式',{exact:true}).selectOption('daily')
     await page.getByLabel('每日开始时间',{exact:true}).fill('15:35')
     failSave=true;await page.getByRole('button',{name:'保存工作流',exact:true}).click();await page.getByRole('alert').waitFor()
@@ -398,5 +410,452 @@ describe('运行记录显示', () => {
     await page.setViewportSize({ width: 569, height: 438 })
     expect(await page.locator('.runs-layout').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
     await page.screenshot({ path: `${shots}/run-display-fixed.png` })
+  })
+})
+
+describe('工作流工作台', () => {
+  it('重复课程的配置按 ID 保留，移除后选择相邻步骤，恢复配置与定时即时保存', async () => {
+    await add('独立配置课程', 'editor-repeat')
+    await page.getByRole('navigation',{name:'主导航'}).getByRole('link',{name:'工作流',exact:true}).click()
+    await page.getByRole('button',{name:'创建工作流',exact:true}).click()
+    expect(await page.getByRole('dialog').count()).toBe(0)
+    for(let i=0;i<3;i++)await page.getByRole('button',{name:'添加 独立配置课程',exact:true}).click()
+    await page.getByLabel('单次时长',{exact:true}).selectOption('limited')
+    await page.getByLabel('分钟数',{exact:true}).fill('9')
+    await page.getByRole('button',{name:'上移步骤 3',exact:true}).focus()
+    await page.keyboard.press('Enter')
+    expect(await page.getByLabel('分钟数',{exact:true}).inputValue()).toBe('9')
+    await page.locator('.editor-step').nth(1).dragTo(page.locator('.editor-step').first())
+    expect(await page.locator('.step-select').first().getAttribute('aria-pressed')).toBe('true')
+    expect(await page.getByLabel('分钟数',{exact:true}).inputValue()).toBe('9')
+    await page.locator('.editor-step').first().dragTo(page.locator('.editor-step').nth(1))
+    await page.locator('.step-select').first().click()
+    expect(await page.getByLabel('单次时长',{exact:true}).inputValue()).toBe('unlimited')
+    await page.getByLabel('单次时长',{exact:true}).selectOption('limited')
+    await page.getByLabel('分钟数',{exact:true}).fill('4')
+    await page.getByRole('button',{name:'恢复课程配置',exact:true}).click()
+    expect(await page.getByLabel('单次时长',{exact:true}).inputValue()).toBe('unlimited')
+    await page.locator('.step-select').nth(1).click()
+    await page.getByRole('button',{name:'移除步骤 2',exact:true}).click()
+    expect(await page.locator('.step-select').nth(1).getAttribute('aria-pressed')).toBe('true')
+    await page.getByRole('button',{name:'仅手动',exact:true}).click()
+    await page.getByLabel('触发方式',{exact:true}).selectOption('daily')
+    await page.getByLabel('每日开始时间',{exact:true}).fill('16:42')
+    // Submit without blur: schedule must already be in the draft.
+    await page.getByRole('button',{name:'保存工作流',exact:true}).evaluate((el:HTMLButtonElement)=>el.click())
+    await page.getByRole('button',{name:'立即运行',exact:true}).waitFor()
+    const flow=workflows.list()[0]
+    expect(new Set(flow.steps.map(s=>s.id)).size).toBe(2)
+    expect(flow.steps.map(s=>s.options.timeLimitMinutes)).toEqual([0,0])
+    expect(flow.schedule?.time).toBe('16:42')
+    expect(starts).toBe(0)
+    await page.getByRole('button',{name:'创建工作流',exact:true}).click()
+    await page.getByRole('button',{name:'返回',exact:true}).click()
+    await page.getByRole('heading',{name:flow.name,exact:true}).waitFor()
+  })
+
+  it('十步编辑器在各窗口及缩放下保存区可达，配置错误定位，版本冲突保留草稿', async () => {
+    for(let i=0;i<20;i++)courses.create({name:`工作台课程 ${i}`,url:`https://studyvideoh5.zhihuishu.com/stuStudy?recruitAndCourseId=editor-${i}`,options:courses.list().defaults})
+    await page.reload()
+    await page.getByRole('navigation',{name:'主导航'}).getByRole('link',{name:'工作流',exact:true}).click()
+    await page.getByRole('button',{name:'创建工作流',exact:true}).click()
+    for(let i=0;i<10;i++)await page.getByRole('button',{name:`添加 工作台课程 ${i}`,exact:true}).click()
+    await page.getByLabel('单次时长',{exact:true}).selectOption('limited')
+    await page.getByLabel('分钟数',{exact:true}).fill('8')
+    for(const size of [{width:1180,height:780},{width:960,height:640},{width:740,height:570}])for(const scale of [1,1.3]){
+      await page.setViewportSize({width:Math.floor(size.width/scale),height:Math.floor(size.height/scale)})
+      const save=page.getByRole('button',{name:'保存工作流',exact:true})
+      expect(await save.evaluate(el=>{const r=el.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight})).toBe(true)
+      expect(await page.locator('.workflow-editor').evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true)
+      await page.waitForFunction(()=>{const row=document.querySelector('.editor-step.selected')?.getBoundingClientRect();const list=document.querySelector('.step-rows')?.getBoundingClientRect();return !!row&&!!list&&row.top>=list.top-1&&row.bottom<=list.bottom+1})
+      if(await page.getByRole('tab',{name:'配置',exact:true}).isVisible())await page.getByRole('tab',{name:'配置',exact:true}).click()
+      expect(await page.getByLabel('分钟数',{exact:true}).inputValue()).toBe('8')
+      await page.screenshot({path:`${shots}/editor-${size.width}-${size.height}-${scale}.png`})
+      if(await page.getByRole('tab',{name:'步骤',exact:true}).isVisible())await page.getByRole('tab',{name:'步骤',exact:true}).click()
+    }
+    await page.getByRole('button',{name:'添加课程',exact:true}).click()
+    await page.getByRole('button',{name:'添加 工作台课程 5',exact:true}).click()
+    expect(await page.locator('.editor-step').count()).toBe(11)
+    await page.getByRole('button',{name:'移除步骤 11',exact:true}).click()
+    await page.getByRole('button',{name:'保存工作流',exact:true}).click()
+    await page.getByRole('button',{name:'立即运行',exact:true}).waitFor()
+    const flow=workflows.list()[0]
+    expect(flow.steps).toHaveLength(10)
+    await page.getByRole('button',{name:'编辑',exact:true}).click()
+    await page.getByLabel('工作流名称',{exact:true}).fill('冲突后保留的名称')
+    workflows.update(flow.id,flow.version,{name:'其他窗口已修改',steps:flow.steps,schedule:flow.schedule})
+    await page.getByRole('button',{name:'保存工作流',exact:true}).click()
+    await page.getByRole('alert').filter({hasText:'工作流已被修改'}).waitFor()
+    expect(await page.getByLabel('工作流名称',{exact:true}).inputValue()).toBe('冲突后保留的名称')
+    expect(await page.locator('.editor-step').count()).toBe(10)
+    page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'取消',exact:true}).click()
+    await page.locator('.flow-detail h2').filter({hasText:'其他窗口已修改'}).waitFor()
+    expect(await page.getByRole('alert').count()).toBe(0)
+    // A stored invalid option that is hidden by the form must still be located on save.
+    const latest=workflows.list()[0]
+    db.raw().prepare('UPDATE workflow_steps SET options=? WHERE workflow_id=? AND id=?').run(JSON.stringify({...latest.steps[0].options,timeLimitMinutes:-2}),latest.id,latest.steps[0].id)
+    await page.reload()
+    await page.getByRole('button',{name:'编辑',exact:true}).click()
+    await page.getByRole('button',{name:'保存工作流',exact:true}).click()
+    await page.getByRole('alert').filter({hasText:'时长必须为非负整数分钟'}).waitFor()
+    expect(await page.getByRole('region',{name:'步骤配置'}).isVisible()).toBe(true)
+    expect(await page.getByLabel('分钟数',{exact:true}).evaluate(el=>el===document.activeElement)).toBe(true)
+    await page.getByRole('button',{name:'恢复课程配置',exact:true}).click()
+    await page.getByRole('button',{name:'保存工作流',exact:true}).click()
+    await page.getByRole('button',{name:'立即运行',exact:true}).waitFor()
+    for(const size of [{width:1180,height:780},{width:960,height:640},{width:740,height:570}])for(const scale of [1,1.3]){
+      await page.setViewportSize({width:Math.floor(size.width/scale),height:Math.floor(size.height/scale)})
+      expect(await page.locator('.page').evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true)
+      await page.screenshot({path:`${shots}/workflows-${size.width}-${size.height}-${scale}.png`})
+    }
+  })
+})
+
+describe('运行详情隔离与滚动',()=>{
+  it('过滤、快照及切换记录后的日志隔离，刷新不重置滚动位置',async()=>{
+    await add('原始课程','log-snapshot')
+    const course=courses.list().courses[0]
+    const flow=workflows.create({name:'快照工作流',steps:[{id:'step-log',courseId:course.id,options:course.options}],schedule:null})
+    const makeRun=(id:string,state:WorkflowRun['state']):WorkflowRun=>({id,workflowId:flow.id,source:'manual',state,startedAt:'2026-10-01T00:00:00Z',finishedAt:null,message:'',snapshot:{workflow:flow,steps:flow.steps.map(s=>({...s,course})),settings:settings.getAll()},steps:[{stepId:'step-log',state:'running',status:null,transcription:null,error:null,startedAt:null,finishedAt:null}]})
+    runFixtures=[makeRun('alpha','running'),makeRun('beta','failed')]
+    perRunLogs={alpha:Array.from({length:200},(_,i)=>({time:Date.now(),level:'info',message:`alpha 日志 ${i}`})),beta:[{time:Date.now(),level:'error',message:'beta 独立日志'}]}
+    await page.getByRole('navigation',{name:'主导航'}).getByRole('link',{name:'运行',exact:true}).click()
+    const pre=page.locator('.logs pre')
+    await pre.getByText('alpha 日志 0',{exact:false}).waitFor()
+    await pre.evaluate(el=>{el.scrollTop=100})
+    perRunLogs.alpha.push({time:Date.now(),level:'info',message:'alpha 更新日志'})
+    await page.waitForFunction(()=>document.querySelector('.logs pre')?.textContent?.includes('alpha 更新日志'))
+    expect(await pre.evaluate(el=>el.scrollTop)).toBe(100)
+    expect(await page.locator('.logs').getAttribute('open')).not.toBeNull()
+    await page.getByRole('group',{name:'运行记录筛选'}).getByRole('button',{name:'异常',exact:true}).click()
+    await page.locator('.tool-row').click()
+    await pre.getByText('beta 独立日志',{exact:false}).waitFor()
+    expect(await pre.innerText()).not.toContain('alpha')
+    await context.grantPermissions(['clipboard-read','clipboard-write'])
+    await page.getByLabel('日志级别',{exact:true}).selectOption('error')
+    await page.getByRole('button',{name:'复制日志',exact:true}).click()
+    await page.getByRole('status').filter({hasText:'日志已复制'}).waitFor()
+    const clipboard = await page.evaluate(() => navigator.clipboard.readText())
+    expect(clipboard).toContain('[error] beta 独立日志')
+    expect(clipboard).not.toContain('alpha')
+    await page.getByLabel('日志级别',{exact:true}).selectOption('')
+    workflows.update(flow.id,flow.version,{name:'新名称',steps:flow.steps,schedule:null})
+    expect(await page.getByRole('region',{name:'运行详情'}).getByRole('heading',{name:'快照工作流',exact:true}).isVisible()).toBe(true)
+    await page.getByRole('group',{name:'运行记录筛选'}).getByRole('button',{name:'全部',exact:true}).click()
+    delayedLogs.alpha=700
+    await page.locator('.tool-row').first().click()
+    await page.locator('.tool-row').nth(1).click()
+    await pre.getByText('beta 独立日志',{exact:false}).waitFor()
+    await page.waitForTimeout(900)
+    expect(await pre.innerText()).not.toContain('alpha')
+    for(const size of [{width:1180,height:780},{width:960,height:640},{width:740,height:570}])for(const scale of [1,1.3]){
+      await page.setViewportSize({width:Math.floor(size.width/scale),height:Math.floor(size.height/scale)})
+      expect(await page.locator('.page').evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true)
+      await page.screenshot({path:`${shots}/runs-populated-${size.width}-${size.height}-${scale}.png`})
+    }
+  })
+})
+
+describe('舒适工具界面',()=>{
+  it('课程与工作流筛选同步详情，保存新条目后能在列表中找到它', async () => {
+    await add('搜索课程 A', 'search-a')
+    await add('搜索课程 B', 'search-b')
+    const search = page.getByRole('searchbox', { name: '搜索课程' })
+    await search.fill('课程 A')
+    expect(await page.getByRole('region', { name: '课程详情' }).getByRole('heading', { name: '搜索课程 A', exact: true }).isVisible()).toBe(true)
+    await search.fill('不存在的课程')
+    expect(await page.getByRole('region', { name: '课程详情' }).count()).toBe(0)
+    await add('搜索课程 C', 'search-c')
+    expect(await search.inputValue()).toBe('')
+    expect(await page.locator('.course-row[aria-pressed=true]').innerText()).toContain('搜索课程 C')
+    await search.fill('课程 A')
+    page.once('dialog',dialog=>dialog.accept())
+    await page.getByRole('button',{name:'移除',exact:true}).click()
+    await page.getByRole('status').filter({hasText:'课程已移除'}).waitFor()
+    expect(await page.getByRole('region',{name:'课程详情'}).count()).toBe(0)
+    expect(await page.locator('.course-row').count()).toBe(0)
+    const course = courses.list().courses[0]
+    for (const name of ['搜索工作流 A', '搜索工作流 B']) workflows.create({ name, steps: [{ id: crypto.randomUUID(), courseId: course.id, options: course.options }], schedule: null })
+    await page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '工作流', exact: true }).click()
+    const flowSearch = page.getByRole('searchbox', { name: '搜索工作流' })
+    await flowSearch.fill('工作流 B')
+    expect(await page.locator('.flow-detail h2').innerText()).toBe('搜索工作流 B')
+    await page.getByRole('button', { name: '创建工作流', exact: true }).click()
+    await page.getByRole('button', { name: '添加 搜索课程 C', exact: true }).click()
+    await page.getByRole('button', { name: '保存工作流', exact: true }).click()
+    await flowSearch.waitFor()
+    expect(await flowSearch.inputValue()).toBe('')
+    expect(await page.locator('.tool-row[aria-pressed=true]').innerText()).toContain('搜索课程 C 工作流')
+    await flowSearch.fill('工作流 A')
+    page.once('dialog',dialog=>dialog.accept())
+    await page.getByRole('button',{name:'删除',exact:true}).click()
+    await page.getByRole('status').filter({hasText:'工作流已删除'}).waitFor()
+    expect(await page.locator('.flow-detail').count()).toBe(0)
+    expect(await page.getByRole('heading',{name:'选择工作流',exact:true}).isVisible()).toBe(true)
+    expect(starts).toBe(0)
+  })
+
+  it('定时错误打开配置并聚焦对应字段，修正后保留即时输入', async () => {
+    await add('定时校验课程', 'schedule-focus')
+    await page.getByRole('button', { name: '构建工作流', exact: true }).click()
+    await page.getByRole('button', { name: '仅手动', exact: true }).click()
+    await page.getByLabel('触发方式', { exact: true }).selectOption('daily')
+    const zone = page.getByLabel('时区', { exact: true })
+    await zone.fill('Invalid/Zone')
+    await page.getByRole('button', { name: '每日定时 · 启用', exact: true }).click()
+    await page.getByRole('button', { name: '保存工作流', exact: true }).click()
+    await page.getByRole('alert').filter({ hasText: '请输入有效时区' }).waitFor()
+    expect(await zone.evaluate(el => el === document.activeElement)).toBe(true)
+    await zone.fill('Asia/Shanghai')
+    await page.getByLabel('每日开始时间', { exact: true }).fill('')
+    await page.getByRole('button', { name: '保存工作流', exact: true }).click()
+    await page.getByRole('alert').filter({ hasText: '请选择有效的定时时间' }).waitFor()
+    expect(await page.getByLabel('每日开始时间', { exact: true }).evaluate(el => el === document.activeElement)).toBe(true)
+    await page.getByLabel('每日开始时间', { exact: true }).fill('18:25')
+    await page.getByRole('button', { name: '保存工作流', exact: true }).click()
+    await page.getByRole('button', { name: '立即运行', exact: true }).waitFor()
+    expect(workflows.list()[0].schedule?.time).toBe('18:25')
+    expect(workflows.list()[0].schedule?.timeZone).toBe('Asia/Shanghai')
+  })
+
+  it('工作流写入成功后刷新失败，重试保存不会创建重复工作流', async () => {
+    await add('刷新失败课程', 'refresh-retry')
+    await page.getByRole('button', { name: '构建工作流', exact: true }).click()
+    failFlowListOnce = true
+    await page.getByRole('button', { name: '保存工作流', exact: true }).click()
+    await page.getByRole('alert').filter({ hasText: '列表刷新失败' }).waitFor()
+    expect(await page.getByLabel('工作流名称', { exact: true }).inputValue()).toBe('刷新失败课程 工作流')
+    expect(workflows.list()).toHaveLength(1)
+    await page.getByRole('button', { name: '保存工作流', exact: true }).click()
+    await page.getByRole('button', { name: '立即运行', exact: true }).waitFor()
+    expect(workflows.list()).toHaveLength(1)
+    expect(starts).toBe(0)
+  })
+
+  it('编辑已到期但未改动的单次定时，保留原补跑规则', async () => {
+    await add('补跑课程', 'due-edit')
+    const course = courses.list().courses[0]
+    const flow = workflows.create({ name:'等待补跑', steps:[{id:'due-step',courseId:course.id,options:course.options}], schedule:{kind:'once',enabled:true,time:new Date(Date.now()+3600000).toISOString(),timeZone:'Asia/Shanghai',nextAt:null} })
+    const due = new Date(Date.now()-3600000).toISOString()
+    const schedule = { ...flow.schedule!, time:due, nextAt:due }
+    db.raw().prepare('UPDATE workflow_schedules SET config=? WHERE workflow_id=?').run(JSON.stringify(schedule),flow.id)
+    await page.getByRole('navigation',{name:'主导航'}).getByRole('link',{name:'工作流',exact:true}).click()
+    await page.getByRole('button',{name:'编辑',exact:true}).click()
+    await page.getByLabel('工作流名称',{exact:true}).fill('补跑规则保留')
+    await page.getByRole('button',{name:'保存工作流',exact:true}).click()
+    await page.getByRole('button',{name:'立即运行',exact:true}).waitFor()
+    expect(workflows.get(flow.id)?.schedule).toEqual(schedule)
+    expect(workflows.get(flow.id)?.name).toBe('补跑规则保留')
+  })
+
+  it('键盘切换、排序和移除步骤后，配置与焦点仍指向可用步骤', async () => {
+    await add('步骤键盘 A','step-key-a')
+    await add('步骤键盘 B','step-key-b')
+    await page.getByRole('navigation',{name:'主导航'}).getByRole('link',{name:'工作流',exact:true}).click()
+    await page.getByRole('button',{name:'创建工作流',exact:true}).click()
+    for (const name of ['步骤键盘 A','步骤键盘 B','步骤键盘 A']) await page.getByRole('button',{name:`添加 ${name}`,exact:true}).click()
+    const rows = page.locator('.step-select')
+    await rows.first().focus()
+    await page.keyboard.press('ArrowDown')
+    expect(await rows.nth(1).getAttribute('aria-pressed')).toBe('true')
+    await page.getByLabel('运行方式',{exact:true}).selectOption('learn-transcribe')
+    await page.getByRole('button',{name:'上移步骤 2',exact:true}).focus()
+    await page.keyboard.press('Enter')
+    expect(await rows.first().getAttribute('aria-pressed')).toBe('true')
+    expect(await rows.first().evaluate(el=>el===document.activeElement)).toBe(true)
+    expect(await page.getByLabel('运行方式',{exact:true}).inputValue()).toBe('learn-transcribe')
+    await page.keyboard.press('End')
+    expect(await rows.nth(2).getAttribute('aria-pressed')).toBe('true')
+    await page.getByRole('button',{name:'移除步骤 3',exact:true}).focus()
+    await page.keyboard.press('Enter')
+    expect(await rows.nth(1).evaluate(el=>el===document.activeElement)).toBe(true)
+    expect(await rows.nth(1).getAttribute('aria-pressed')).toBe('true')
+    await page.getByRole('button',{name:'保存工作流',exact:true}).click()
+    await page.getByRole('button',{name:'立即运行',exact:true}).waitFor()
+    expect(workflows.list()[0].steps[0].options.action).toBe('learn-transcribe')
+    expect(workflows.list()[0].steps[1].options.action).toBe('learn')
+  })
+
+  it('列表支持方向键与首尾跳转，类型筛选直接可见，主要操作保持在顶部',async()=>{
+    await add('键盘课程 A','keyboard-a')
+    await add('键盘课程 B','keyboard-b')
+    const rows=page.locator('.course-row')
+    await rows.first().focus();await page.keyboard.press('ArrowDown')
+    expect(await rows.nth(1).evaluate(el=>el===document.activeElement)).toBe(true)
+    expect(await rows.nth(1).getAttribute('aria-pressed')).toBe('true')
+    await page.keyboard.press('Home')
+    expect(await rows.first().getAttribute('aria-pressed')).toBe('true')
+    await page.keyboard.press('End')
+    expect(await rows.nth(1).getAttribute('aria-pressed')).toBe('true')
+    const filter=page.getByRole('group',{name:'课程类型筛选'})
+    expect(await filter.getByRole('button',{name:'传统课',exact:true}).isVisible()).toBe(true)
+    await filter.getByRole('button',{name:'图谱课',exact:true}).click()
+    expect(await rows.count()).toBe(0)
+    await filter.getByRole('button',{name:'全部',exact:true}).click()
+    expect(await rows.count()).toBe(2)
+    const action=page.getByRole('button',{name:'构建工作流',exact:true})
+    expect(await action.evaluate(el=>{const r=el.getBoundingClientRect();return r.top>=0&&r.bottom<innerHeight/2})).toBe(true)
+    expect(await page.getByRole('button',{name:'添加课程',exact:true}).evaluate(el=>el.getBoundingClientRect().height)).toBeGreaterThanOrEqual(32)
+    expect(await rows.first().evaluate(el=>el.getBoundingClientRect().height)).toBeGreaterThanOrEqual(48)
+  })
+
+  it('小窗口选择课程后焦点回到入口，步骤和配置无需标签切换，减少动态效果',async()=>{
+    await add('无需多级菜单课程','direct-editor')
+    await page.getByRole('navigation',{name:'主导航'}).getByRole('link',{name:'工作流',exact:true}).click()
+    await page.getByRole('button',{name:'创建工作流',exact:true}).click()
+    await page.setViewportSize({width:740,height:570})
+    const trigger=page.getByRole('button',{name:'添加课程',exact:true})
+    await trigger.click()
+    const search=page.getByRole('searchbox',{name:'搜索可添加课程'})
+    expect(await search.evaluate(el=>el===document.activeElement)).toBe(true)
+    await page.keyboard.press('Escape')
+    expect(await trigger.evaluate(el=>el===document.activeElement)).toBe(true)
+    await trigger.click()
+    await page.getByRole('button',{name:'添加 无需多级菜单课程',exact:true}).click()
+    expect(await trigger.evaluate(el=>el===document.activeElement)).toBe(true)
+    expect(await page.getByRole('tab',{name:'配置',exact:true}).count()).toBe(0)
+    expect(await page.getByRole('region',{name:'工作流步骤'}).count()).toBe(1)
+    await page.locator('.step-select').click()
+    await page.getByLabel('运行方式',{exact:true}).selectOption('learn-transcribe')
+    await page.emulateMedia({reducedMotion:'reduce'})
+    expect(await page.getByRole('button',{name:'保存工作流',exact:true}).evaluate(el=>getComputedStyle(el).transitionDuration)).toBe('0s')
+    await page.getByRole('button',{name:'保存工作流',exact:true}).click()
+    await page.getByRole('button',{name:'立即运行',exact:true}).waitFor()
+    expect(workflows.list()[0].steps[0].options.action).toBe('learn-transcribe')
+  })
+
+  it('切换条目后详情回到标题，同一条目的滚动位置保持不变', async () => {
+    await add('滚动课程 A','detail-scroll-a')
+    await add('滚动课程 B','detail-scroll-b')
+    await page.setViewportSize({width:740,height:570})
+    const courseDetail=page.getByRole('region',{name:'课程详情'})
+    await courseDetail.evaluate(el=>el.scrollTop=el.scrollHeight)
+    expect(await courseDetail.evaluate(el=>el.scrollTop)).toBeGreaterThan(0)
+    await page.locator('.course-row[aria-pressed=false]').click()
+    expect(await courseDetail.evaluate(el=>el.scrollTop)).toBe(0)
+    const course=courses.list().courses[0]
+    for(const name of ['长详情工作流 A','长详情工作流 B']) workflows.create({name,steps:Array.from({length:20},()=>({id:crypto.randomUUID(),courseId:course.id,options:course.options})),schedule:null})
+    await page.setViewportSize({width:1180,height:780})
+    await page.getByRole('navigation',{name:'主导航'}).getByRole('link',{name:'工作流',exact:true}).click()
+    const detail=page.locator('.workspace-detail')
+    const rows=page.locator('.workspace-list .tool-row')
+    await rows.first().click()
+    await detail.evaluate(el=>el.scrollTop=200)
+    expect(await detail.evaluate(el=>el.scrollTop)).toBe(200)
+    await rows.first().click()
+    expect(await detail.evaluate(el=>el.scrollTop)).toBe(200)
+    await rows.nth(1).click()
+    expect(await detail.evaluate(el=>el.scrollTop)).toBe(0)
+    expect(await page.getByRole('button',{name:'立即运行',exact:true}).evaluate(el=>{const r=el.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight})).toBe(true)
+  })
+
+  it('不可识别和已移除的课程步骤显示原因，移除失效步骤后可保存', async () => {
+    for(const name of ['正常课程','旧类型课程','已移除课程']) await add(name,`unavailable-${name}`)
+    const library=courses.list().courses
+    const flow=workflows.create({name:'修复失效步骤',steps:library.map(course=>({id:crypto.randomUUID(),courseId:course.id,options:course.options})),schedule:null})
+    const unknown=library.find(course=>course.name==='旧类型课程')!
+    const removed=library.find(course=>course.name==='已移除课程')!
+    db.raw().prepare('UPDATE courses SET kind=? WHERE id=?').run('unknown',unknown.id)
+    expect(courses.remove(removed.id).ok).toBe(false)
+    // Simulate an older archived reference; the normal API protects referenced courses.
+    db.raw().prepare('UPDATE courses SET deleted_at=? WHERE id=?').run(new Date().toISOString(),removed.id)
+    await page.reload()
+    await page.getByRole('navigation',{name:'主导航'}).getByRole('link',{name:'工作流',exact:true}).click()
+    await page.getByRole('button',{name:'编辑',exact:true}).click()
+    expect(await page.getByRole('button',{name:'添加 旧类型课程',exact:true}).isDisabled()).toBe(true)
+    expect(await page.locator('.editor-step').filter({hasText:'课程类型不可识别'}).count()).toBe(1)
+    expect(await page.locator('.editor-step').filter({hasText:'课程已移除'}).count()).toBe(1)
+    expect(await page.getByRole('button',{name:'保存工作流',exact:true}).isDisabled()).toBe(true)
+    for(const reason of ['课程已移除','课程类型不可识别']) await page.locator('.editor-step').filter({hasText:reason}).getByRole('button',{name:/移除步骤/}).click()
+    expect(await page.locator('.editor-step').count()).toBe(1)
+    expect(await page.getByRole('button',{name:'保存工作流',exact:true}).isEnabled()).toBe(true)
+    await page.getByRole('button',{name:'保存工作流',exact:true}).click()
+    await page.getByRole('button',{name:'立即运行',exact:true}).waitFor()
+    expect(workflows.get(flow.id)?.steps).toHaveLength(1)
+    expect(workflows.get(flow.id)?.steps[0].courseId).toBe(library.find(course=>course.name==='正常课程')!.id)
+  })
+
+  it('长工作流列表首尾跳转后，选中行不会被固定搜索栏遮挡', async () => {
+    await add('列表滚动课程','list-scroll')
+    const course = courses.list().courses[0]
+    for(let i=0;i<12;i++) workflows.create({name:`列表工作流 ${i}`,steps:[{id:crypto.randomUUID(),courseId:course.id,options:course.options}],schedule:null})
+    await page.getByRole('navigation',{name:'主导航'}).getByRole('link',{name:'工作流',exact:true}).click()
+    await page.setViewportSize({width:740,height:570})
+    const rows = page.locator('.workspace-list .tool-row')
+    await rows.first().focus()
+    for(const key of ['End','Home']) {
+      await page.keyboard.press(key)
+      const selected = page.locator('.workspace-list .tool-row[aria-pressed=true]')
+      expect(await selected.evaluate(el=>{const r=el.getBoundingClientRect();const hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return !!hit&&el.contains(hit)})).toBe(true)
+      expect(await selected.locator('strong').innerText()).toBe(await page.locator('.flow-detail h2').innerText())
+    }
+  })
+
+  it('小窗口展开定时后仍能添加课程，折叠规则区不会丢失定时草稿', async () => {
+    await add('窄窗口定时课程','narrow-schedule-picker')
+    await page.getByRole('button',{name:'构建工作流',exact:true}).click()
+    await page.setViewportSize({width:569,height:438})
+    await page.getByRole('button',{name:'仅手动',exact:true}).click()
+    await page.getByLabel('触发方式',{exact:true}).selectOption('daily')
+    await page.getByLabel('每日开始时间',{exact:true}).fill('18:25')
+    await page.getByRole('button',{name:'添加课程',exact:true}).click()
+    const addButton = page.getByRole('button',{name:'添加 窄窗口定时课程',exact:true})
+    expect(await addButton.evaluate(el=>{const r=el.getBoundingClientRect();const parent=document.querySelector('.editor-body')!.getBoundingClientRect();return r.top>=parent.top&&r.bottom<=parent.bottom})).toBe(true)
+    await addButton.click()
+    expect(await page.locator('.editor-step').count()).toBe(2)
+    await page.getByRole('button',{name:'保存工作流',exact:true}).click()
+    await page.getByRole('button',{name:'立即运行',exact:true}).waitFor()
+    expect(workflows.list()[0].schedule?.time).toBe('18:25')
+    expect(workflows.list()[0].steps).toHaveLength(2)
+  })
+
+  it('课程选择面板随窗口宽度恢复为课程库，搜索和键盘焦点保持可用', async () => {
+    await add('窗口变化课程', 'picker-resize')
+    await page.getByRole('button',{name:'构建工作流',exact:true}).click()
+    await page.setViewportSize({width:740,height:570})
+    const trigger = page.getByRole('button',{name:'添加课程',exact:true})
+    await trigger.click()
+    const search = page.getByRole('searchbox',{name:'搜索可添加课程'})
+    await search.fill('窗口变化')
+    await page.setViewportSize({width:1180,height:780})
+    await page.waitForFunction(()=>!document.querySelector('.course-library')?.classList.contains('picker'))
+    expect(await page.getByRole('button',{name:'关闭',exact:true}).count()).toBe(0)
+    expect(await search.inputValue()).toBe('窗口变化')
+    expect(await search.evaluate(el=>el===document.activeElement)).toBe(true)
+    await page.setViewportSize({width:740,height:570})
+    await page.waitForFunction(()=>document.activeElement?.matches('.editor-mobile-tools button'))
+    expect(await trigger.evaluate(el=>el===document.activeElement)).toBe(true)
+    await trigger.click()
+    expect(await search.inputValue()).toBe('窗口变化')
+    await page.keyboard.press('Escape')
+    expect(await trigger.evaluate(el=>el===document.activeElement)).toBe(true)
+  })
+
+  it('所有强调色的主要操作文字对比清楚，切换颜色不会染色背景和正文',async()=>{
+    const rgb=(value:string)=>value.match(/[\d.]+/g)!.slice(0,3).map(Number)
+    const luminance=(values:number[])=>values.map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4}).reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0)
+    await add('强调色文字对比课程','accent-row')
+    await page.getByRole('navigation',{name:'主导航'}).getByRole('link',{name:'设置',exact:true}).click()
+    await page.getByRole('button',{name:'外观',exact:true}).click()
+    const base=await page.locator('.sidebar').evaluate(el=>({background:getComputedStyle(el).backgroundColor,text:getComputedStyle(document.body).color}))
+    for(const label of ['青绿','紫色','玫瑰','橙色','蓝色（默认）']){
+      await page.getByRole('radio',{name:label,exact:true}).check()
+      const save=page.getByRole('button',{name:'保存设置',exact:true})
+      await save.click()
+      await page.getByRole('status').filter({hasText:'设置已保存'}).waitFor()
+      const appearance=await save.evaluate(el=>{const s=getComputedStyle(el);return {color:s.color,background:s.backgroundColor}})
+      const a=luminance(rgb(appearance.color)),b=luminance(rgb(appearance.background))
+      expect((Math.max(a,b)+.05)/(Math.min(a,b)+.05)).toBeGreaterThanOrEqual(4.5)
+      expect(await page.locator('.sidebar').evaluate(el=>({background:getComputedStyle(el).backgroundColor,text:getComputedStyle(document.body).color}))).toEqual(base)
+      await page.getByRole('navigation',{name:'主导航'}).getByRole('link',{name:'课程',exact:true}).click()
+      const row = page.locator('.course-row[aria-pressed=true]')
+      await row.waitFor()
+      await page.waitForTimeout(120)
+      const rowColors = await row.evaluate(el => ({ background:getComputedStyle(el).backgroundColor, text:getComputedStyle(el.querySelector('.course-row-content>div')!).color }))
+      const c=luminance(rgb(rowColors.text)),d=luminance(rgb(rowColors.background))
+      expect((Math.max(c,d)+.05)/(Math.min(c,d)+.05)).toBeGreaterThanOrEqual(4.5)
+      await page.getByRole('navigation',{name:'主导航'}).getByRole('link',{name:'设置',exact:true}).click()
+      await page.getByRole('button',{name:'外观',exact:true}).click()
+    }
   })
 })

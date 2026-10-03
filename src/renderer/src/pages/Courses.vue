@@ -1,17 +1,27 @@
 <script setup lang="ts">
+import WorkspaceToolbar from '../components/WorkspaceToolbar.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { useCoursesStore } from '../stores/courses'
 import { useWorkflowsStore } from '../stores/workflows'
+import ToolRow from '../components/ToolRow.vue'
+import UiIcon from '../components/UiIcon.vue'
 import CourseOptionsForm from '../components/CourseOptionsForm.vue'
 import { ACTION_LABELS, KIND_LABELS, identifyCourse } from '@shared/courses'
 import type { CourseInput } from '@shared/types'
 const store = useCoursesStore(), run = useWorkflowsStore()
 const route = useRoute(), router = useRouter()
 const uid = useId()
+const kindFilter = ref('')
 const search = ref(''), focusedId = ref(String(route.query.id ?? store.library.selectedCourseId ?? ''))
+const detailPanel = ref<HTMLElement | null>(null)
+watch(focusedId, async () => { await nextTick(); if (detailPanel.value) detailPanel.value.scrollTop = 0 })
 const focused = computed(() => store.library.courses.find(c => c.id === focusedId.value) ?? null)
-const filtered = computed(() => store.library.courses.filter(c => c.name.toLowerCase().includes(search.value.toLowerCase())))
+const filterKinds = computed(() => Object.fromEntries(Object.entries(KIND_LABELS).filter(([kind]) => kind !== 'unknown' || store.library.courses.some(c => c.kind === 'unknown'))))
+const filtered = computed(() => store.library.courses.filter(c => c.name.toLowerCase().includes(search.value.toLowerCase()) && (!kindFilter.value || c.kind === kindFilter.value)))
+watch([search, kindFilter], () => {
+  if (!filtered.value.some(course => course.id === focusedId.value)) focusedId.value = filtered.value[0]?.id ?? ''
+})
 const busy = ref(false), error = ref(''), message = ref(''), duplicateId = ref('')
 const editingId = ref<string | null>(null), modal = ref(false)
 const draft = ref<CourseInput>({ name: '', url: '', options: { ...store.library.defaults } })
@@ -31,6 +41,7 @@ function beforeUnload(event: BeforeUnloadEvent): void { if (dirty.value) { event
 onMounted(() => window.addEventListener('beforeunload', beforeUnload))
 onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
 async function openForm(edit = false): Promise<void> {
+  if (busy.value) return
   previousFocus = document.activeElement as HTMLElement
   editingId.value = edit ? focused.value?.id ?? null : null
   draft.value = edit && focused.value ? { name: focused.value.name, url: focused.value.url, options: { ...focused.value.options } } : { name: '', url: '', options: { ...store.library.defaults } }
@@ -47,30 +58,41 @@ function trap(event: KeyboardEvent): void {
   else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
 }
 async function save(): Promise<void> {
+  if (busy.value) return
+  const submitFocus = document.activeElement as HTMLElement | null
   busy.value = true; error.value = ''; duplicateId.value = ''
   try {
     const input = JSON.parse(JSON.stringify(draft.value)) as CourseInput
     const result = store.accept(editingId.value ? await window.appApi.courses.update(editingId.value, input) : await window.appApi.courses.create(input))
     if (!result.ok) { error.value = result.message; duplicateId.value = result.existingCourseId ?? ''; return }
-    focusedId.value = result.courseId ?? focusedId.value; modal.value = false; message.value = '课程已保存'; previousFocus?.focus()
+    search.value = ''; kindFilter.value = ''
+    focusedId.value = result.courseId ?? focusedId.value; modal.value = false; message.value = '课程已保存'
   } catch(e) { error.value = `保存失败，输入已保留：${String(e)}` }
-  finally { busy.value = false }
+  finally {
+    busy.value = false
+    await nextTick()
+    if (!modal.value) previousFocus?.focus()
+    else if (submitFocus?.isConnected) submitFocus.focus()
+  }
 }
 async function selectCurrent(): Promise<void> {
-  try { await store.select(focusedId.value); message.value = '已设为本次课程' } catch(e) { error.value = String(e) }
+  try { await store.select(focusedId.value); message.value = '已设为默认课程' } catch(e) { error.value = String(e) }
 }
 async function start(): Promise<void> {
   if (!focused.value) return
   await router.push({path:'/workflows',query:{courseId:focused.value.id}})
 }
 async function remove(): Promise<void> {
-  const course = focused.value; if (!course) return
+  const course = focused.value; if (!course || busy.value) return
   if (!window.confirm(`移除“${course.name}”？学习进度和转录文件会保留。`)) return
+  busy.value = true; error.value = ''
   try {
     const result = store.accept(await window.appApi.courses.remove(course.id))
     if (!result.ok) { error.value = result.message; return }
-    focusedId.value = store.library.selectedCourseId ?? ''; message.value = '课程已移除，进度已保留'
+    focusedId.value = filtered.value.find(item => item.id === store.library.selectedCourseId)?.id ?? filtered.value[0]?.id ?? ''
+    message.value = '课程已移除，进度已保留'
   } catch(e) { error.value = String(e) }
+  finally { busy.value = false }
 }
 async function copyUrl(): Promise<void> { try { await navigator.clipboard.writeText(focused.value?.url ?? ''); message.value = '地址已复制' } catch { error.value = '复制失败，请在课程详情中选中地址复制' } }
 async function exportQuestionBank(): Promise<void> {
@@ -83,27 +105,27 @@ async function exportQuestionBank(): Promise<void> {
   } catch (e) { error.value = `题库导出失败：${String(e).replace(/^Error: /, '')}` }
   finally { busy.value = false }
 }
-function openExisting(): void { focusedId.value = duplicateId.value; modal.value = false; error.value = '' }
+function openExisting(): void { search.value = ''; kindFilter.value = ''; focusedId.value = duplicateId.value; modal.value = false; error.value = '' }
 const lastRun = (date: string | null): string => date ? new Date(date).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '尚未运行'
 </script>
 <template>
   <div class="page courses-page">
-    <header class="page-header"><h1>我的课程</h1><button class="primary" @click="openForm()">添加课程</button></header>
+    <WorkspaceToolbar title="我的课程"><button :disabled="busy" class="primary" @click="openForm()"><UiIcon name="add"/>添加课程</button></WorkspaceToolbar>
     <div v-if="!modal && (error || run.error || store.error)" class="notice error" role="alert">{{ error || run.error || store.error }} <button v-if="store.error" @click="store.load">重新加载</button></div>
     <div v-if="message" class="notice success" role="status">{{ message }}</div>
     <div v-if="store.loading" class="empty" role="status">正在加载课程…</div>
     <div v-else-if="!store.library.courses.length" class="panel empty"><h2>从第一门课程开始</h2><p>粘贴课程学习页地址，为它取一个容易找到的名字。</p><p class="small">支持智慧树传统课、图谱课和掌握度课，添加后可组合为工作流。</p><button class="primary" @click="openForm()">添加第一门课程</button></div>
     <div v-else class="course-layout">
-      <section class="course-list" aria-label="课程列表"><div class="list-header"><strong>全部课程 <span class="muted">{{ store.library.courses.length }}</span></strong><input v-model="search" type="search" aria-label="搜索课程" placeholder="搜索课程名称" /></div>
+      <section class="course-list" aria-label="课程列表"><div class="list-header"><strong>全部课程 <span class="muted">{{ store.library.courses.length }}</span></strong><input v-model="search" type="search" aria-label="搜索课程" placeholder="搜索课程名称" /><div class="type-filters" role="group" aria-label="课程类型筛选"><button :aria-pressed="!kindFilter" @click="kindFilter=''">全部</button><button v-for="(label,kind) in filterKinds" :key="kind" :aria-pressed="kindFilter===kind" @click="kindFilter=kind">{{label}}</button></div></div>
         <div class="course-rows"><div v-if="!filtered.length" class="empty">没有匹配的课程</div>
-        <button v-for="course in filtered" :key="course.id" class="course-row" :class="{ active: course.id === focusedId }" :aria-pressed="course.id === focusedId" @click="focusedId = course.id; message = ''; error = ''">
-          <div class="course-row-content"><strong :title="course.name">{{ course.name }}</strong><div><span>{{ KIND_LABELS[course.kind] }}</span> · {{ lastRun(course.lastRunAt) }}</div></div>
-          <span v-if="run.occupied.includes(course.id)" class="badge green">运行中</span><span v-else-if="course.id === store.library.selectedCourseId" class="selected-dot" title="本次课程" aria-label="本次课程"></span>
-        </button></div>
+        <ToolRow v-for="course in filtered" :key="course.id" class="course-row" :selected="course.id === focusedId" :title="course.name" @click="focusedId = course.id; message = ''; error = ''">
+          <div class="course-row-content"><strong :title="course.name">{{ course.name }}</strong><div><span>{{ KIND_LABELS[course.kind] }}</span> · {{ ACTION_LABELS[course.options.action] }}</div></div>
+          <span v-if="run.occupied.includes(course.id)" class="badge green">运行中</span><span v-else-if="course.id === store.library.selectedCourseId" class="selected-dot" title="默认课程" aria-label="默认课程"></span>
+        </ToolRow></div>
       </section>
-      <section v-if="focused" class="course-detail" aria-label="课程详情">
-        <div class="detail-top"><span class="badge blue">{{ KIND_LABELS[focused.kind] }}</span><div class="actions"><button class="quiet" :disabled="locked" @click="openForm(true)">编辑</button><button class="quiet danger" :disabled="locked" @click="remove">移除</button></div></div>
-        <h2 class="course-name">{{ focused.name }}</h2><p class="muted small">最近运行 · {{ lastRun(focused.lastRunAt) }}</p>
+      <section v-if="focused" ref="detailPanel" class="course-detail" aria-label="课程详情">
+        <div class="detail-top"><div class="actions"><button class="primary" :disabled="busy || focused.kind === 'unknown'" @click="start"><UiIcon name="workflows"/>构建工作流</button><button class="quiet" :disabled="locked || busy" @click="openForm(true)">编辑</button><button class="quiet danger" :disabled="locked || busy" @click="remove">移除</button></div></div>
+        <h2 class="course-name">{{ focused.name }}</h2><p class="muted small">{{ KIND_LABELS[focused.kind] }} · 最近运行 · {{ lastRun(focused.lastRunAt) }}</p>
         <div v-if="locked" class="notice">这门课程正在运行。停止任务后可编辑或移除。</div>
         <div v-if="focused.progressWarning" class="notice warning">{{ focused.progressWarning }}</div>
         <div class="divider"></div><h3>运行配置</h3>
@@ -111,8 +133,8 @@ const lastRun = (date: string | null): string => date ? new Date(date).toLocaleS
         <div class="last-position"><span class="muted small">上次完成的位置</span><p>{{ focused.lastVideoTitle || '暂无记录，完成内容后会自动保存' }}</p></div>
         <div class="divider"></div><div class="address-header"><h3>课程地址</h3><button class="quiet" @click="copyUrl">复制</button></div><p class="course-url">{{ focused.url }}</p>
         <div v-if="focused.kind === 'mastery'" class="notice">题库按课程记录。导出包含题目、选项及已确认答案；未确认答案会明确标记。旧题目在再次练习时自动关联。</div>
-        <div class="detail-footer"><button v-if="focused.kind === 'mastery'" :disabled="busy" @click="exportQuestionBank">{{ busy ? '正在导出…' : '导出题库' }}</button><button :disabled="store.library.selectedCourseId === focused.id" @click="selectCurrent">{{ store.library.selectedCourseId === focused.id ? '已设为本次课程' : '设为本次课程' }}</button><button class="primary" :disabled="focused.kind === 'unknown'" @click="start">构建工作流</button></div>
-      </section><section v-else class="empty"><h2>选择一门课程</h2><p>点击左侧课程，查看配置和上次进度。</p></section>
+        <div class="detail-footer"><button v-if="focused.kind === 'mastery'" :disabled="busy" @click="exportQuestionBank">{{ busy ? '正在导出…' : '导出题库' }}</button><button :disabled="busy || store.library.selectedCourseId === focused.id" @click="selectCurrent">{{ store.library.selectedCourseId === focused.id ? '已设为默认课程' : '设为默认课程' }}</button></div>
+      </section><section v-else class="empty"><h2>选择一门课程</h2><p>{{ filtered.length ? '点击左侧课程，查看配置和上次进度。' : '更改搜索条件或课程类型筛选。' }}</p></section>
     </div>
     <Teleport to="body"><div v-if="modal" class="modal-backdrop" @click.self="closeForm"><form ref="dialog" class="modal stack" role="dialog" aria-modal="true" aria-labelledby="course-form-title" @submit.prevent="save" @keydown="trap">
       <header><h2 id="course-form-title">{{ editingId ? '编辑课程' : '添加课程' }}</h2><p class="muted">{{ editingId ? '修改只应用于这门课程。' : '保存后可随时开始，不会自动运行。' }}</p></header>
@@ -127,31 +149,38 @@ const lastRun = (date: string | null): string => date ? new Date(date).toLocaleS
   </div>
 </template>
 <style scoped>
-.courses-page { display: flex; flex-direction: column; overflow: hidden; }
-.course-layout { display: grid; grid-template-columns: 280px minmax(0,1fr); flex: 1; min-height: 0; border: 0; background: var(--surface); overflow: hidden; }
-.course-list { min-width: 0; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); }
-.list-header { background: var(--surface); padding: 10px; display: grid; gap: 8px; border-bottom: 1px solid var(--line); }
-.course-rows { overflow: auto; min-height: 0; flex: 1; }
-.course-row { display: flex; gap: 8px; align-items: center; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line-soft); border-radius: 0; height: 48px; padding: 5px 10px; font-weight: 400; }
-.course-row.active { background: var(--selection); color: var(--accent); box-shadow: inset 3px 0 var(--accent); }
-.course-row-content { min-width: 0; flex: 1; }
-.course-row-content strong { font-weight: 600; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.course-row-content div { font-size: var(--fs-micro); color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.selected-dot { width: 6px; height: 6px; background: var(--sky); border-radius: 50%; flex-shrink: 0; }
-.course-detail { border-top: 3px solid var(--accent-fill); padding: 16px 20px; overflow: auto; min-width: 0; }
-.detail-top,.address-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.course-name { font-weight: 750; letter-spacing: -.4px; font-size: var(--fs-title); margin: 8px 0 4px; overflow-wrap: anywhere; }
-.course-detail>.notice { margin-top: 8px; }
-.detail-grid { display: grid; grid-template-columns: 1fr; gap: 0; margin: 8px 0; }
-.detail-grid>div { display: grid; grid-template-columns: 100px minmax(0,1fr); gap: 12px; padding: 5px 0; border-bottom: 1px solid var(--line-soft); }
-dt { color: var(--text-3); } dd { margin: 0; font-weight: 400; }
-.last-position { padding-top: 8px; overflow-wrap: anywhere; }
-.last-position p { margin-top: 4px; }
-.course-url { color: var(--text-3); overflow-wrap: anywhere; user-select: text; }
-.detail-footer { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; position: sticky; bottom: -16px; background: var(--surface); padding: 8px 0; border-top: 1px solid var(--line-soft); }
-.courses-page>.notice { margin: 8px 12px; }
-.error-text { color: var(--clay); }
-.modal header,.modal footer { margin: 0; }
-.modal .notice { margin: 0; }
-@container(max-width:623px) { .course-layout { grid-template-columns: minmax(0,1fr); grid-template-rows: minmax(120px,180px) minmax(0,1fr); } .course-list { border-right: 0; border-bottom: 1px solid var(--line); } .detail-grid { grid-template-columns: 1fr; } }
+.courses-page { display:flex;flex-direction:column;overflow:hidden; }
+button { display:inline-flex;align-items:center;gap:6px; }
+.course-layout { display:grid;grid-template-columns:300px minmax(0,1fr);flex:1;min-height:0;overflow:hidden; }
+.course-list { min-width:0;display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--line);background:var(--list-surface); }
+.list-header { padding:12px;display:grid;gap:10px; }
+.list-header strong { font-size:12px;font-weight:500;color:var(--text-3); }
+.type-filters { display:flex;flex-wrap:wrap;gap:3px; }
+.type-filters button { min-height:26px;padding:2px 6px;font-size:12px;border:0;background:transparent;color:var(--text-3); }
+.type-filters [aria-pressed=true] { color:var(--accent);background:var(--accent-soft); }
+.course-rows { overflow:auto;min-height:0;flex:1;padding-bottom:8px; }
+.course-row-content { min-width:0;flex:1; }
+.course-row-content strong { font-weight:550;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.course-row-content div { margin-top:2px;font-size:12px;color:var(--text-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis; }
+.selected-dot { width:6px;height:6px;background:var(--accent);border-radius:50%;flex-shrink:0; }
+.course-detail { padding:20px;overflow:auto;min-width:0; }
+.detail-top { position:sticky;top:-20px;z-index:2;background:var(--surface);padding:0 0 12px; }
+.detail-top .actions { flex-wrap:wrap; }
+.address-header { display:flex;align-items:center;justify-content:space-between;gap:8px; }
+.course-name { font-weight:600;font-size:var(--fs-readout);margin:4px 0 6px;overflow-wrap:anywhere; }
+.course-detail>.notice { margin-top:16px; }
+.detail-grid { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 20px;margin:16px 0; }
+.detail-grid>div { display:flex;flex-direction:column;gap:4px;min-width:0; }
+dt { color:var(--text-3);font-size:12px; } dd { margin:0;font-weight:400; }
+.last-position { margin-top:20px;overflow-wrap:anywhere; }
+.last-position p { margin-top:6px; }
+.course-url { margin-top:8px;color:var(--text-2);overflow-wrap:anywhere;user-select:text; }
+.detail-footer { display:flex;gap:8px;margin-top:20px;flex-wrap:wrap; }
+.courses-page>.notice { margin:10px 20px 0; }
+.divider { margin:20px 0; }
+.error-text { color:var(--clay); }
+.modal header,.modal footer { margin:0; }
+.modal .notice { margin:0; }
+@container(max-width:700px) { .course-layout { grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(140px,32%) minmax(0,1fr); } .course-list { border-right:0;border-bottom:1px solid var(--line); } .course-detail { padding:16px; } .detail-top { top:-16px; } .detail-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .list-header { grid-template-columns:minmax(100px,1fr) minmax(120px,1fr);align-items:center; } .list-header strong { display:none; } .type-filters { grid-column:1/-1; } .list-header input { grid-column:1/-1; } }
+@container(max-width:440px) { .detail-grid { grid-template-columns:1fr; } }
 </style>

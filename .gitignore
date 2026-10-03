@@ -39,3 +39,7 @@ coverage/
 
 # TypeScript 增量构建缓存
 *.tsbuildinfo
+
+# 本地前端截图与浏览器检查会话
+output/playwright/
+.playwright-cli/

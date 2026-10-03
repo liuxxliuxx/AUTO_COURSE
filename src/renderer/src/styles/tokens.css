@@ -1,33 +1,61 @@
 :root {
   color-scheme: light;
-  /* One accent family drives actions, selection, links and focus. */
   --accent-hue: 218;
-  --accent: hsl(var(--accent-hue) 52% 37%);
-  --accent-soft: hsl(var(--accent-hue) 85% 95%);
-  --accent-fill: hsl(var(--accent-hue) 82% 89%);
-  --accent-hover: hsl(var(--accent-hue) 78% 84%);
-  --accent-line: hsl(var(--accent-hue) 58% 76%);
-  --accent-focus: hsl(var(--accent-hue) 55% 52%);
-  --ground: hsl(var(--accent-hue) 65% 98%); --surface: #fff;
-  --surface-2: hsl(var(--accent-hue) 65% 96%); --surface-3: hsl(var(--accent-hue) 55% 91%);
-  --sidebar: hsl(var(--accent-hue) 65% 96%); --selection: var(--accent-soft);
-  --primary: var(--accent-fill); --primary-hover: var(--accent-hover);
-  --line: hsl(var(--accent-hue) 30% 87%); --line-soft: hsl(var(--accent-hue) 40% 95%);
-  --line-hover: hsl(var(--accent-hue) 30% 73%);
-  --text: hsl(var(--accent-hue) 25% 20%); --text-2: hsl(var(--accent-hue) 16% 38%);
-  --text-3: hsl(var(--accent-hue) 13% 45%);
-  --sky: var(--accent); --sky-dim: var(--accent-soft);
-  --jade: #307456; --jade-dim: #eaf5ed;
-  --brass: #866126; --brass-dim: #fcf5e7;
-  --clay: #ae4854; --clay-dim: #fcf0f1;
-  --overlay: hsl(var(--accent-hue) 35% 20% / .2); --shadow-dialog: none;
-  --scroll-thumb: hsl(var(--accent-hue) 30% 80%);
+  --accent-lightness: 46%;
+  --accent: hsl(var(--accent-hue) 58% var(--accent-lightness));
+  --accent-soft: hsl(var(--accent-hue) 65% 96%);
+  --accent-fill: hsl(var(--accent-hue) 65% 94%);
+  --accent-hover: hsl(var(--accent-hue) 58% calc(var(--accent-lightness) - 6%));
+  --accent-line: hsl(var(--accent-hue) 48% 80%);
+  --accent-focus: hsl(var(--accent-hue) 58% var(--accent-lightness));
+  --ground: #f8f9fb;
+  --surface: #fff;
+  --surface-2: #f4f5f7;
+  --surface-3: #eceef2;
+  --sidebar: #f4f5f7;
+  --list-surface: #fcfcfd;
+  --selection: var(--accent-fill);
+  --primary: var(--accent);
+  --primary-hover: var(--accent-hover);
+  --line: #e3e5ea;
+  --line-soft: #f0f1f4;
+  --line-hover: #c6cad2;
+  --text: #292d34;
+  --text-2: #585e68;
+  --text-3: #606873;
+  --sky: var(--accent);
+  --sky-dim: var(--accent-soft);
+  --jade: #34745b;
+  --jade-dim: #f0f7f3;
+  --brass: #8a672e;
+  --brass-dim: #fbf7ee;
+  --clay: #b0444a;
+  --clay-dim: #fbf1f1;
+  --overlay: #20252c3d;
+  --shadow-dialog: 0 16px 48px #20252c20, 0 2px 8px #20252c0d;
+  --scroll-thumb: #d0d3da;
   --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --font-num: ui-monospace, SFMono-Regular, Consolas, monospace;
-  --fs-micro: 11px; --fs-small: 12px; --fs-base: 13px; --fs-title: 18px; --fs-readout: 13px;
-  --control-height: 28px; --fs-section: 13px;
-  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 14px; --sp-6: 20px;
-  --r-control: 2px; --r-panel: 0px; --rail-height: 30px;
-  --motion-fast: 120ms; --motion-base: 180ms;
+  --fs-micro: 12px;
+  --fs-small: 12px;
+  --fs-base: 13px;
+  --fs-title: 18px;
+  --fs-section: 14px;
+  --fs-readout: 17px;
+  --control-height: 32px;
+  --list-row-height: 48px;
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --r-control: 6px;
+  --r-panel: 8px;
+  --rail-height: 36px;
+  --motion-fast: 100ms;
+  --motion-base: 100ms;
 }
-@media(prefers-reduced-motion:reduce) { :root { --motion-fast: 0ms; --motion-base: 0ms; } }
+@media (prefers-reduced-motion: reduce) {
+  :root { --motion-fast: 0ms; --motion-base: 0ms; }
+}

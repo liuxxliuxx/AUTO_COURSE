@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import WorkspaceToolbar from '../components/WorkspaceToolbar.vue'
 import { onBeforeUnmount, onMounted, ref, computed, useId } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { useSettingsStore } from '../stores/settings'
 import { useAccountStore } from '../stores/account'
 import { useCoursesStore } from '../stores/courses'
+import { accentLightness } from '../lib/appearance'
 import { ACCENT_COLORS, DEFAULT_ACCENT, accentHue } from '@shared/appearance'
 import CourseOptionsForm from '../components/CourseOptionsForm.vue'
 import type { CourseRunOptions, LoginMethod } from '@shared/types'
@@ -68,7 +70,7 @@ async function pickDirectory(): Promise<void> { try { const dir = await window.a
 </script>
 <template>
   <div class="page">
-    <header class="page-header"><h1>设置</h1></header>
+    <WorkspaceToolbar title="设置"></WorkspaceToolbar>
     <div class="settings-layout">
       <nav class="settings-nav" aria-label="设置分类"><button v-for="item in sections" :key="item.id" :class="{ active: section === item.id }" :aria-current="section === item.id ? 'page' : undefined" @click="changeSection(item.id)">{{ item.label }}</button><RouterLink to="/courses" class="course-link">管理我的课程</RouterLink></nav>
       <section class="settings-panel">
@@ -86,10 +88,10 @@ async function pickDirectory(): Promise<void> { try { const dir = await window.a
           <template v-else-if="section === 'defaults'"><div class="notice">这些配置只会复制给新课程。已有课程请在课程详情中编辑。</div><CourseOptionsForm v-model="defaults" /><p class="muted small">图谱课不支持仅转录，添加图谱课时会改用“学习”。</p></template>
           <template v-else-if="section === 'transcription'"><div class="field"><label :for="`${uid}-dir`">输出目录</label><div class="directory-row"><input :id="`${uid}-dir`" v-model="globalDraft.transcribeBaseDir" placeholder="请选择文件夹" /><button type="button" @click="pickDirectory">选择文件夹</button></div><small>是否转录由每门课程的运行方式决定。</small></div><div class="notice">修改目录对下一次运行生效，不会移动已有文件。</div></template>
           <template v-else><div class="field"><label :for="`${uid}-scale`">界面缩放</label><select :id="`${uid}-scale`" v-model.number="globalDraft.uiScale"><option :value=".9">90%</option><option :value="1">100%（默认）</option><option :value="1.1">110%</option><option :value="1.2">120%</option><option :value="1.3">130%</option></select></div><fieldset class="accent-options" :disabled="saving"><legend>强调色</legend>
-            <div class="accent-swatches"><label v-for="color in ACCENT_COLORS" :key="color.id" class="accent-option" :class="{ selected: globalDraft.accentColor === color.id }" :style="{ '--swatch-hue': color.hue }">
+            <div class="accent-swatches"><label v-for="color in ACCENT_COLORS" :key="color.id" class="accent-option" :class="{ selected: globalDraft.accentColor === color.id }" :style="{ '--swatch-hue': color.hue, '--swatch-lightness': `${accentLightness(color.id)}%` }">
               <input v-model="globalDraft.accentColor" type="radio" :name="`${uid}-accent`" :value="color.id" /><span class="swatch" aria-hidden="true"></span><span>{{ color.label }}</span>
             </label></div><p class="muted small">保存后应用到整个界面，重启后保留。</p>
-            <div class="accent-preview" :style="{ '--preview-hue': accentHue(globalDraft.accentColor) }" aria-label="强调色预览"><span class="preview-selection">选中项</span><span class="preview-action">主要操作</span><span class="preview-link">链接文字</span></div>
+            <div class="accent-preview" :style="{ '--preview-hue': accentHue(globalDraft.accentColor), '--preview-lightness': `${accentLightness(globalDraft.accentColor)}%` }" aria-label="强调色预览"><span class="preview-selection">选中项</span><span class="preview-action">主要操作</span><span class="preview-link">链接文字</span></div>
           </fieldset><div class="theme-row"><span>主题</span><span>浅色</span></div></template>
           <footer class="settings-footer"><span class="muted small">{{ dirty ? '有未保存的修改' : '修改后点击保存' }}</span><div class="actions"><button type="button" :disabled="saving || !dirty" @click="load">取消修改</button><button type="submit" class="primary" :disabled="saving || !dirty">{{ saving ? '正在保存…' : '保存设置' }}</button></div></footer>
         </form>
@@ -98,33 +100,33 @@ async function pickDirectory(): Promise<void> { try { const dir = await window.a
   </div>
 </template>
 <style scoped>
-.settings-layout { display: grid; grid-template-columns: 120px minmax(0,700px); gap: 20px; align-items: start; padding: 16px; }
-.settings-nav { display: grid; gap: 4px; }
+.settings-layout { display: grid; grid-template-columns: 140px minmax(0,620px); gap: 24px; align-items: start; padding: 24px; }
+.settings-nav { display: grid; gap: 6px; }
 .settings-nav button { text-align: left; border: 0; background: transparent; color: var(--text-2); }
-.settings-nav button.active { background: var(--selection); color: var(--accent); font-weight: 650; box-shadow: inset 2px 0 var(--accent); }
+.settings-nav button.active { background: var(--selection); color: var(--accent); font-weight: 550;  }
 .course-link { padding: 8px; margin-top: 4px; border-top: 1px solid var(--line); }
-.settings-panel { min-width: 0; padding: 0 0 0 20px; border-left: 1px solid var(--line); }
-.settings-panel header { padding: 4px 0 12px; border-bottom: 1px solid var(--line); }
+.settings-panel { min-width: 0; padding: 0 0 0 24px; border-left: 1px solid var(--line); }
+.settings-panel header { padding: 0 0 4px; }
 .settings-panel .notice { margin: 0; }
-.settings-panel :deep(.field) { display: grid; grid-template-columns: 100px minmax(0,1fr); align-items: start; gap: 4px 8px; }
-.settings-panel :deep(.field>label) { padding-top: 4px; font-weight: 400; color: var(--text-2); }
+.settings-panel :deep(.field) { display: grid; grid-template-columns: 110px minmax(0,1fr); align-items: start; gap: 4px 8px; }
+.settings-panel :deep(.field>label) { padding-top: 6px; font-weight: 400; color: var(--text-2); }
 .settings-panel :deep(.field>small) { grid-column: 2; }
 .settings-panel :deep(.options-grid) { grid-template-columns: 1fr; }
-.settings-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid var(--line); padding-top: 12px; flex-wrap: wrap; }
+.settings-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; border-top: 1px solid var(--line); padding-top: 16px; flex-wrap: wrap; }
 .saved-password { font-size: var(--fs-micro); color: var(--jade); font-weight: 400; }
 .directory-row { display: flex; gap: 8px; min-width: 0; }
 .directory-row button { flex-shrink: 0; }
 .accent-options legend { padding: 0; margin-bottom: 8px; color: var(--text-2); }
 .accent-swatches { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .accent-option { position: relative; display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid var(--line); cursor: pointer; }
-.accent-option.selected { border-color: hsl(var(--swatch-hue) 52% 45%); background: hsl(var(--swatch-hue) 85% 95%); }
+.accent-option.selected { border-color: hsl(var(--swatch-hue) 58% var(--swatch-lightness)); background: hsl(var(--swatch-hue) 85% 95%); }
 .accent-option input[type=radio] { position: absolute; opacity: 0; width: 1px; height: 1px; min-height: 0; padding: 0; }
 .accent-option:has(:focus-visible) { outline: 2px solid var(--accent-focus); outline-offset: 2px; }
 .swatch { width: 12px; height: 12px; background: hsl(var(--swatch-hue) 68% 66%); }
 .accent-option.selected .swatch::after { content: '✓'; display: block; color: #182538; text-align: center; font-size: 10px; line-height: 12px; }
-.accent-preview { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 12px; padding: 12px; background: hsl(var(--preview-hue) 65% 98%); color: hsl(var(--preview-hue) 52% 37%); }
-.preview-selection { padding: 4px 8px; background: hsl(var(--preview-hue) 85% 95%); border-left: 2px solid currentColor; }
-.preview-action { padding: 4px 8px; background: hsl(var(--preview-hue) 82% 89%); border: 1px solid hsl(var(--preview-hue) 58% 76%); }
+.accent-preview { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 12px; padding: 12px; background: var(--ground); color: hsl(var(--preview-hue) 58% var(--preview-lightness)); }
+.preview-selection { padding: 4px 8px; background: hsl(var(--preview-hue) 85% 95%); border-radius:var(--r-control); }
+.preview-action { padding: 4px 8px; background: hsl(var(--preview-hue) 58% var(--preview-lightness));color:#fff;border:1px solid transparent;border-radius:var(--r-control); }
 .theme-row { display: grid; grid-template-columns: 100px 1fr; gap: 8px; }
-@container(max-width:600px) { .settings-layout { grid-template-columns: 1fr; } .settings-nav { display: flex; flex-wrap: wrap; gap: 4px; } .course-link { margin: 0; border: 0; padding: 4px 8px; } .settings-panel { border-left: 0; padding: 0; } .settings-panel :deep(.field) { grid-template-columns: 1fr; } .settings-panel :deep(.field>small) { grid-column: 1; } }
+@container(max-width:700px) { .settings-layout { grid-template-columns: 1fr;padding:16px;gap:20px; } .settings-nav { display: flex; flex-wrap: wrap; gap: 4px; } .course-link { margin: 0; border: 0; padding: 4px 8px; } .settings-panel { border-left: 0; padding: 0; } .settings-panel :deep(.field) { grid-template-columns: 1fr; } .settings-panel :deep(.field>small) { grid-column: 1; } }
 </style>

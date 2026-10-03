@@ -1,4 +1,6 @@
 import { WorkflowService } from '../../src/main/workflows/workflow-service'
+import { MasteryQuestionBank } from '../../src/main/automation/mastery/question-bank'
+import { buildCourseQuestionBankExport } from '../../src/main/services/question-bank-export'
 import type { WorkflowInput, WorkflowRun } from '../../src/shared/workflows'
 /** Built Vue UI with real course persistence and an isolated desktop IPC boundary. */
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright-core'
@@ -17,12 +19,14 @@ let fixtureLogs: LogEntry[]
 let workflows: WorkflowService
 let runFixtures: WorkflowRun[] | null
 let lastFlowId: string
+let cancelExport: boolean
 const shots = '/private/tmp/auto-course-ui'
 beforeAll(async () => { server = await startFixtureServer(resolve('out/renderer')); browser = await chromium.launch({ headless: true }); mkdirSync(shots, { recursive: true }) })
 afterAll(async () => { await browser?.close(); await server?.close() })
 beforeEach(async () => {
   db = new Database(':memory:'); settings = new SettingsService(db)
   starts = 0; failSave = false; fixtureLogs = []; runFixtures = null
+  cancelExport = false
   state = { state: 'idle', mode: null, currentTitle: null, completedCount: 0, watchedSeconds: 0, stoppedReason: null, message: '准备好后开始一门课程', tone: 'neutral' }
   courses = new CourseService(db, settings, () => state.state !== 'idle' ? state.courseId ?? null : null)
   workflows = new WorkflowService(db,courses,()=>state.state!=='idle'); lastFlowId=''
@@ -54,6 +58,11 @@ beforeEach(async () => {
         return {ok:true,runId:'fixture-run'}
       }
       case 'courses.list': return courses.list()
+      case 'courses.exportQuestionBank': {
+        if (failSave) throw new Error('fixture 写入失败')
+        const data = buildCourseQuestionBankExport(db, courses, args[0] as string)
+        return cancelExport ? { canceled: true, path: '', count: 0 } : { canceled: false, path: '/tmp/题库.json', count: data.questions.length }
+      }
       case 'courses.create': if (failSave) throw new Error('fixture 保存失败'); result = courses.create(args[0] as CourseInput); break
       case 'courses.update': result = courses.update(args[0] as string, args[1] as CourseInput); break
       case 'courses.remove': result = courses.remove(args[0] as string); break
@@ -102,6 +111,28 @@ async function add(name: string, key: string, action = 'learn'): Promise<void> {
   await form.waitFor({ state: 'hidden' })
 }
 describe('课程与运行界面', () => {
+  it('只有掌握度课程显示导出，空题库/写入失败提示，取消不报成功，成功按课程导出', async () => {
+    await add('传统课', 'export-classic')
+    expect(await page.getByRole('button', { name: '导出题库', exact: true }).count()).toBe(0)
+    await page.getByRole('button', { name: '添加课程', exact: true }).click()
+    const form = page.getByRole('dialog')
+    await form.getByLabel('课程地址', { exact: false }).fill('https://studywisdomh5.zhihuishu.com/study/mastery?recruitAndCourseId=export-mastery')
+    await form.getByLabel('课程名称', { exact: true }).fill('掌握度导出')
+    await form.getByRole('button', { name: '保存课程', exact: true }).click()
+    await form.waitFor({ state: 'hidden' })
+    const button = page.getByRole('button', { name: '导出题库', exact: true })
+    await button.click()
+    await page.getByRole('alert').filter({ hasText: '暂无已关联' }).waitFor()
+    const course = courses.list().courses.find(c => c.name === '掌握度导出')!
+    new MasteryQuestionBank(db, course.id).saveCorrect('题目', 'single', ['一', '二'], [1])
+    failSave = true; await button.click()
+    await page.getByRole('alert').filter({ hasText: '写入失败' }).waitFor()
+    failSave = false; cancelExport = true; await button.click()
+    await page.waitForFunction(() => !document.querySelector('[role="alert"]') && !document.querySelector('[role="status"]'))
+    cancelExport = false; await button.click()
+    await page.getByRole('status').filter({ hasText: '题库已导出，共 1 道题' }).waitFor()
+    expect(starts).toBe(0)
+  })
   it('空状态、添加两门不同配置、切换与刷新后配置保持独立，保存不启动', async () => {
     expect(await page.getByText('从第一门课程开始').isVisible()).toBe(true)
     await page.screenshot({ path: `${shots}/empty.png`, fullPage: true })

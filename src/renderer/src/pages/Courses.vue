@@ -73,6 +73,16 @@ async function remove(): Promise<void> {
   } catch(e) { error.value = String(e) }
 }
 async function copyUrl(): Promise<void> { try { await navigator.clipboard.writeText(focused.value?.url ?? ''); message.value = '地址已复制' } catch { error.value = '复制失败，请在课程详情中选中地址复制' } }
+async function exportQuestionBank(): Promise<void> {
+  const course = focused.value
+  if (!course || busy.value) return
+  busy.value = true; error.value = ''; message.value = ''
+  try {
+    const result = await window.appApi.courses.exportQuestionBank(course.id)
+    if (!result.canceled) message.value = `“${course.name}”题库已导出，共 ${result.count} 道题：${result.path}`
+  } catch (e) { error.value = `题库导出失败：${String(e).replace(/^Error: /, '')}` }
+  finally { busy.value = false }
+}
 function openExisting(): void { focusedId.value = duplicateId.value; modal.value = false; error.value = '' }
 const lastRun = (date: string | null): string => date ? new Date(date).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '尚未运行'
 </script>
@@ -100,7 +110,8 @@ const lastRun = (date: string | null): string => date ? new Date(date).toLocaleS
         <dl class="detail-grid"><div><dt>运行方式</dt><dd>{{ ACTION_LABELS[focused.options.action] }}</dd></div><div><dt>起始位置</dt><dd>{{ focused.options.startPosition === 'resume' ? '从上次位置继续' : '从课程开头' }}</dd></div><div><dt>已完成内容</dt><dd>{{ focused.options.skipCompleted ? '自动跳过' : '仍然处理' }}</dd></div><div><dt>单次时长</dt><dd>{{ focused.options.timeLimitMinutes ? `${focused.options.timeLimitMinutes} 分钟` : '不限时长' }}</dd></div></dl>
         <div class="last-position"><span class="muted small">上次完成的位置</span><p>{{ focused.lastVideoTitle || '暂无记录，完成内容后会自动保存' }}</p></div>
         <div class="divider"></div><div class="address-header"><h3>课程地址</h3><button class="quiet" @click="copyUrl">复制</button></div><p class="course-url">{{ focused.url }}</p>
-        <div class="detail-footer"><button :disabled="store.library.selectedCourseId === focused.id" @click="selectCurrent">{{ store.library.selectedCourseId === focused.id ? '已设为本次课程' : '设为本次课程' }}</button><button class="primary" :disabled="focused.kind === 'unknown'" @click="start">构建工作流</button></div>
+        <div v-if="focused.kind === 'mastery'" class="notice">题库按课程记录。导出包含题目、选项及已确认答案；未确认答案会明确标记。旧题目在再次练习时自动关联。</div>
+        <div class="detail-footer"><button v-if="focused.kind === 'mastery'" :disabled="busy" @click="exportQuestionBank">{{ busy ? '正在导出…' : '导出题库' }}</button><button :disabled="store.library.selectedCourseId === focused.id" @click="selectCurrent">{{ store.library.selectedCourseId === focused.id ? '已设为本次课程' : '设为本次课程' }}</button><button class="primary" :disabled="focused.kind === 'unknown'" @click="start">构建工作流</button></div>
       </section><section v-else class="empty"><h2>选择一门课程</h2><p>点击左侧课程，查看配置和上次进度。</p></section>
     </div>
     <Teleport to="body"><div v-if="modal" class="modal-backdrop" @click.self="closeForm"><form ref="dialog" class="modal stack" role="dialog" aria-modal="true" aria-labelledby="course-form-title" @submit.prevent="save" @keydown="trap">

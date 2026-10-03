@@ -317,7 +317,7 @@ export class BotService {
       session,
       log: createLogger('runner'),
       media,
-      masteryQuestionBank: new MasteryQuestionBank(this.db),
+      masteryQuestionBank: new MasteryQuestionBank(this.db, this.snapshot?.course.id),
       lastVideoTitle,
       shouldStop: () => this.stopRequested,
       sessionWatchedSeconds: () => this.watchedSeconds,

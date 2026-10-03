@@ -62,7 +62,8 @@ export function createApi(ipcRenderer: IpcRenderer): AppApi {
       create: (input) => invoke(ipcRenderer, IPC_INVOKE.coursesCreate, input),
       update: (id, input) => invoke(ipcRenderer, IPC_INVOKE.coursesUpdate, { id, input }),
       remove: (id) => invoke(ipcRenderer, IPC_INVOKE.coursesRemove, { id }),
-      defaults: (options) => invoke(ipcRenderer, IPC_INVOKE.coursesDefaults, options)
+      defaults: (options) => invoke(ipcRenderer, IPC_INVOKE.coursesDefaults, options),
+      exportQuestionBank: (id) => invoke(ipcRenderer, IPC_INVOKE.coursesExportQuestionBank, { id })
     },
 
     intervention: {

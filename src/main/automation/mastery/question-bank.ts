@@ -11,7 +11,14 @@ export function normalizeOptionText(text: string): string {
 
 /** Persistent question bank used by mastery practice. It never stores credentials or page data. */
 export class MasteryQuestionBank {
-  constructor(private readonly db: Database) {}
+  constructor(private readonly db: Database, private readonly courseId?: string) {}
+
+  listForCourse(courseId: string): MasteryQuestion[] {
+    const rows = this.db.raw().prepare(`SELECT q.id FROM mastery_questions q
+      JOIN mastery_course_questions c ON c.question_id=q.id WHERE c.course_id=?
+      ORDER BY q.created_at,q.id`).all(courseId) as { id: string }[]
+    return rows.map(row => this.read(row.id)!)
+  }
 
   getOrCreate(content: string, type: MasteryQuestionType, optionTexts: string[]): MasteryQuestion {
     const clean = optionTexts.map((item) => item.trim()).filter(Boolean)
@@ -33,6 +40,7 @@ export class MasteryQuestionBank {
         raw.prepare('INSERT INTO mastery_options (id,question_id,content,normalized_content,is_correct,position) VALUES (?,?,?,?,0,?)').run(randomUUID(), row.id, text, norm, index)
       }
     }
+    if (this.courseId) this.db.raw().prepare('INSERT OR IGNORE INTO mastery_course_questions VALUES(?,?)').run(this.courseId, row.id)
     return this.read(row.id)!
   }
 

@@ -1,6 +1,8 @@
 /** 设置 / 凭据 / 课程 / 对话框 / 应用信息 相关 IPC。 */
 
 import { app, dialog, BrowserWindow } from 'electron'
+import { writeFile } from 'node:fs/promises'
+import { buildCourseQuestionBankExport } from '../services/question-bank-export'
 import { IPC_INVOKE, IPC_EVENT } from '@shared/ipc'
 import type { CredentialState } from '@shared/types'
 import { handle } from './handle'
@@ -51,6 +53,19 @@ export function registerSettingsIpc(container: ServiceContainer): void {
   handle(IPC_INVOKE.coursesUpdate, ({ id, input }) => changed(container.courses.update(id, input)))
   handle(IPC_INVOKE.coursesRemove, ({ id }) => changed(container.courses.remove(id)))
   handle(IPC_INVOKE.coursesDefaults, (options) => changed(container.courses.defaults(options)))
+  handle(IPC_INVOKE.coursesExportQuestionBank, async ({ id }) => {
+    const data = buildCourseQuestionBankExport(container.db, container.courses, id)
+    const options = {
+      title: '导出课程题库',
+      defaultPath: `${data.course.name.replace(/[\\/:*?"<>|\x00-\x1f]/g, '_')}_题库.json`,
+      filters: [{ name: 'JSON 题库', extensions: ['json'] }]
+    }
+    const parent = parentWindow()
+    const result = parent ? await dialog.showSaveDialog(parent, options) : await dialog.showSaveDialog(options)
+    if (result.canceled || !result.filePath) return { canceled: true, path: '', count: 0 }
+    await writeFile(result.filePath, JSON.stringify(data, null, 2) + '\n', 'utf8')
+    return { canceled: false, path: result.filePath, count: data.questions.length }
+  })
 
   // ------------------------------------------------------------ 文件对话框
 

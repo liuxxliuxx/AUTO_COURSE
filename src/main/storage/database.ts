@@ -12,7 +12,7 @@ import type { CourseItem, DailyProgress, LogEntry } from '@shared/types'
 const logger = createLogger('database')
 
 /** v2 schema 版本。每次改表结构都要 +1 并补一条迁移。 */
-export const SCHEMA_VERSION = 4
+export const SCHEMA_VERSION = 5
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS url_history (
@@ -95,6 +95,11 @@ export class Database {
           UNIQUE(question_id, normalized_content)
         );
         CREATE INDEX IF NOT EXISTS idx_mastery_questions_content ON mastery_questions(content);
+        CREATE TABLE IF NOT EXISTS mastery_course_questions (
+          course_id TEXT NOT NULL REFERENCES courses(id),
+          question_id TEXT NOT NULL REFERENCES mastery_questions(id) ON DELETE CASCADE,
+          PRIMARY KEY(course_id, question_id)
+        );
       `)
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS workflows (id TEXT PRIMARY KEY, name TEXT NOT NULL, version INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, notice TEXT);

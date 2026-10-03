@@ -49,6 +49,7 @@ export const IPC_INVOKE = {
   coursesUpdate: 'courses:update',
   coursesRemove: 'courses:remove',
   coursesDefaults: 'courses:defaults',
+  coursesExportQuestionBank: 'courses:export-question-bank',
 
   interventionConfirm: 'intervention:confirm',
 
@@ -135,6 +136,7 @@ export interface InvokeMap {
   [IPC_INVOKE.coursesUpdate]: { req: { id: string; input: CourseInput }; res: CourseMutationResult }
   [IPC_INVOKE.coursesRemove]: { req: { id: string }; res: CourseMutationResult }
   [IPC_INVOKE.coursesDefaults]: { req: CourseRunOptions; res: CourseMutationResult }
+  [IPC_INVOKE.coursesExportQuestionBank]: { req: { id: string }; res: { canceled: boolean; path: string; count: number } }
 
   [IPC_INVOKE.interventionConfirm]: { req: void; res: void }
 
@@ -194,6 +196,7 @@ export interface AppApi {
     update(id: string, input: CourseInput): Promise<CourseMutationResult>
     remove(id: string): Promise<CourseMutationResult>
     defaults(options: CourseRunOptions): Promise<CourseMutationResult>
+    exportQuestionBank(id: string): Promise<{ canceled: boolean; path: string; count: number }>
   }
 
   /** 人工介入（验证码或手动登录）完成后由渲染层确认 */

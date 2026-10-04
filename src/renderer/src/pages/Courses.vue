@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { courseOccupancy } from '../lib/run-presentation'
 import WorkspaceToolbar from '../components/WorkspaceToolbar.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
@@ -13,9 +14,11 @@ const store = useCoursesStore(), run = useWorkflowsStore()
 const route = useRoute(), router = useRouter()
 const uid = useId()
 const kindFilter = ref('')
-const search = ref(''), focusedId = ref(String(route.query.id ?? store.library.selectedCourseId ?? ''))
+const search = ref(''), focusedId = ref(String(route.query.id ?? (store.viewedCourseId || store.library.selectedCourseId) ?? ''))
 const detailPanel = ref<HTMLElement | null>(null)
 watch(focusedId, async () => { await nextTick(); if (detailPanel.value) detailPanel.value.scrollTop = 0 })
+watch(focusedId,id=>{store.viewedCourseId=id},{immediate:true})
+watch(()=>route.query.id,id=>{if(typeof id==='string' && store.library.courses.some(c=>c.id===id))focusedId.value=id})
 const focused = computed(() => store.library.courses.find(c => c.id === focusedId.value) ?? null)
 const filterKinds = computed(() => Object.fromEntries(Object.entries(KIND_LABELS).filter(([kind]) => kind !== 'unknown' || store.library.courses.some(c => c.kind === 'unknown'))))
 const filtered = computed(() => store.library.courses.filter(c => c.name.toLowerCase().includes(search.value.toLowerCase()) && (!kindFilter.value || c.kind === kindFilter.value)))
@@ -30,6 +33,8 @@ let previousFocus: HTMLElement | null = null
 const dirty = computed(() => modal.value && JSON.stringify(draft.value) !== baseline.value)
 const parsed = computed(() => { try { return identifyCourse(draft.value.url) } catch { return null } })
 const parseError = computed(() => { if (!draft.value.url) return ''; try { identifyCourse(draft.value.url); return '' } catch(e) { return String(e).replace(/^Error: /, '') } })
+const occupation = computed(()=>focused.value ? courseOccupancy(run.runs,focused.value.id) : undefined)
+const occupied = (id:string)=>courseOccupancy(run.runs,id)
 const locked = computed(() => run.occupied.includes(focusedId.value))
 watch(() => parsed.value?.kind, kind => {
   if ((kind === 'map' || kind === 'mastery') && draft.value.options.action === 'transcribe') draft.value.options.action = 'learn'
@@ -120,18 +125,18 @@ const lastRun = (date: string | null): string => date ? new Date(date).toLocaleS
         <div class="course-rows"><div v-if="!filtered.length" class="empty">没有匹配的课程</div>
         <ToolRow v-for="course in filtered" :key="course.id" class="course-row" :selected="course.id === focusedId" :title="course.name" @click="focusedId = course.id; message = ''; error = ''">
           <div class="course-row-content"><strong :title="course.name">{{ course.name }}</strong><div><span>{{ KIND_LABELS[course.kind] }}</span> · {{ ACTION_LABELS[course.options.action] }}</div></div>
-          <span v-if="run.occupied.includes(course.id)" class="badge green">运行中</span><span v-else-if="course.id === store.library.selectedCourseId" class="selected-dot" title="默认课程" aria-label="默认课程"></span>
+          <span v-if="occupied(course.id)" class="badge" :class="occupied(course.id)?.label==='需处理'?'attention':occupied(course.id)?.label==='正在执行'?'green':''" :title="'由工作流“'+occupied(course.id)?.run.snapshot.workflow.name+'”占用，结束后可编辑'">{{occupied(course.id)?.label}}</span><span v-else-if="course.id === store.library.selectedCourseId" class="selected-dot" title="默认课程" aria-label="默认课程"></span>
         </ToolRow></div>
       </section>
       <section v-if="focused" ref="detailPanel" class="course-detail" aria-label="课程详情">
-        <div class="detail-top"><div class="actions"><button class="primary" :disabled="busy || focused.kind === 'unknown'" @click="start"><UiIcon name="workflows"/>构建工作流</button><button class="quiet" :disabled="locked || busy" @click="openForm(true)">编辑</button><button class="quiet danger" :disabled="locked || busy" @click="remove">移除</button></div></div>
+        <div class="detail-top"><div class="actions"><button class="primary" :disabled="busy || focused.kind === 'unknown'" title="以当前课程预填工作流，保存后可手动或定时启动" @click="start"><UiIcon name="workflows"/>构建工作流</button><button class="quiet" :disabled="locked || busy" :title="locked ? '课程被进行中的工作流占用，结束后可编辑' : '修改课程默认配置，已有工作流步骤保持原配置'" @click="openForm(true)">编辑</button><button class="quiet danger" :disabled="locked || busy" :title="locked ? '课程被进行中的工作流占用，结束后可移除' : '移除课程，保留学习进度和转录文件'" @click="remove">移除</button></div></div>
         <h2 class="course-name">{{ focused.name }}</h2><p class="muted small">{{ KIND_LABELS[focused.kind] }} · 最近运行 · {{ lastRun(focused.lastRunAt) }}</p>
-        <div v-if="locked" class="notice">这门课程正在运行。停止任务后可编辑或移除。</div>
+        <div v-if="locked && occupation" class="notice">{{occupation.label}} · 工作流“{{occupation.run.snapshot.workflow.name}}”占用了这门课程，结束后可编辑或移除。 <RouterLink :to="{path:'/run',query:{id:occupation.run.id}}">查看运行</RouterLink></div>
         <div v-if="focused.progressWarning" class="notice warning">{{ focused.progressWarning }}</div>
         <div class="divider"></div><h3>运行配置</h3>
         <dl class="detail-grid"><div><dt>运行方式</dt><dd>{{ ACTION_LABELS[focused.options.action] }}</dd></div><div><dt>起始位置</dt><dd>{{ focused.options.startPosition === 'resume' ? '从上次位置继续' : '从课程开头' }}</dd></div><div><dt>已完成内容</dt><dd>{{ focused.options.skipCompleted ? '自动跳过' : '仍然处理' }}</dd></div><div><dt>单次时长</dt><dd>{{ focused.options.timeLimitMinutes ? `${focused.options.timeLimitMinutes} 分钟` : '不限时长' }}</dd></div></dl>
         <div class="last-position"><span class="muted small">上次完成的位置</span><p>{{ focused.lastVideoTitle || '暂无记录，完成内容后会自动保存' }}</p></div>
-        <div class="divider"></div><div class="address-header"><h3>课程地址</h3><button class="quiet" @click="copyUrl">复制</button></div><p class="course-url">{{ focused.url }}</p>
+        <div class="divider"></div><div class="address-header"><h3>课程地址</h3><button class="quiet" title="复制完整课程地址" @click="copyUrl">复制</button></div><p class="course-url">{{ focused.url }}</p>
         <div v-if="focused.kind === 'mastery'" class="notice">题库按课程记录。导出包含题目、选项及已确认答案；未确认答案会明确标记。旧题目在再次练习时自动关联。</div>
         <div class="detail-footer"><button v-if="focused.kind === 'mastery'" :disabled="busy" @click="exportQuestionBank">{{ busy ? '正在导出…' : '导出题库' }}</button><button :disabled="busy || store.library.selectedCourseId === focused.id" @click="selectCurrent">{{ store.library.selectedCourseId === focused.id ? '已设为默认课程' : '设为默认课程' }}</button></div>
       </section><section v-else class="empty"><h2>选择一门课程</h2><p>{{ filtered.length ? '点击左侧课程，查看配置和上次进度。' : '更改搜索条件或课程类型筛选。' }}</p></section>
@@ -178,6 +183,7 @@ dt { color:var(--text-3);font-size:12px; } dd { margin:0;font-weight:400; }
 .detail-footer { display:flex;gap:8px;margin-top:20px;flex-wrap:wrap; }
 .courses-page>.notice { margin:10px 20px 0; }
 .divider { margin:20px 0; }
+.attention { color:var(--brass); }
 .error-text { color:var(--clay); }
 .modal header,.modal footer { margin:0; }
 .modal .notice { margin:0; }

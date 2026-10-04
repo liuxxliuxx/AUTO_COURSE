@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import type { Course } from '@shared/types'
 import type { WorkflowStep } from '@shared/workflows'
 import { unavailableCourse } from '../lib/workflow-editor'
 import CourseOptionsForm from './CourseOptionsForm.vue'
 
-defineProps<{ step?: WorkflowStep; course?: Course; disabled: boolean }>()
+const props=defineProps<{ step?: WorkflowStep; course?: Course; disabled: boolean; position:number }>()
+const customized=computed(()=>!!props.step && !!props.course && JSON.stringify(props.step.options)!==JSON.stringify(props.course.options))
 const emit = defineEmits<{ restore: [] }>()
 const panel = ref<HTMLElement | null>(null)
 const form = ref<InstanceType<typeof CourseOptionsForm> | null>(null)
@@ -17,11 +18,11 @@ defineExpose({
 
 <template>
   <section ref="panel" class="step-config" aria-label="步骤配置">
-    <header><strong>步骤配置</strong><small v-if="step">{{ course?.name ?? '课程已不可用' }}</small></header>
+    <header><strong>第 {{position}} 步配置 <span v-if="step" class="muted small">{{customized?'已自定义':'与课程配置一致'}}</span></strong><small v-if="step">{{ course?.name ?? '课程已不可用' }}</small></header>
     <div v-if="step" class="config-content">
       <div v-if="unavailableCourse(course)" class="notice error">{{ unavailableCourse(course) }}，请移除此步骤。</div>
-      <CourseOptionsForm ref="form" v-model="step.options" :kind="course?.kind" :disabled="disabled || !!unavailableCourse(course)" />
-      <button type="button" :disabled="disabled || !!unavailableCourse(course)" @click="emit('restore')">恢复课程配置</button>
+      <CourseOptionsForm :key="step.id" ref="form" v-model="step.options" :kind="course?.kind" :disabled="disabled || !!unavailableCourse(course)" />
+      <button type="button" :disabled="disabled || !!unavailableCourse(course) || !customized" title="将课程目前保存的配置复制到当前步骤，保存前可撤销" @click="emit('restore')">恢复课程配置</button>
       <small>只影响当前步骤；编辑运行中的工作流，对下一次运行生效。</small>
     </div>
     <p v-else class="empty">选择步骤查看配置</p>

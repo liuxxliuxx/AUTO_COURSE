@@ -4,7 +4,7 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   test: {
     environment: 'node',
-    include: ['tests/unit/**/*.test.ts', 'tests/integration/**/*.test.ts'],
+    include: ['tests/unit/**/*.test.ts', 'tests/integration/**/*.test.ts', 'src/renderer/src/**/*.test.ts'],
     // tests/unit        纯逻辑 + 存储层（不加载 Electron，也不需要浏览器）
     // tests/integration 用真实 Playwright Chromium 打开 tests/fixtures 下的 DOM 夹具
     //

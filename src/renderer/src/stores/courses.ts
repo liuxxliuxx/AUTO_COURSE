@@ -4,6 +4,7 @@ import type { CourseLibrary, CourseMutationResult } from '@shared/types'
 import { DEFAULT_COURSE_OPTIONS } from '@shared/courses'
 export const useCoursesStore = defineStore('courses', () => {
   const library = ref<CourseLibrary>({ courses: [], selectedCourseId: null, defaults: { ...DEFAULT_COURSE_OPTIONS } })
+  const viewedCourseId=ref('')
   const loading = ref(false)
   const error = ref('')
   const selected = computed(() => library.value.courses.find(c => c.id === library.value.selectedCourseId) ?? null)
@@ -21,5 +22,5 @@ export const useCoursesStore = defineStore('courses', () => {
     const result = accept(await window.appApi.courses.select(id))
     if (!result.ok) throw new Error(result.message)
   }
-  return { library, loading, error, selected, load, accept, select }
+  return { library, viewedCourseId, loading, error, selected, load, accept, select }
 })

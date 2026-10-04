@@ -4,7 +4,7 @@ import type { Course } from '@shared/types'
 import { KIND_LABELS } from '@shared/courses'
 import { unavailableCourse } from '../lib/workflow-editor'
 
-const props = defineProps<{ courses: Course[]; disabled: boolean; picker: boolean }>()
+const props = defineProps<{ courses: Course[]; disabled: boolean; picker: boolean; stepCount:number; counts:Record<string,number> }>()
 const search = defineModel<string>('search', { required: true })
 const emit = defineEmits<{ add: [course: Course]; close: [] }>()
 const input = ref<HTMLInputElement | null>(null)
@@ -17,12 +17,13 @@ defineExpose({ focusSearch: () => input.value?.focus(), containsFocus: () => !!p
   <aside ref="panel" class="course-library" :class="{ picker }" aria-label="课程库">
     <header>
       <div class="library-heading"><strong>课程库</strong><button v-if="picker" type="button" @click="emit('close')">关闭</button></div>
+      <small v-if="picker" role="status">已添加 {{stepCount}} 步，可继续添加或关闭查看配置</small>
       <input ref="input" v-model="search" type="search" aria-label="搜索可添加课程" placeholder="搜索课程" />
     </header>
     <div class="library-rows">
       <div v-for="course in visible" :key="course.id" class="library-row">
-        <div :title="course.name"><strong>{{ course.name }}</strong><small>{{ unavailableCourse(course) || KIND_LABELS[course.kind] }}</small></div>
-        <button type="button" :aria-label="`添加 ${course.name}`" :disabled="!!unavailableCourse(course) || disabled" @click="emit('add', course)">添加</button>
+        <div :title="course.name"><strong>{{ course.name }}</strong><small>{{ unavailableCourse(course) || KIND_LABELS[course.kind] }}<span v-if="counts[course.id]"> · 已添加 {{counts[course.id]}} 步</span></small></div>
+        <button type="button" :title="unavailableCourse(course) || '追加独立步骤，可重复添加同一课程'" :aria-label="`添加 ${course.name}`" :disabled="!!unavailableCourse(course) || disabled" @click="emit('add', course)">添加</button>
       </div>
       <p v-if="!visible.length" class="empty">没有匹配的课程</p>
     </div>

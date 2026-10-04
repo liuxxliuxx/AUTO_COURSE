@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import type { WorkflowInput, WorkflowStep } from '@shared/workflows'
-import type { Course } from '@shared/types'
+import type { CourseRunOptions, Course } from '@shared/types'
 import { validateRunOptions } from '@shared/courses'
 import { unavailableCourse as unavailable } from '../lib/workflow-editor'
 import WorkflowCourseLibrary from './WorkflowCourseLibrary.vue'
@@ -16,14 +16,29 @@ const originalSchedule = JSON.stringify(draft.value.schedule)
 const emit = defineEmits<{ save: []; cancel: [] }>()
 const selected = ref(draft.value.steps[0]?.id ?? '')
 const search = ref(''), picker = ref(false), scheduleOpen = ref(false)
+const undoButton=ref<HTMLButtonElement|null>(null)
 const validation = ref('')
+const undoState=ref<{kind:'remove'|'restore';step:WorkflowStep;index:number;restored?:CourseRunOptions}|null>(null)
+watch(()=>JSON.stringify(draft.value),()=>{validation.value='';const undo=undoState.value;if(undo?.kind==='restore' && JSON.stringify(draft.value.steps.find(s=>s.id===undo.step.id)?.options)!==JSON.stringify(undo.restored))undoState.value=null})
+const saveHint=computed(()=>!draft.value.name.trim()?'请填写工作流名称':!draft.value.steps.length?'请添加至少一个课程步骤':draft.value.steps.some(s=>!!unavailable(course(s.courseId)))?'有不可用课程，请移除对应步骤后保存':'')
+async function undo():Promise<void> {
+  const value=undoState.value;if(!value||props.busy)return
+  if(value.kind==='remove')draft.value.steps.splice(Math.min(value.index,draft.value.steps.length),0,JSON.parse(JSON.stringify(value.step)))
+  else {const step=draft.value.steps.find(s=>s.id===value.step.id);if(step)step.options={...value.step.options}}
+  selected.value=value.step.id;undoState.value=null
+  await nextTick();stepList.value?.focusSelected()
+}
+function shortcuts(event:KeyboardEvent):void {
+  if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='s'){event.preventDefault();void save()}
+  if(event.key==='Escape' && picker.value){event.preventDefault();picker.value=false}
+}
 const library = ref<InstanceType<typeof WorkflowCourseLibrary> | null>(null)
 const pickerTrigger = ref<HTMLButtonElement | null>(null)
 const editorBody = ref<HTMLElement | null>(null)
 const configPanel = ref<InstanceType<typeof WorkflowStepConfig> | null>(null)
 const stepList = ref<InstanceType<typeof WorkflowStepList> | null>(null)
 const scheduleForm = ref<InstanceType<typeof WorkflowScheduleForm> | null>(null)
-watch(selected, async () => { await nextTick(); stepList.value?.revealSelected() })
+watch(selected, async () => { await nextTick(); stepList.value?.revealSelected();if(!draft.value.steps.length){if(pickerTrigger.value?.offsetParent)pickerTrigger.value.focus();else library.value?.focusSearch()} })
 
 watch(picker, async open => {
   if (open) scheduleOpen.value = false
@@ -63,7 +78,6 @@ function add(value: Course): void {
   draft.value.steps.push(step)
   selected.value = step.id
   if (!draft.value.name) draft.value.name = value.name + ' 工作流'
-  picker.value = false
 }
 function move(id: string, to: number): void {
   if (props.busy) return
@@ -76,12 +90,17 @@ function remove(id: string): void {
   if (props.busy) return
   const index = draft.value.steps.findIndex(step => step.id === id)
   if (index < 0) return
+  undoState.value={kind:'remove',step:JSON.parse(JSON.stringify(draft.value.steps[index])),index}
   draft.value.steps.splice(index, 1)
   if (selected.value === id) selected.value = draft.value.steps[Math.min(index, draft.value.steps.length - 1)]?.id ?? ''
 }
-function restore(): void {
+async function restore(): Promise<void> {
   const value = current.value && course(current.value.courseId)
-  if (!props.busy && value && current.value) current.value.options = { ...value.options }
+  if (!props.busy && value && current.value) {
+    undoState.value={kind:'restore',step:JSON.parse(JSON.stringify(current.value)),index:draft.value.steps.findIndex(s=>s.id===current.value!.id),restored:{...value.options}}
+    current.value.options={...value.options}
+    await nextTick();undoButton.value?.focus()
+  }
 }
 async function scheduleError(message: string, field: 'time' | 'zone'): Promise<void> {
   scheduleOpen.value = true
@@ -122,20 +141,21 @@ async function save(): Promise<void> {
 }
 </script>
 <template>
-<form class="workflow-editor" novalidate @submit.prevent="save" @keydown.esc="picker=false">
-<header class="editor-header"><button type="button" :disabled="busy" @click="emit('cancel')"><UiIcon name="back"/>返回</button><input :disabled="busy" v-model="draft.name" aria-label="工作流名称" placeholder="工作流名称"/><span class="muted">{{draft.steps.length}} 步</span><button type="button" :aria-expanded="scheduleOpen" @click="scheduleOpen=!scheduleOpen">{{scheduleSummary}}</button></header>
-<WorkflowScheduleForm v-if="scheduleOpen" ref="scheduleForm" v-model="draft.schedule" :disabled="busy" />
+<form @keydown="shortcuts" class="workflow-editor" novalidate @submit.prevent="save" @keydown.esc="picker=false">
+<header class="editor-header"><button type="button" :disabled="busy" @click="emit('cancel')"><UiIcon name="back"/>返回</button><input :disabled="busy" v-model="draft.name" aria-label="工作流名称" placeholder="工作流名称"/><span class="muted">{{draft.steps.length}} 步</span><button type="button" :aria-expanded="scheduleOpen" @click="scheduleOpen=!scheduleOpen" title="展开定时配置；定时修改随工作流一起保存">{{scheduleSummary}}</button></header>
+<WorkflowScheduleForm v-show="scheduleOpen" ref="scheduleForm" v-model="draft.schedule" :disabled="busy" />
 <div v-if="error||validation" class="notice error" role="alert">{{validation||error}}<span v-if="error">；草稿已保留</span></div>
 <div class="editor-mobile-tools"><button ref="pickerTrigger" type="button" :aria-expanded="picker" @click="picker=!picker"><UiIcon name="add"/>添加课程</button><span class="muted editor-context">选中步骤即可编辑配置</span></div>
 <div ref="editorBody" class="editor-body">
-<WorkflowCourseLibrary ref="library" v-model:search="search" :courses="courses" :disabled="busy" :picker="picker" @add="add" @close="picker=false" />
+<WorkflowCourseLibrary ref="library" v-model:search="search" :courses="courses" :disabled="busy" :picker="picker" :step-count="draft.steps.length" :counts="Object.fromEntries(courses.map(c=>[c.id,draft.steps.filter(s=>s.courseId===c.id).length]))" @add="add" @close="picker=false" />
 <WorkflowStepList ref="stepList" :steps="draft.steps" :courses="courses" :selected="selected" :disabled="busy" @select="selectStep" @move="move" @remove="remove" />
-<WorkflowStepConfig ref="configPanel" :step="current" :course="current && course(current.courseId)" :disabled="busy" @restore="restore" />
+<WorkflowStepConfig ref="configPanel" :step="current" :position="draft.steps.findIndex(s=>s.id===selected)+1" :course="current && course(current.courseId)" :disabled="busy" @restore="restore" />
 </div>
-<footer class="editor-footer"><span class="muted">{{dirty?'有未保存的修改':'草稿未修改'}}</span><div class="actions"><button type="button" :disabled="busy" @click="emit('cancel')">取消</button><button type="submit" class="primary" :disabled="busy||!draft.name.trim()||!draft.steps.length||draft.steps.some(s=>!!unavailable(course(s.courseId)))"><UiIcon name="save"/>{{busy?'正在保存…':'保存工作流'}}</button></div></footer>
+<footer class="editor-footer"><div class="footer-feedback"><span v-if="undoState" role="status">{{undoState.kind==='remove'?'已移除步骤':'已恢复课程配置'}} <button type="button" ref="undoButton" class="quiet" :disabled="busy" @click="undo">撤销</button></span><span class="muted">{{saveHint || (dirty?'有未保存的修改':'草稿未修改')}}</span></div><div class="actions"><button type="button" :disabled="busy" @click="emit('cancel')">取消</button><button type="submit" class="primary" :title="saveHint || '保存工作流，不会自动启动；⌘/Ctrl+S'" :disabled="busy||!draft.name.trim()||!draft.steps.length||draft.steps.some(s=>!!unavailable(course(s.courseId)))"><UiIcon name="save"/>{{busy?'正在保存…':'保存工作流'}}</button></div></footer>
 </form>
 </template>
 <style scoped>
+.footer-feedback { min-width:0;font-size:12px;display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center; }
 .workflow-editor { display:flex;flex:1;min-height:0;flex-direction:column;overflow:hidden; }
 .editor-header,.editor-footer { display:flex;align-items:center;gap:8px;padding:12px 16px;flex-shrink:0;background:var(--surface); }
 .editor-header { border-bottom:1px solid var(--line);flex-wrap:wrap; }

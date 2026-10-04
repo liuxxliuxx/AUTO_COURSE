@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { needsAttention } from './lib/run-presentation'
 import UiIcon from './components/UiIcon.vue'
 import { accentLightness } from './lib/appearance'
 import { accentHue } from '@shared/appearance'
@@ -12,6 +13,7 @@ watch(() => settings.settings?.accentColor, value => {
   document.documentElement.style.setProperty('--accent-hue', String(accentHue(value)))
   document.documentElement.style.setProperty('--accent-lightness', `${accentLightness(value)}%`)
 }, { immediate: true })
+const attentionCount=computed(()=>run.runs.filter(needsAttention).length)
 const router = useRouter()
 const version = ref(''), platform = ref(''), error = ref('')
 const ready = ref(false)
@@ -20,7 +22,7 @@ async function initialize(): Promise<void> {
   error.value = ''
   try {
     if (!unsubscribers.length) unsubscribers = [
-      window.appApi.events.onWorkflowRun(value => { const index=run.runs.findIndex(r=>r.id===value.id); if(index<0)run.runs.unshift(value);else run.runs[index]=value }),
+      window.appApi.events.onWorkflowRun(value => run.acceptRun(value)),
       window.appApi.events.onCourseLibraryChanged(value => { courses.library = value }),
       window.appApi.events.onSettingsChanged(value => { settings.settings = value })
     ]
@@ -31,9 +33,9 @@ async function initialize(): Promise<void> {
     ready.value = true
   } catch (e) { error.value = `初始化失败：${String(e)}` }
 }
-let poll: ReturnType<typeof setInterval> | undefined
-onMounted(() => { void initialize(); poll=setInterval(()=>void run.refreshRuns(),1000) })
-onUnmounted(() => { unsubscribers.forEach(off => off()); clearInterval(poll) })
+let poll: ReturnType<typeof setInterval> | undefined, flowPoll: ReturnType<typeof setInterval> | undefined
+onMounted(() => { void initialize(); poll=setInterval(()=>void run.refreshRuns(),1000);flowPoll=setInterval(()=>void run.refreshFlows(),5000) })
+onUnmounted(() => { unsubscribers.forEach(off => off()); clearInterval(poll);clearInterval(flowPoll) })
 </script>
 <template>
   <div class="shell" :data-platform="platform">
@@ -43,10 +45,10 @@ onUnmounted(() => { unsubscribers.forEach(off => off()); clearInterval(poll) })
       <nav aria-label="主导航">
         <RouterLink to="/courses"><UiIcon name="courses"/>课程</RouterLink>
         <RouterLink to="/workflows"><UiIcon name="workflows"/>工作流</RouterLink>
-        <RouterLink to="/run"><UiIcon name="run"/>运行<span v-if="run.running.length > 0" class="live-dot"></span></RouterLink>
+        <RouterLink to="/run" aria-label="运行" :title="attentionCount ? attentionCount+' 个任务需要登录或验证码处理' : run.running.length+' 个任务进行中'"><UiIcon name="run"/>运行<span v-if="attentionCount" class="attention-count">{{attentionCount}}</span><span v-else-if="run.running.length > 0" class="live-dot"></span></RouterLink>
         <RouterLink to="/settings"><UiIcon name="settings"/>设置</RouterLink>
       </nav>
-      <div class="sidebar-bottom"><span class="badge" :class="run.running.length > 0 ? 'green' : ''">{{ run.running.length > 0 ? '任务进行中' : '空闲' }}</span><p>课程助手 <span v-if="version">v{{ version }}</span></p></div>
+      <div class="sidebar-bottom"><span class="badge" :class="run.running.length > 0 ? 'green' : ''">{{ attentionCount ? attentionCount+' 个需处理' : run.running.length > 0 ? run.running.length+' 个任务进行中' : '空闲' }}</span><p>课程助手 <span v-if="version">v{{ version }}</span></p></div>
     </aside>
     <main class="workspace"><div class="titlebar"></div>
       <div v-if="error" class="page"><div class="notice error" role="alert">{{ error }}</div><button @click="initialize">重新加载</button></div>
@@ -67,6 +69,7 @@ nav a:hover { background: var(--ground); }
 nav a.router-link-active { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 3px #20252c08;  }
 .sidebar-bottom { margin-top: auto; padding: 12px 0;  }
 .sidebar-bottom p { color: var(--text-3); font-size: var(--fs-micro); margin-top: 8px; }
+.attention-count { margin-left:auto;color:var(--brass);font-size:12px; }
 .live-dot { width: 6px; height: 6px; background: var(--jade); border-radius: 50%; margin-left: auto; }
 .workspace { flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column; container-type: inline-size; }
 .titlebar { background: var(--ground);  height: 16px; flex-shrink: 0; -webkit-app-region: drag; }

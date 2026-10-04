@@ -18,7 +18,8 @@ function revealSelected(): void {
   if (item.bottom > bounds.bottom) list.value.scrollTop += item.bottom - bounds.bottom + 4
   else if (item.top < bounds.top) list.value.scrollTop += item.top - bounds.top - 4
 }
-defineExpose({ revealSelected })
+function focusSelected():void {list.value?.querySelector<HTMLButtonElement>('.step-select[aria-pressed=true]')?.focus()}
+defineExpose({ revealSelected,focusSelected })
 async function reorder(id: string, index: number): Promise<void> {
   const focus = document.activeElement as HTMLButtonElement | null
   emit('move', id, index)
@@ -53,9 +54,9 @@ function navigate(event: KeyboardEvent, index: number): void {
           <span class="step-text"><strong>{{ name(step) }}</strong><small>{{ unavailableCourse(course(step.courseId)) || `${ACTION_LABELS[step.options.action]} · ${step.options.timeLimitMinutes ? step.options.timeLimitMinutes+' 分钟' : '不限时长'}` }}</small></span>
         </button>
         <div class="step-tools">
-          <button type="button" :disabled="disabled||index===0" :aria-label="`上移步骤 ${index+1}`" @click="reorder(step.id,index-1)">↑</button>
-          <button type="button" :disabled="disabled||index===steps.length-1" :aria-label="`下移步骤 ${index+1}`" @click="reorder(step.id,index+1)">↓</button>
-          <button type="button" :disabled="disabled" :aria-label="`移除步骤 ${index+1}`" @click="removeStep(step.id)">移除</button>
+          <button type="button" :disabled="disabled||index===0" :title="index===0?'已是第一步':'将此步骤提前，配置随步骤一起移动'" :aria-label="`上移步骤 ${index+1}`" @click="reorder(step.id,index-1)">↑</button>
+          <button type="button" :disabled="disabled||index===steps.length-1" :title="index===steps.length-1?'已是最后一步':'将此步骤延后，配置随步骤一起移动'" :aria-label="`下移步骤 ${index+1}`" @click="reorder(step.id,index+1)">↓</button>
+          <button type="button" :disabled="disabled" title="只移除此步骤，不删除课程；移除后可撤销" :aria-label="`移除步骤 ${index+1}`" @click="removeStep(step.id)">移除</button>
         </div>
       </article>
       <p v-if="!steps.length" class="empty">从课程库添加第一步</p>

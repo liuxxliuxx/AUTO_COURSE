@@ -1,9 +1,14 @@
 <script setup lang="ts">
-import { ref, useId } from 'vue'
+import { computed, ref, useId, watch } from 'vue'
+import ChoiceButtons from './ChoiceButtons.vue'
 import type { CourseRunOptions } from '@shared/types'
 const options = defineModel<CourseRunOptions>({ required: true })
 const props = defineProps<{ kind?: string; disabled?: boolean }>()
 const uid = useId()
+const rememberedMinutes = ref(options.value.timeLimitMinutes > 0 ? options.value.timeLimitMinutes : 60)
+watch(() => options.value.timeLimitMinutes, value => { if (value > 0) rememberedMinutes.value = value })
+const limit = computed({ get:()=>options.value.timeLimitMinutes===0 ? 'unlimited' : 'limited', set:(value:string)=>{ options.value.timeLimitMinutes=value==='unlimited' ? 0 : rememberedMinutes.value } })
+const actions = computed(()=>[{value:'learn' as const,label:'学习',hint:'只学习课程内容'}, ...(props.kind !== 'mastery' ? [{value:'learn-transcribe' as const,label:'学习并转录',hint:'学习的同时生成转录文件'}] : []), ...(props.kind==='classic'||!props.kind ? [{value:'transcribe' as const,label:'仅转录',hint:'转录课程内容，不累计学习时长'}] : [])])
 const form = ref<HTMLFieldSetElement | null>(null)
 function focusInvalid(): void {
   const value = options.value
@@ -21,13 +26,13 @@ defineExpose({ focusInvalid })
 <template>
   <fieldset ref="form" class="options-grid" :disabled="disabled">
     <div class="field"><label :for="`${uid}-action`">运行方式</label>
-      <select :id="`${uid}-action`" v-model="options.action"><option value="learn">学习</option><option v-if="kind !== 'mastery'" value="learn-transcribe">学习并转录</option><option v-if="kind === 'classic' || !kind" value="transcribe">仅转录</option></select>
+      <ChoiceButtons :id="`${uid}-action`" v-model="options.action" label="运行方式" :choices="actions" :disabled="disabled" />
     </div>
     <div class="field"><label :for="`${uid}-start`">起始位置</label>
-      <select :id="`${uid}-start`" v-model="options.startPosition"><option value="beginning">从课程开头</option><option value="resume">从上次位置继续</option></select>
+      <ChoiceButtons :id="`${uid}-start`" v-model="options.startPosition" label="起始位置" :choices="[{value:'beginning',label:'课程开头'},{value:'resume',label:'上次位置'}]" :disabled="disabled" />
     </div>
     <div class="field"><label :for="`${uid}-limit`">单次时长</label>
-      <select :id="`${uid}-limit`" :value="options.timeLimitMinutes === 0 ? 'unlimited' : 'limited'" @change="options.timeLimitMinutes = ($event.target as HTMLSelectElement).value === 'unlimited' ? 0 : 60"><option value="unlimited">不限时长</option><option value="limited">指定分钟数</option></select>
+      <ChoiceButtons :id="`${uid}-limit`" v-model="limit" label="单次时长" :choices="[{value:'unlimited',label:'不限时长'},{value:'limited',label:'指定分钟'}]" :disabled="disabled" />
     </div>
     <div v-if="options.timeLimitMinutes !== 0" class="field"><label :for="`${uid}-minutes`">分钟数</label><input :id="`${uid}-minutes`" v-model.number="options.timeLimitMinutes" type="number" min="1" step="1" required /></div>
     <label class="check-row"><input :id="`${uid}-skip`" v-model="options.skipCompleted" type="checkbox" /> 跳过已完成的内容</label>

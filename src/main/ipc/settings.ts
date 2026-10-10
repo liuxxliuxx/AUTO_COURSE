@@ -1,6 +1,7 @@
 /** 设置 / 凭据 / 课程 / 对话框 / 应用信息 相关 IPC。 */
 
-import { app, dialog, BrowserWindow } from 'electron'
+import { dialog, BrowserWindow } from 'electron'
+import { appInfo, openSupport, openProjectLink } from '../support'
 import { writeFile } from 'node:fs/promises'
 import { buildCourseQuestionBankExport } from '../services/question-bank-export'
 import { IPC_INVOKE, IPC_EVENT } from '@shared/ipc'
@@ -79,12 +80,10 @@ export function registerSettingsIpc(container: ServiceContainer): void {
 
   // ------------------------------------------------------------ 应用信息
 
-  handle(IPC_INVOKE.appVersion, () => ({
-    version: app.getVersion(),
-    electron: process.versions.electron,
-    chrome: process.versions.chrome,
-    platform: process.platform
-  }))
+  handle(IPC_INVOKE.appVersion, appInfo)
+  handle(IPC_INVOKE.appSupport, openSupport)
+  handle(IPC_INVOKE.appLink, openProjectLink)
+  handle(IPC_INVOKE.appDiagnostics, () => JSON.stringify({ ...appInfo(), schemaVersion: container.migration.schemaVersion, encryptionAvailable: container.credentials.state().encryptionAvailable }, null, 2))
 
   handle(IPC_INVOKE.logsRecent, () => container.getRecentLogs())
 

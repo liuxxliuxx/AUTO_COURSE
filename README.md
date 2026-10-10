@@ -1,208 +1,57 @@
-# 智慧树自动刷课 · v2
+# AUTO_COURSE 2.0
 
-自动播放智慧树平台课程视频，支持传统课程、知识图谱课程和掌握度课程、弹题自动作答、
-验证码人工介入、语音转文字，以及可持久化、可定时、可并行运行的课程工作流。
+面向 Windows x64 和 macOS 13 及以上 的智慧树课程学习与工作流客户端。支持传统课程、知识图谱课程与掌握度课程，保存课程进度、处理弹题，并在登录或验证码需要人工处理时提示你接管课程窗口。
 
-> **当前分支 `rewrite/electron` 是 v2 重写版**（Electron + Vue 3 + TypeScript + Playwright）。
-> v1（PySide6 + Selenium）已从工作区删除，冻结在 tag `v1-pyside-final`；
-> 需要对照行为时 `git worktree add /tmp/v1 v1-pyside-final`。
-> 迁移过程与每一处行为变化见 [docs/MIGRATION.md](docs/MIGRATION.md)。
+[下载发布版本](https://github.com/liuxxliuxx/AUTO_COURSE/releases) · [用户指南](docs/user/README.md) · [反馈问题](https://github.com/liuxxliuxx/AUTO_COURSE/issues)
 
----
+## 安装与上手
 
-## 架构
+- Windows x64：下载 `AUTO_COURSE-<版本>-win-x64.exe`，按安装向导完成安装。
+- Apple Silicon：下载 `AUTO_COURSE-<版本>-mac-arm64.dmg`；Intel Mac：选择 `mac-x64.dmg`。打开磁盘镜像，将 AUTO_COURSE 拖入 Applications。
+- 当前构建未签名或公证；下载时核对仓库与 SHA256 校验值。macOS 的具体打开步骤见安装指南。
+- 普通课程学习无需安装 Node、Python、Chrome 或 ChromeDriver。转录功能另需 Python、ffmpeg 与模型依赖。
 
-```
-Vue 3 Renderer（控制面板）
-        │  typed IPC（preload 白名单，不暴露 ipcRenderer）
-Electron Main
-        │
-   WorkflowRunManager ──┬── WorkflowExecutor  顺序执行步骤
-                        ├── ClassicCourseRunner 传统课程
-                        ├── MapCourseRunner      知识图谱课程
-                        ├── MasteryCourseRunner  掌握度课程
-                        ├── WorkflowScheduler    工作流定时
-                        ├── StorageService        SQLite
-                        └── TranscriptionService ─► Python STT Worker
-        │                                        （SenseVoice，NDJSON 协议）
-   BrowserService
-        │  Playwright
-        ▼
-   Browser Host（同一个 Electron 二进制的 --browser-host 子进程）
-        │
-     课程网页
-```
+打开应用，在「设置 → 账号与登录」选择登录方式并保存账号，然后在「课程」页添加学习页地址和课程名称，选中课程点击「开始运行」。在「运行」页查看进度，按提示处理登录或验证码后继续。
 
-**为什么需要一个单独的 Browser Host 进程**：Electron 通过
-`--remote-debugging-port` 暴露的 CDP 不提供 `Runtime` domain，而 Playwright 的
-`locator/click/fill` 全部依赖它 —— 也就是说 Playwright **无法**驱动应用自身的
-BrowserWindow。实验证据与取舍见 [docs/PLAYWRIGHT_POC.md](docs/PLAYWRIGHT_POC.md)。
+## 功能与边界
 
----
-
-## 环境要求
-
-| 依赖 | 用途 | 是否必须 |
-|---|---|---|
-| Node.js ≥ 20 | 构建 | 开发必须 |
-| ffmpeg | 提取音轨（语音转文字） | 只在用转录时需要 |
-| Python 3.10+ | 跑 SenseVoice worker | 只在用转录时需要 |
-
-### 安装 ffmpeg
-
-```bash
-# macOS
-brew install ffmpeg
-
-# Windows
-winget install Gyan.FFmpeg
-# 或 conda install -c conda-forge ffmpeg
-```
-
-### 安装转录依赖（可选）
-
-```bash
-pip install -r python/transcriber/requirements.txt
-pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
-```
-
-首次转录时会自动下载 SenseVoiceSmall 权重（数百 MB）。模型常驻在 worker 进程里，
-一节课只加载一次。
-
----
-
-## 开发
-
-```bash
-npm install        # postinstall 会自动为新 Electron 重建 better-sqlite3
-
-npm run dev        # 开发模式（Vite HMR）
-npm run build      # 类型检查 + 三段构建（main / preload / renderer）
-npm start          # 预览构建产物
-```
-
-> **国内网络**：仓库根目录的 `.npmrc` 已把 Electron 二进制指向 npmmirror。
-> 若 `npm install` 后 `node_modules/electron/dist` 为空，执行
-> `node node_modules/electron/install.js` 补下载。
-
----
-
-## 测试
-
-```bash
-npm test           # 全部单测 + DOM 夹具测试
-npm run test:watch
-```
-
-测试分三层（handoff §29）：
-
-| 层 | 位置 | 覆盖 |
-|---|---|---|
-| 单元测试 | `tests/unit/` | 调度决策、设置往返、DB CRUD、v1 导入映射、图谱解析、URL 解析、文件名净化、媒体下载 |
-| DOM 夹具测试 | `tests/integration/` | 用真实 Chromium 打开 `tests/fixtures/` 里复刻真实结构的页面，驱动 Navigator / VideoController / QuizService / CaptchaService |
-| 端到端冒烟 | `scripts/` | Electron 启动、typed IPC、转录链路（假 Python worker）、打包产物验证 |
-
-DOM 夹具测试需要先装一次浏览器：
-
-```bash
-npx playwright install chromium
-```
-
-**真实站点只用于人工冒烟**，自动化测试不碰线上，也不写入任何账号密码。
-
----
-
-## 构建
-
-```bash
-npm run build:mac      # 输出 release/*.dmg
-npm run build:win      # 输出 release/*.exe（NSIS 安装包）
-```
-
-验证打包产物（会真的启动它并拉一次 Browser Host）：
-
-```bash
-node scripts/verify-package.mjs "release/mac-arm64/ZhiHuiShu AutoCourse.app/Contents/MacOS/ZhiHuiShu AutoCourse"
-```
-
-macOS 产物未做代码签名，首次打开需右键 → 打开。
-
----
-
-## 使用
-
-1. **设置 · 账号与登录** 填登录方式与账号密码（只有数字石大旧门户流程需要登录跳转 URL）
-2. **课程** 页点「＋ 添加课程」：粘贴课程学习页地址，取一个名字，按需调整这门课程的运行配置
-3. 在课程列表里选中要跑的那门，点「开始运行 →」；也可以直接点课程详情里的同一个按钮
-4. **运行** 页看进度、日志与异常
-
-保存课程**不会**自动运行，每次只跑一门。切换查看其他课程不会影响正在运行的任务，
-运行期间的课程会被锁定，需要先停止任务才能编辑或移除。
-
-需要人工处理时（验证码或手动登录），运行页会给出对应的提示和按钮，
-在课程窗口里完成后点「已完成验证/登录，继续」。普通执行错误不会提示验证码。
-
-数字石大提供两种独立登录方式：「机构 SSO（新）」直接提交 CAS
-标准表单并走完智慧树 OAuth；「旧门户（兼容）」保留原来的数字石大工作台跳转。
-两者可在设置里选择，不会互相自动回退。登录失败会停止运行并保留页面以便检查。
-
-### 运行方式
-
-运行方式按课程保存，不再是全局布尔开关的组合：
-
-| 运行方式 | 传统课 | 图谱课 | 掌握度课 | 说明 |
-|---|---|---|---|---|---|
-| 学习 | ✅ | ✅ | ✅ | 播放视频或进入知识点练习并自动处理弹题/验证码 |
-| 学习并转录 | ✅ | ✅ | — | 播放的同时录音转写 |
-| 仅转录 | ✅ | — | — | 不播放视频，直接下载音轨转文字 |
-
-每门课程还各自保存「起始位置」「跳过已完成内容」「单次时长」。
-在 **设置 · 课程默认配置** 里改的是**新课程**的初始值，不会影响已有课程。
-
-掌握度课会在每次提交后进入作答解析页：整套题全对才进入下一轮，错题会推进题库试错次数；
-已确认的正确答案、选项和试错次数保存在应用 SQLite 中，后续运行优先复用。
-
-### 工作流
-
-在 **课程** 页保存课程后，进入 **工作流** 页把多门课程按顺序组合起来。
-每一步保存自己的运行方式、续学选项和时长；保存工作流不会自动运行。
-工作流支持立即运行、单次定时和每日固定时间。不同工作流可以并行运行，
-如果课程集合重叠，后启动的工作流会在开始前被拒绝并记录原因。
-
-**运行** 页按运行实例展示步骤、进度、日志和人工介入；编辑工作流只影响下一次运行。
-应用重启后会保留工作流与运行历史，退出时未完成的实例标记为中断。
-
----
-
-## 数据与凭据
-
-- 数据库：`<用户数据目录>/auto_course.db`
-  （macOS `~/Library/Application Support/auto-course/`，
-  Windows `%APPDATA%\auto-course\`）
-- 首次启动会**只读**检测 v1 数据库并导入，此后只用 v2 库
-- 首次打开新版界面会把旧的「当前课程 + 地址历史」导入成课程库：
-  重复地址合并，进度按课程 ID 保存，改名不丢续学位置；
-  旧备注对应多门同名课程时不猜测归属，改为在课程详情里提示重新确认
-- 账号密码用 Electron `safeStorage` 加密保存，**不迁移** v1 的 keyring 凭据 ——
-  升级后需要重新输入一次
-- 转录结果写在设置里指定的目录下 `课程录音/<课程名>/<课时名>.txt`
-  （同名课程按加入顺序追加 `(2)`、`(3)` 这样的序号，不会混进同一个目录）
-
----
+- 每门课程独立保存运行方式、起始位置、续学和单次时长；课程默认配置只影响之后添加的课程。
+- 工作流按顺序执行课程，支持立即运行、单次定时、每日定时；不同工作流可并行，课程冲突时拒绝后启动的任务。
+- 定时检查依赖应用保持运行，不会在关机后唤醒电脑。
+- 掌握度题库持久化，支持导出 JSON；转录支持范围见用户指南。
+- 三种登录方式独立：智慧树、机构 SSO、旧门户；失败后不会自动切换。
+- 登录、学习时长和平台页面变化可能需要人工处理。真实网站功能仍需发布前人工验收。
 
 ## 文档
 
-- [docs/MIGRATION.md](docs/MIGRATION.md) — v1 → v2 的完整迁移说明与每一处行为变化
-- [docs/INTERACTION.md](docs/INTERACTION.md) — 页面流程、模块边界与运行快照契约
-- [docs/PLAYWRIGHT_POC.md](docs/PLAYWRIGHT_POC.md) — 浏览器自动化方案的技术验证报告
-- [docs/V1_BASELINE.md](docs/V1_BASELINE.md) — v1 的冻结行为记录
-- [docs/v2_handoff.md](docs/v2_handoff.md) — 本次重构的目标与分阶段计划
+- [安装、快速上手、FAQ、故障排除与迁移](docs/user/README.md)
+- [文档目录](docs/README.md)（应用「关于与帮助 → 打开用户文档」在浏览器中打开 GitHub 仓库的 docs 目录）
+- [开发者与许可证](docs/PROJECT.md)
+- [发布与验收](docs/RELEASING.md)
+- [技术迁移记录](docs/MIGRATION.md)、[界面契约](docs/INTERACTION.md)、[自动化方案验证](docs/PLAYWRIGHT_POC.md)
 
----
+## 开发与打包
 
-## 已知限制
+要求 Node.js ≥ 22.12.0，建议 Node 24 LTS；使用本机对应平台构建。
 
-- 未做代码签名，macOS 需要右键打开
-- 不做任何浏览器指纹伪造或反自动化检测绕过（handoff §5）
-- 需要系统自带 ffmpeg 与 Python，未随包分发
-- Windows 构建尚未在真实 Windows 机器上实测
+```sh
+npm ci
+npm run dev
+npm run build
+npm run release:check
+npm run build:mac
+npm run build:win
+```
+
+`package.json` 是版本与产品名的来源。构建写入 Git commit 和时间；安装包输出到 `release/`。
+打包时检查原生 SQLite 模块。DOM 测试需 `npx playwright-core install chromium`。
+
+## 数据与升级
+
+v2 数据在用户数据目录的 `auto_course.db`；账号加密保存在 `credentials.bin`。应用「关于与帮助 → 打开数据目录」显示实际位置。更换产品显示名时继续复用已有 v2 数据目录。v1 数据只读导入、已有 v2 数据不覆盖，旧密码不迁移。升级与备份方法见用户指南。
+
+## 开发者与许可
+
+v1：liuxxliuxx 与 InvalidNamee 共同开发。v2：主要由 InvalidNamee 维护，感谢所有贡献者。项目采用 [MIT License](LICENSE)；第三方许可证可在应用中查看。
+
+支持范围：Windows x64、macOS arm64/x64。Windows 与 Intel Mac 的真实打包启动验收以 Release 验收表为准，构建成功不等于平台验收完成。

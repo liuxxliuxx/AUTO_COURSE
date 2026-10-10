@@ -45,7 +45,7 @@ try {
 
   // 1. Vue 是否挂载
   const brand = await window.locator('.brand').textContent({ timeout: 10_000 })
-  if (brand?.includes('课程助手')) pass(`Renderer 已渲染: ${brand.trim()}`)
+  if (brand?.includes('AUTO_COURSE')) pass(`Renderer 已渲染: ${brand.trim()}`)
   else fail(`Renderer 未渲染，.brand = ${JSON.stringify(brand)}`)
 
   // 2. 主进程 IPC 往返
@@ -53,6 +53,11 @@ try {
   if (info?.electron) pass(`typed IPC 往返正常 (electron ${info.electron}, chrome ${info.chrome})`)
   else fail(`typed IPC 返回异常: ${JSON.stringify(info)}`)
 
+  if (info.name === 'AUTO_COURSE' && info.author === 'InvalidNamee' && info.license === 'MIT' && info.commit) pass('应用名称、作者、许可证和构建编号一致')
+  else fail('应用元数据不一致')
+  const diagnostics = JSON.parse(await window.evaluate(() => window.appApi.app.diagnostics()))
+  if (!['username','password','courses','userData','logs'].some(key => key in diagnostics)) pass('诊断信息仅含运行环境')
+  else fail('诊断信息含非环境字段')
   // 3. Renderer 是否被正确隔离
   const leaked = await window.evaluate(() => ({
     require: typeof globalThis.require,
@@ -70,7 +75,8 @@ try {
     ['课程', '我的课程'],
     ['工作流', '工作流'],
     ['运行', '运行'],
-    ['设置', '设置']
+    ['设置', '设置'],
+    ['关于与帮助', '关于与帮助']
   ]) {
     await window.getByRole('link', { name: label, exact: true }).click()
     await window.getByRole('heading', { name: heading, exact: true }).waitFor({ timeout: 10_000 })

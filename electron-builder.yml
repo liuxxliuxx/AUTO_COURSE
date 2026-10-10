@@ -1,6 +1,5 @@
 appId: com.autocourse.zhihuishu
-productName: ZhiHuiShu AutoCourse
-copyright: Copyright © 2026 AUTO_COURSE
+copyright: Copyright © 2026 liuxxliuxx and InvalidNamee
 
 directories:
   output: release
@@ -15,6 +14,10 @@ files:
 
 # 打包后仍然需要以真实文件形式存在的东西
 extraResources:
+  - from: LICENSE
+    to: LICENSE
+  - from: THIRD_PARTY_NOTICES.txt
+    to: THIRD_PARTY_NOTICES.txt
   # Python STT worker：Node 侧用 resourcesPath 定位它
   # （见 services/container.ts::resolveWorkerScript）
   - from: python/transcriber
@@ -31,12 +34,10 @@ asarUnpack:
 # 不做代码签名（本仓库没有发布证书）
 mac:
   category: public.app-category.education
+  minimumSystemVersion: 13.0.0
   icon: assets/icon.icns
   target:
-    - target: dmg
-      arch:
-        - arm64
-        - x64
+    - dmg
   # 必须显式关掉签名。否则 electron-builder 会自动发现开发机上
   # 任意一张 Apple Development 证书，然后对 bundle 里的每个文件逐个 codesign
   # 并请求时间戳 —— 在没有网络或证书不可用时会把打包卡住十几分钟。
@@ -47,7 +48,7 @@ mac:
   # 因此不能剥掉 Electron 的调试能力。
 
 dmg:
-  artifactName: ${productName}-${version}-${arch}.dmg
+  artifactName: ${productName}-${version}-mac-${arch}.dmg
 
 win:
   icon: assets/icon.ico
@@ -57,11 +58,12 @@ win:
         - x64
 
 nsis:
+  artifactName: ${productName}-${version}-win-${arch}.exe
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: 智慧树自动刷课
+  shortcutName: ${productName}
 
 # AppImage/deb 不在本次范围内（handoff §27 明确不支持 Linux）
 linux: null

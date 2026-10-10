@@ -101,6 +101,9 @@ export function createApi(ipcRenderer: IpcRenderer): AppApi {
     },
 
     app: {
+      openSupport: (resource) => invoke(ipcRenderer, IPC_INVOKE.appSupport, resource),
+      openLink: (resource) => invoke(ipcRenderer, IPC_INVOKE.appLink, resource),
+      diagnostics: () => invoke(ipcRenderer, IPC_INVOKE.appDiagnostics),
       version: () => invoke(ipcRenderer, IPC_INVOKE.appVersion)
     },
 

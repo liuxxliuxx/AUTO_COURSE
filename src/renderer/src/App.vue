@@ -15,7 +15,7 @@ watch(() => settings.settings?.accentColor, value => {
 }, { immediate: true })
 const attentionCount=computed(()=>run.runs.filter(needsAttention).length)
 const router = useRouter()
-const version = ref(''), platform = ref(''), error = ref('')
+const productName = ref(''), version = ref(''), platform = ref(''), error = ref('')
 const ready = ref(false)
 let unsubscribers: Array<() => void> = []
 async function initialize(): Promise<void> {
@@ -28,7 +28,7 @@ async function initialize(): Promise<void> {
     ]
     await Promise.all([run.load(), courses.load(), settings.load()])
     if (courses.error || settings.error) throw new Error(courses.error || settings.error)
-    const info = await window.appApi.app.version(); version.value = info.version; platform.value = info.platform
+    const info = await window.appApi.app.version(); productName.value = info.name; version.value = info.version; platform.value = info.platform
     if (run.running.length > 0 && router.currentRoute.value.path !== '/run') await router.replace('/run')
     ready.value = true
   } catch (e) { error.value = `初始化失败：${String(e)}` }
@@ -41,14 +41,15 @@ onUnmounted(() => { unsubscribers.forEach(off => off()); clearInterval(poll);cle
   <div class="shell" :data-platform="platform">
     <aside class="sidebar">
       <div class="window-space"></div>
-      <div class="brand">课程助手</div>
+      <div class="brand">{{ productName }}</div>
       <nav aria-label="主导航">
         <RouterLink to="/courses"><UiIcon name="courses"/>课程</RouterLink>
         <RouterLink to="/workflows"><UiIcon name="workflows"/>工作流</RouterLink>
         <RouterLink to="/run" aria-label="运行" :title="attentionCount ? attentionCount+' 个任务需要登录或验证码处理' : run.running.length+' 个任务进行中'"><UiIcon name="run"/>运行<span v-if="attentionCount" class="attention-count">{{attentionCount}}</span><span v-else-if="run.running.length > 0" class="live-dot"></span></RouterLink>
         <RouterLink to="/settings"><UiIcon name="settings"/>设置</RouterLink>
+        <RouterLink to="/about">关于与帮助</RouterLink>
       </nav>
-      <div class="sidebar-bottom"><span class="badge" :class="run.running.length > 0 ? 'green' : ''">{{ attentionCount ? attentionCount+' 个需处理' : run.running.length > 0 ? run.running.length+' 个任务进行中' : '空闲' }}</span><p>课程助手 <span v-if="version">v{{ version }}</span></p></div>
+      <div class="sidebar-bottom"><span class="badge" :class="run.running.length > 0 ? 'green' : ''">{{ attentionCount ? attentionCount+' 个需处理' : run.running.length > 0 ? run.running.length+' 个任务进行中' : '空闲' }}</span><p>{{ productName }} <span v-if="version">v{{ version }}</span></p></div>
     </aside>
     <main class="workspace"><div class="titlebar"></div>
       <div v-if="error" class="page"><div class="notice error" role="alert">{{ error }}</div><button @click="initialize">重新加载</button></div>
@@ -62,7 +63,7 @@ onUnmounted(() => { unsubscribers.forEach(off => off()); clearInterval(poll);cle
 .sidebar { width: 152px; flex-shrink: 0; background: var(--sidebar); border-right: 1px solid var(--line); display: flex; flex-direction: column; padding: 0 10px; }
 .window-space { height: 20px; flex-shrink: 0; -webkit-app-region: drag; }
 .shell[data-platform=darwin] .window-space { height: 40px; }
-.brand { font-size: var(--fs-section); font-weight: 600; letter-spacing: 0; padding: 8px 10px 20px; }
+.brand { font-size: 14px; font-weight: 600; letter-spacing: 0; padding: 8px 10px 20px; }
 nav { display: grid; gap: 6px; }
 nav a { display: flex; align-items: center; gap: 10px; border-radius: var(--r-control); height: var(--rail-height); padding: 0 10px; color: var(--text-2); font-weight: 500; }
 nav a:hover { background: var(--ground); }

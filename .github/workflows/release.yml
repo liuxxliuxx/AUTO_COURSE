@@ -1,0 +1,90 @@
+name: Build release candidates
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v2.*']
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win
+            arch: x64
+          - os: macos-15
+            platform: mac
+            arch: arm64
+          - os: macos-15-intel
+            platform: mac
+            arch: x64
+    runs-on: ${{ matrix.os }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright-core install chromium
+      - run: npm test
+      - run: npx electron-builder install-app-deps
+      - run: npm run build
+      - run: npm run release:check
+      - run: npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish never --config electron-builder.yml
+      - name: Packaged startup smoke (isolated data)
+        shell: bash
+        run: |
+          if [ "${{ matrix.platform }}" = "win" ]; then
+            node scripts/verify-package.mjs "release/win-unpacked/AUTO_COURSE.exe"
+          else
+            directory="mac"
+            if [ "${{ matrix.arch }}" = "arm64" ]; then directory="mac-arm64"; fi
+            node scripts/verify-package.mjs "release/$directory/AUTO_COURSE.app/Contents/MacOS/AUTO_COURSE"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            release/*.exe
+            release/*.dmg
+          if-no-files-found: error
+  draft:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: candidate-*
+          merge-multiple: true
+          path: release
+      - run: node scripts/release-notes.mjs release-notes.md
+      - name: Checksums
+        working-directory: release
+        run: sha256sum *.exe *.dmg > SHA256SUMS.txt
+      - name: Create or update draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            is_draft=$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)
+            if [ "$is_draft" != "true" ]; then echo 'Refusing to overwrite published release'; exit 1; fi
+            gh release edit "$GITHUB_REF_NAME" --notes-file release-notes.md
+          else
+            prerelease=()
+            if [[ "$GITHUB_REF_NAME" == *-* ]]; then prerelease=(--prerelease); fi
+            gh release create "$GITHUB_REF_NAME" --draft "${prerelease[@]}" --title "AUTO_COURSE ${GITHUB_REF_NAME#v}" --notes-file release-notes.md
+          fi
+          gh release upload "$GITHUB_REF_NAME" release/*.exe release/*.dmg release/SHA256SUMS.txt --clobber

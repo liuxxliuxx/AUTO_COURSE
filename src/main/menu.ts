@@ -5,7 +5,8 @@
  * 业务操作全部在 Vue 界面里，不放菜单。
  */
 
-import { app, Menu, shell, type MenuItemConstructorOptions } from 'electron'
+import { app, Menu, type MenuItemConstructorOptions } from 'electron'
+import { openSupport, openProjectLink } from './support'
 import { isDev } from './app-main'
 
 export function installApplicationMenu(): void {
@@ -55,12 +56,11 @@ export function installApplicationMenu(): void {
     {
       label: '帮助',
       submenu: [
-        {
-          label: '项目主页',
-          click: () => {
-            void shell.openExternal('https://github.com/liuxxliuxx/AUTO_COURSE')
-          }
-        }
+        { label: '关于 AUTO_COURSE', click: () => app.showAboutPanel() },
+        { label: '用户文档', click: () => { void openSupport('guide').catch(() => {}) } },
+        { label: '第三方许可证', click: () => { void openSupport('licenses').catch(() => {}) } },
+        { label: '项目主页', click: () => { void openProjectLink('homepage').catch(() => {}) } },
+        { label: '查看发布版本', click: () => { void openProjectLink('releases').catch(() => {}) } }
       ]
     }
   ]

@@ -3,20 +3,23 @@
   "version": "2.0.0",
   "description": "智慧树自动刷课桌面应用 (Electron + Vue 3 + Playwright)",
   "main": "./out/main/index.js",
-  "author": "AUTO_COURSE",
+  "author": "InvalidNamee",
   "private": true,
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "npm run typecheck && electron-vite build",
+    "build": "npm run licenses && npm run typecheck && electron-vite build",
     "start": "electron-vite preview",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "vue-tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build:win": "npm run build && electron-builder --win --config electron-builder.yml",
-    "build:mac": "npm run build && electron-builder --mac --config electron-builder.yml",
-    "postinstall": "electron-builder install-app-deps"
+    "build:win": "npm run build && electron-builder --win --publish never --config electron-builder.yml",
+    "build:mac": "npm run build && electron-builder --mac --publish never --config electron-builder.yml",
+    "postinstall": "electron-builder install-app-deps",
+    "release:check": "node scripts/release-check.mjs",
+    "release:notes": "node scripts/release-notes.mjs",
+    "licenses": "node scripts/collect-licenses.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
@@ -35,6 +38,29 @@
     "vitest": "^5.0.0",
     "vue": "^3.5.42",
     "vue-router": "^5.3.1",
-    "vue-tsc": "^3.3.11"
-  }
+    "vue-tsc": "^3.3.11",
+    "js-yaml": "^4.3.2"
+  },
+  "productName": "AUTO_COURSE",
+  "homepage": "https://github.com/liuxxliuxx/AUTO_COURSE",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/liuxxliuxx/AUTO_COURSE.git"
+  },
+  "bugs": {
+    "url": "https://github.com/liuxxliuxx/AUTO_COURSE/issues"
+  },
+  "license": "MIT",
+  "contributors": [
+    {
+      "name": "liuxxliuxx"
+    },
+    {
+      "name": "InvalidNamee"
+    }
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "documentation": "https://github.com/liuxxliuxx/AUTO_COURSE/tree/rewrite/electron/docs"
 }

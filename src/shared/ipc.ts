@@ -1,3 +1,4 @@
+import type { AppInfo, SupportResource } from './app-info'
 import type { WorkflowApi, Workflow, WorkflowInput, WorkflowRun, WorkflowStartResult, RunEvent } from './workflows'
 /**
  * Typed IPC 契约 —— 单一事实来源。
@@ -68,6 +69,7 @@ export const IPC_INVOKE = {
 
   dialogPickDirectory: 'dialog:pickDirectory',
 
+  appSupport: 'app:support', appLink: 'app:link', appDiagnostics: 'app:diagnostics',
   appVersion: 'app:version'
 } as const
 
@@ -155,9 +157,12 @@ export interface InvokeMap {
 
   [IPC_INVOKE.dialogPickDirectory]: { req: void; res: string }
 
+  [IPC_INVOKE.appSupport]: { req: SupportResource; res: void }
+  [IPC_INVOKE.appLink]: { req: 'homepage' | 'issues' | 'releases'; res: void }
+  [IPC_INVOKE.appDiagnostics]: { req: void; res: string }
   [IPC_INVOKE.appVersion]: {
     req: void
-    res: { version: string; electron: string; chrome: string; platform: NodeJS.Platform }
+    res: AppInfo
   }
 }
 
@@ -235,6 +240,9 @@ export interface AppApi {
   }
 
   app: {
+    openSupport(resource: SupportResource): Promise<void>
+    openLink(resource: 'homepage' | 'issues' | 'releases'): Promise<void>
+    diagnostics(): Promise<string>
     version(): Promise<InvokeMap[typeof IPC_INVOKE.appVersion]['res']>
   }
 

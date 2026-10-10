@@ -11,6 +11,10 @@
 
 import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'node:path'
+import { mkdirSync } from 'node:fs'
+import { userDataDirectory } from './util/user-data'
+import metadata from '../../package.json'
+import { appInfo } from './support'
 import { ServiceContainer } from './services/container'
 import { registerIpcHandlers } from './ipc'
 import { installApplicationMenu } from './menu'
@@ -60,7 +64,7 @@ function createMainWindow(): BrowserWindow {
     minWidth: 960,
     minHeight: 640,
     show: false,
-    title: '课程助手',
+    title: metadata.productName,
     backgroundColor: '#f5f7fb',
     autoHideMenuBar: true,
     // macOS 下把系统标题栏内嵌，让红黄绿按钮浮在自己的顶栏上，
@@ -108,6 +112,19 @@ async function shutdown(): Promise<void> {
 }
 
 export function startApplication(): void {
+  // Keep installed v2 data when the display name changes; honour isolated test profiles.
+  if (!app.commandLine.hasSwitch('user-data-dir')) {
+    const base = app.getPath('appData')
+    const directory = userDataDirectory(base)
+    mkdirSync(directory, { recursive: true })
+    app.setPath('userData', directory)
+    app.setPath('sessionData', directory)
+  }
+  app.setName(metadata.productName)
+  if (process.platform === 'win32') app.setAppUserModelId('com.autocourse.zhihuishu')
+  app.setAboutPanelOptions({ applicationName: metadata.productName, applicationVersion: app.getVersion(),
+    version: appInfo().commit, copyright: '© 2026 liuxxliuxx and InvalidNamee', website: metadata.homepage })
+
   // 单实例：第二个实例直接把已存在的窗口拉到前台。
   const gotLock = app.requestSingleInstanceLock()
   if (!gotLock) {

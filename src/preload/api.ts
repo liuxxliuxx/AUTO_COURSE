@@ -47,7 +47,8 @@ export function createApi(ipcRenderer: IpcRenderer): AppApi {
     settings: {
       getAll: () => invoke(ipcRenderer, IPC_INVOKE.settingsGetAll),
       update: (patch) => invoke(ipcRenderer, IPC_INVOKE.settingsUpdate, patch),
-      validate: () => invoke(ipcRenderer, IPC_INVOKE.settingsValidate)
+      validate: () => invoke(ipcRenderer, IPC_INVOKE.settingsValidate),
+      clearCache: () => invoke(ipcRenderer, IPC_INVOKE.settingsClearCache)
     },
 
     credentials: {

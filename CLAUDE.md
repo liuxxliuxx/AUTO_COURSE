@@ -15,7 +15,7 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
 git worktree add /tmp/v1 v1-pyside-final
 ```
 
-仓库里**唯一**保留的 Python runtime 是 `python/transcriber/`（SenseVoice STT worker）。
+转录使用 `resources/stt/worker.cjs` 中的 SenseVoiceSmall JavaScript/WASM worker，无 Python runtime。
 - v1 → v2 的每一处行为变化 → 见 `docs/MIGRATION.md`
 
 ## 运行
@@ -40,7 +40,7 @@ npx vitest run tests/unit    # 只跑单元测试（不需要浏览器）
 |---|---|---|
 | 单元 | `tests/unit/` | 无 |
 | DOM 夹具 | `tests/integration/` | `npx playwright install chromium` |
-| 端到端冒烟 | `scripts/` | Electron / Python / ffmpeg |
+| 端到端冒烟 | `scripts/` | Electron / ffmpeg / SenseVoiceSmall 模型 |
 
 其他验证脚本：
 
@@ -71,7 +71,7 @@ src/main/             Electron 主进程（v2 的 backend）
 │   ├── bot-service.ts          任务生命周期状态机（唯一持有者）
 │   ├── scheduler-service.ts    自动调度
 │   ├── transcription-service.ts 转录编排 + MediaPort 实现
-│   ├── stt-worker.ts           Python STT worker 桥接（NDJSON）
+│   ├── stt-worker.ts           WASM worker 生命周期与任务协议
 │   ├── media.ts                ffmpeg + Node 侧下载
 │   ├── settings-service.ts     类型化设置
 │   ├── event-bus.ts            Service → IPC → Renderer
@@ -82,7 +82,7 @@ src/main/             Electron 主进程（v2 的 backend）
 src/preload/          只暴露 window.appApi，不暴露 ipcRenderer
 src/renderer/         Vue 3 控制面板（不含任何业务状态机）
 src/shared/           Main / Preload / Renderer 共享的类型契约
-python/transcriber/   v2 唯一保留的 Python：SenseVoice worker（audio → text）
+resources/stt/       SenseVoiceSmall WASM worker（audio → text）
 ```
 
 ## 关键约束
@@ -118,10 +118,10 @@ python/transcriber/   v2 唯一保留的 Python：SenseVoice worker（audio → 
 
 ### 转录
 
-- Python 侧只能做 `audio → text`。它不允许知道智慧树、DOM、验证码、
+- WASM worker 只能做 `audio → text`。它不允许知道智慧树、DOM、验证码、
   数据库、Electron 的任何事（handoff §21）。
 - Node 侧负责媒体获取、下载、录音、ffmpeg、文件管理、任务编排。
-- 协议是 stdin/stdout NDJSON，worker 常驻。
+- 协议是 worker_threads 消息，worker 常驻；首次使用下载模型到 userData。
 - 录音产物**不走浏览器下载**：blob 下载在 Electron 下既不触发 Playwright
   事件也不触发宿主 `will-download`，必须走「页面攒块 + Node 分批取回」。
 

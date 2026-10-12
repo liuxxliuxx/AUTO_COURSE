@@ -13,8 +13,8 @@ import { CourseTaskExecutor } from '../workflows/course-task-executor'
  * Renderer 永远看不到这些对象本身，只能通过 typed IPC 调用。
  */
 
-import { app, BrowserWindow } from 'electron'
-import { existsSync } from 'node:fs'
+import { app, BrowserWindow, session } from 'electron'
+import { clearApplicationCache } from './cache-service'
 import { join } from 'node:path'
 import { addLogSink, createLogger } from './logger'
 import { EventBus } from './event-bus'
@@ -26,22 +26,23 @@ import { CredentialStore } from '../storage/credentials'
 import { maybeImportLegacy } from '../storage/migrations/v1-import'
 import { BrowserService } from '../automation/browser-service'
 import { TranscriptionService } from './transcription-service'
-import { findPython } from './stt-worker'
+import type { SttWorkerOptions } from './stt-worker'
 import { IPC_EVENT, type EventName } from '@shared/ipc'
 import type { LogEntry, LogLevel, MigrationReport } from '@shared/types'
 
 const logger = createLogger('container')
 
-/**
- * worker.py 的位置：开发态在仓库里，打包后在 resources 下。
- * 放在这里是因为只有 Electron 侧知道 app 路径与 resourcesPath。
- */
-function resolveWorkerScript(): string {
-  const candidates = [
-    join(app.getAppPath(), 'python', 'transcriber', 'worker.py'),
-    join(process.resourcesPath ?? '', 'python', 'transcriber', 'worker.py')
-  ]
-  return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0]
+/** Use physical files for worker/WASM resources, including outside app.asar after packaging. */
+function sttOptions(userData: string): SttWorkerOptions {
+  return {
+    modelDir: join(userData, 'models', 'sensevoice-small-int8-2024-07-17'),
+    scriptPath: app.isPackaged
+      ? join(process.resourcesPath, 'stt', 'worker.cjs')
+      : join(app.getAppPath(), 'resources', 'stt', 'worker.cjs'),
+    modulePath: app.isPackaged
+      ? join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'sherpa-onnx', 'index.js')
+      : require.resolve('sherpa-onnx'),
+  }
 }
 
 export interface AppPaths {
@@ -105,7 +106,7 @@ export class ServiceContainer {
     this.workflowRuns = new WorkflowRunManager(this.workflows,this.courses,this.settings,()=>this.credentials.get(),new RunRepository(this.db),(run,report)=> {
       const bus = new EventBus()
       const browser = new BrowserService({downloadDir:join(userData,'workflow-downloads',run.id),profileDir:join(userData,'workflow-profiles',run.workflowId),migrateLegacyProfile:false})
-      let media = new TranscriptionService({bus,tempNamespace:run.id,getSettings:()=>run.snapshot.settings,worker:{pythonPath:findPython(),scriptPath:resolveWorkerScript()}})
+      let media = new TranscriptionService({bus,tempNamespace:run.id,getSettings:()=>run.snapshot.settings,worker:sttOptions(userData)})
       bus.on('event:bot-status', status=>report(status))
       bus.on('event:transcription-status', status=>report(undefined,status))
       bus.on('event:progress', progress=> {
@@ -125,7 +126,7 @@ export class ServiceContainer {
         cleanupStep:async()=>{
           await media.dispose()
           await browser.close()
-          media=new TranscriptionService({bus,tempNamespace:run.id,getSettings:()=>run.snapshot.settings,worker:{pythonPath:findPython(),scriptPath:resolveWorkerScript()}})
+          media=new TranscriptionService({bus,tempNamespace:run.id,getSettings:()=>run.snapshot.settings,worker:sttOptions(userData)})
         },
         dispose:async()=>{try{await bot.dispose();await media.dispose()}finally{await browser.close();browser.dispose();bus.clear()}}
       }
@@ -221,6 +222,14 @@ export class ServiceContainer {
     this.send(IPC_EVENT.settingsChanged, this.settings.getAll())
     this.send(IPC_EVENT.progress, this.progressSnapshot())
     this.applyUiScale()
+  }
+
+  async clearCache(): Promise<{ bytes: number }> {
+    return this.workflowRuns.withMaintenance(async () => {
+      const result = await clearApplicationCache(this.paths.userData, () => session.defaultSession.clearCache())
+      logger.info(`已清理网页缓存与临时下载文件（${result.bytes} 字节）`)
+      return result
+    })
   }
 
   getRecentLogs(): LogEntry[] {

@@ -39,6 +39,7 @@ export const IPC_INVOKE = {
   settingsGetAll: 'settings:getAll',
   settingsUpdate: 'settings:update',
   settingsValidate: 'settings:validate',
+  settingsClearCache: 'settings:clear-cache',
 
   credentialsGet: 'credentials:get',
   credentialsSet: 'credentials:set',
@@ -127,6 +128,7 @@ export interface InvokeMap {
   [IPC_INVOKE.settingsGetAll]: { req: void; res: AppSettings }
   [IPC_INVOKE.settingsUpdate]: { req: SettingsPatch; res: AppSettings }
   [IPC_INVOKE.settingsValidate]: { req: void; res: ValidationError[] }
+  [IPC_INVOKE.settingsClearCache]: { req: void; res: { bytes: number } }
 
   [IPC_INVOKE.credentialsGet]: { req: void; res: { username: string; hasPassword: boolean } }
   [IPC_INVOKE.credentialsSet]: { req: { username: string; password?: string }; res: CredentialState }
@@ -186,6 +188,7 @@ export interface AppApi {
     getAll(): Promise<AppSettings>
     update(patch: SettingsPatch): Promise<AppSettings>
     validate(): Promise<ValidationError[]>
+    clearCache(): Promise<{ bytes: number }>
   }
 
   credentials: {

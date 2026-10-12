@@ -1,5 +1,6 @@
 /** Launch packaged application and Browser Host using isolated profiles, without live websites. */
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { _electron as electron } from 'playwright-core'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -20,9 +21,14 @@ try {
     asar: electronApp.getAppPath().endsWith('app.asar'), root: process.resourcesPath
   }))
   assert.equal(packageResources.asar, true)
-  for (const file of ['python/transcriber/worker.py','LICENSE','THIRD_PARTY_NOTICES.txt']) {
+  for (const file of ['stt/worker.cjs','LICENSE','THIRD_PARTY_NOTICES.txt']) {
     assert.ok(existsSync(join(packageResources.root, file)), `Missing resource ${file}`)
   }
+  const wasmModule = join(packageResources.root, 'app.asar.unpacked', 'node_modules', 'sherpa-onnx', 'index.js')
+  const wasmVersion = execFileSync(executablePath, ['-e', `console.log(require(${JSON.stringify(wasmModule)}).version)`], {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, encoding: 'utf8', timeout: 30_000
+  }).trim()
+  assert.ok(wasmVersion, 'Packaged sherpa-onnx WASM failed to load')
   await window.getByRole('link', {name:'关于与帮助',exact:true}).click()
   await window.getByRole('heading', {name:'关于与帮助',exact:true}).waitFor()
   const diagnostic = JSON.parse(await window.evaluate(() => window.appApi.app.diagnostics()))

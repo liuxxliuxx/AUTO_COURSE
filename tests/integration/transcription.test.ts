@@ -1,7 +1,7 @@
 /**
  * 转录链路端到端测试。
  *
- * 用**假的 Python worker**（一个几十行的脚本，协议完全一致）替换 SenseVoice，
+ * 用**假的 JavaScript worker**（一个几十行的脚本，协议完全一致）替换 SenseVoice，
  * 这样整条链路 —— 页面录音 → 分批取块 → 落盘 → ffmpeg → 写 txt ——
  * 都能在没有模型、没有网络的情况下真实跑一遍。
  *
@@ -26,7 +26,7 @@ import { startFixtureServer, type FixtureServer } from '../../scripts/poc/fixtur
 import { BrowserSession } from '../../src/main/automation/browser-session'
 import { EventBus } from '../../src/main/services/event-bus'
 import { TranscriptionService } from '../../src/main/services/transcription-service'
-import { SttWorker, findPython } from '../../src/main/services/stt-worker'
+import { SttWorker } from '../../src/main/services/stt-worker'
 import { findFfmpeg } from '../../src/main/services/media'
 import { DEFAULT_SETTINGS } from '../../src/main/services/settings-service'
 import type { AppSettings } from '../../src/shared/types'
@@ -35,29 +35,17 @@ import { RECORDING_DRAIN_TEST_JS } from './helpers/recording-js'
 const here = dirname(fileURLToPath(import.meta.url))
 const fixturesDir = resolve(here, '..', 'fixtures')
 
-const python = findPython()
 const ffmpeg = findFfmpeg()
 
-/** 假 worker：协议与 worker.py 完全一致，只是不做推理 */
+/** 假 worker 使用与生产相同的 worker_threads 消息协议。 */
 function writeFakeWorker(path: string, text = '假转写结果'): void {
-  writeFileSync(
-    path,
-    [
-      'import sys, json',
-      'print(json.dumps({"type": "ready", "model": "FakeModel", "device": "cpu"}), flush=True)',
-      'for line in sys.stdin:',
-      '    line = line.strip()',
-      '    if not line:',
-      '        continue',
-      '    msg = json.loads(line)',
-      '    if msg.get("type") == "shutdown":',
-      '        break',
-      '    print(json.dumps({"id": msg["id"], "success": True, "text": "' + text + '"}), flush=True)',
-      ''
-    ].join('\n'),
-    'utf8'
-  )
+  writeFileSync(path, `
+    const { parentPort } = require('node:worker_threads');
+    parentPort.postMessage({type:'ready'});
+    parentPort.on('message', msg => parentPort.postMessage({id:msg.id,success:true,text:${JSON.stringify(text)}}));
+  `, 'utf8')
 }
+const workerOptions = (scriptPath: string) => ({ scriptPath, modelDir: workDir, prepareModels: async () => {} })
 
 let workDir: string
 let serveDir: string
@@ -113,13 +101,10 @@ afterAll(async () => {
 
 describe('SttWorker 协议', () => {
   it('能启动 worker 并完成一次转写往返', async () => {
-    if (!python) {
-      expect.unreachable('未找到 Python 解释器')
-    }
-    const script = join(workDir, 'fake-worker.py')
+    const script = join(workDir, 'fake-worker.cjs')
     writeFakeWorker(script, '协议往返成功')
 
-    const worker = new SttWorker({ pythonPath: python, scriptPath: script })
+    const worker = new SttWorker(workerOptions(script))
     try {
       await worker.start()
       expect(worker.getStatus().ready).toBe(true)
@@ -132,11 +117,10 @@ describe('SttWorker 协议', () => {
   }, 60_000)
 
   it('并发提交多个任务，结果各自对应', async () => {
-    if (!python) expect.unreachable('未找到 Python 解释器')
-    const script = join(workDir, 'fake-worker-2.py')
+    const script = join(workDir, 'fake-worker-2.cjs')
     writeFakeWorker(script, 'X')
 
-    const worker = new SttWorker({ pythonPath: python, scriptPath: script })
+    const worker = new SttWorker(workerOptions(script))
     try {
       await worker.start()
       const results = await Promise.all([
@@ -151,29 +135,21 @@ describe('SttWorker 协议', () => {
   }, 60_000)
 
   it('模型加载失败时给出致命状态而不是静默失败', async () => {
-    if (!python) expect.unreachable('未找到 Python 解释器')
-    const script = join(workDir, 'fatal-worker.py')
+    const script = join(workDir, 'fatal-worker.cjs')
     writeFileSync(
       script,
-      'import sys, json\nprint(json.dumps({"type": "fatal", "error": "模型加载失败: 测试"}), flush=True)\n',
+      "require('node:worker_threads').parentPort.postMessage({type:'fatal',error:'模型加载失败: 测试'});",
       'utf8'
     )
 
-    const worker = new SttWorker({ pythonPath: python, scriptPath: script })
+    const worker = new SttWorker(workerOptions(script))
     await expect(worker.start()).rejects.toThrow(/模型加载失败/)
     expect(worker.getStatus().available).toBe(false)
     await worker.stop()
   }, 60_000)
 
-  it('未找到 Python 时状态里明说不可用', () => {
-    const worker = new SttWorker({ pythonPath: null, scriptPath: '/nope/worker.py' })
-    const status = worker.getStatus()
-    expect(status.available).toBe(false)
-    expect(status.message).toContain('Python')
-  })
-
   it('脚本不存在时状态里明说不可用', () => {
-    const worker = new SttWorker({ pythonPath: python, scriptPath: '/definitely/not/here.py' })
+    const worker = new SttWorker(workerOptions('/definitely/not/here.cjs'))
     expect(worker.getStatus().available).toBe(false)
     expect(worker.getStatus().message).toContain('worker 脚本')
   })
@@ -209,7 +185,7 @@ describe('页面侧录音能力', () => {
 
 describe('TranscriptionService', () => {
   const makeService = (settings: Partial<AppSettings> = {}): TranscriptionService => {
-    const script = join(workDir, 'svc-worker.py')
+    const script = join(workDir, 'svc-worker.cjs')
     if (!existsSync(script)) writeFakeWorker(script, '端到端转写结果')
 
     const merged: AppSettings = {
@@ -224,7 +200,7 @@ describe('TranscriptionService', () => {
     return new TranscriptionService({
       bus: new EventBus(),
       getSettings: () => merged,
-      worker: { pythonPath: python, scriptPath: script }
+      worker: workerOptions(script)
     })
   }
 

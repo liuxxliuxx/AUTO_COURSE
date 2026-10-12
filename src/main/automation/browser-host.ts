@@ -11,7 +11,7 @@
  * 解法：主应用用同一个 Electron 二进制再起一个进程，加 `--browser-host` 标志。
  * 该进程**只负责持有一个 BrowserWindow**，其余全部交给 Playwright 驱动。
  *
- * 这个进程里不存在：数据库、调度器、BotService、IPC、Python worker。
+ * 这个进程里不存在：数据库、调度器、BotService、IPC、WASM worker。
  * 它就是一块画布。
  */
 

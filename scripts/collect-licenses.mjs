@@ -3,7 +3,7 @@ import { join, dirname } from 'node:path'
 const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'))
 const notices = ['AUTO_COURSE — third-party notices', 'Project: MIT (see LICENSE).',
   'Electron runtime LICENSE and LICENSES.chromium.html are distributed alongside the executable.',
-  'Python transcription dependencies and model weights are installed separately and are not bundled.']
+  'SenseVoiceSmall and Silero VAD model weights are downloaded separately on first use; sherpa-onnx WASM is bundled.']
 // Renderer libraries are bundled despite living in devDependencies. Include their dependency graphs too.
 const selected = new Set(Object.entries(lock.packages).filter(([path,item]) => path && !item.dev && !item.devOptional).map(([path]) => path))
 function dependencyPath(from, name) {
@@ -33,6 +33,11 @@ for (const path of [...selected].sort()) {
   const texts = licenseFiles.filter(file => !file.toLowerCase().endsWith('.json')).map(file => {
     try { return `${file}:\n${readFileSync(join(path,file),'utf8')}` } catch { return '' }
   }).filter(Boolean)
+  // sherpa-onnx 1.13.8 omits LICENSE from its npm archive. Keep the exact upstream text in source.
+  if (!texts.length && pkg.name === 'sherpa-onnx' && pkg.version === '1.13.8') {
+    texts.push(readFileSync('assets/licenses/sherpa-onnx.txt', 'utf8'))
+    texts.push(readFileSync('assets/licenses/onnxruntime.txt', 'utf8'))
+  }
   if (!texts.length) throw new Error(`Missing license text: ${pkg.name}`)
   notices.push(`\n${'='.repeat(72)}\n${pkg.name}@${pkg.version} — ${pkg.license ?? item.license ?? 'see below'}\n${texts.join('\n')}`)
 }

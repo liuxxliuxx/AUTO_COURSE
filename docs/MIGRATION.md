@@ -19,7 +19,7 @@
 | 浏览器来源 | 系统 Chrome / bin/ 缓存 / 自动下载 / webdriver-manager | Electron 自带 Chromium |
 | 凭据 | Python keyring | Electron safeStorage |
 | 持久化 | sqlite3（Python） | better-sqlite3（Node） |
-| STT | multiprocessing worker（同进程树） | 独立 Python 子进程 + NDJSON 协议 |
+| STT | multiprocessing worker（同进程树） | SenseVoiceSmall WASM + worker_threads |
 | 打包 | PyInstaller / py2app | electron-builder |
 
 ---
@@ -244,7 +244,7 @@ v1 的 keyring 数据保持不动，可随时回退到 v1。
 - 单元测试（调度决策、设置往返、DB CRUD、v1 导入映射、图谱/URL 解析、文件名净化、媒体下载）
 - DOM 夹具测试（用真实 Chromium 驱动 Navigator / VideoController / QuizService / CaptchaService）
 - Runner 主循环端到端（点击 → 监控 → 记账 → 终止，含 handoff §28 的回环修正）
-- 转录链路端到端（假 Python worker，协议与 worker.py 完全一致）
+- 转录链路端到端（JavaScript 假 worker，使用 worker_threads 消息协议）
 - 打包产物验证（真的启动打包后的应用并拉起 Browser Host）
 
 真实站点的页面结构、滑块验证码、真实视频直链下载、真实 SenseVoice 推理
@@ -266,7 +266,7 @@ v1 的 keyring 数据保持不动，可随时回退到 v1。
       scripts/generate_nsi.py  scripts/setup_mac.py  scripts/download_chrome.py
       scripts/fix_ps1_encoding.py  requirements.txt
       app/ init/ page/ proxy/ sql/ events/（只剩 __pycache__ 的空壳目录）
-保留  python/transcriber/  —— v2 唯一保留的 Python runtime（SenseVoice worker）
+替换  python/transcriber/  → resources/stt/（SenseVoiceSmall WASM worker）
 ```
 
 删掉的是**代码**，v1 的行为对照仍可随时取回：
@@ -588,3 +588,45 @@ CAS/OAuth 重定向和 Cookie。纯 `page.request` 方案尚未通过真实账�
 旧门户在调用 Vue 登录方法后，等待实际到达 `i.upc.edu.cn/dcp/index.jsp`，再跳工作台。
 两个课程运行器在 `LoginResult.ok=false` 时返回 error（用户停止则返回 user），不继续运行。
 回归覆盖延迟中转、持续中转超时、门户延迟认证、停止等待及两个运行器的失败分支。
+
+
+## SenseVoiceSmall JavaScript/WASM 转录重写（2026-10-11）
+
+- 移除 Python/FunASR/PyTorch runtime，改用 sherpa-onnx 1.13.8 的 WASM 包与独立 Node worker thread。
+- 保留 SenseVoiceSmall，使用 INT8 ONNX 权重；首次启用转录自动下载到 userData，之后离线复用。模型初始化失败可重试。
+- 保留 ffmpeg 的 16kHz 单声道 PCM 转换、页面录音和仅转录两条输入链路，以及课程输出目录规则。
+- WAV 按小块读取，通过 Silero VAD 分为最长约 20 秒的语音片段；不把整节课一次性放入模型。文本按片段换行，显示推理进度。
+- 停止、超时和退出会终止推理线程并拒绝未完成任务，下载采用临时文件与原子更名，取消后清理临时下载。
+- 模型与旧 Python worker 的分段和量化配置不同，文本不保证逐字一致；准确率与设备性能以真实音频实测为准。
+
+验证：Node/Web 类型检查与生产构建通过；188 项单元测试及 10 项转录集成测试通过。官方中文样本与重复拼接的 65 秒音频完成真实 WASM 推理和连续任务验证；macOS arm64 打包资源完成离线推理冒烟。运行 `node scripts/smoke-stt.mjs <模型目录> <16k单声道PCM WAV>` 可复测。该冒烟检查链路可用性，不代表准确率评测或完整课程性能测试。
+
+
+## 课程信息与学习助手浮层处理（2026-10-11）
+
+- 修复只匹配学习进度提醒类名/文案导致课程欢迎、学习时间、考试时间等助手卡片漏检的问题；结合被动信息语义、浮动布局及关闭按钮特征识别。
+- 优先可信点击站点关闭控件，确认浮层隐藏后才报告成功；按钮无效时只移除已识别的被动信息卡片，保护视频、课程目录、弹题、验证码与表单。
+- 进入页面、切换课程前及播放监控中都检查浮层；点击前检查实际命中元素，未知遮挡不强点穿透。
+- 统一课程点击的有限重试，停止请求立即生效；持续不可点击返回明确错误，不再跳过整份课程目录并把运行显示为完成。
+- 新增截图同类结构、任意类名/无标签关闭按钮、关闭失效、无按钮、堆叠浮层、隐藏卡片、验证码与弹题保护、未知遮挡、重试上限和错误结果的浏览器回归测试。截图不提供线上 DOM，真实站点仍需确认。
+
+验证：新增 12 项浮层浏览器回归、原有 35 项课程 DOM 测试与 8 项播放主循环测试通过；Node/Web 类型检查及生产构建通过。
+
+## 实际遮挡分类与课程页面恢复（2026-10-11）
+
+- 点击失败后按实际命中元素、浮动祖先和弹窗文案分类，支持遮罩与内容分离、任意类名的连接错误提示。
+- 普通未知提示只尝试明确的关闭/知道了按钮，使用正常点击并在下一轮确认课程是否可点击；不移除未知弹窗、不猜测确认提交或返回学堂按钮。
+- 学习进度提交/保存/同步失败与要求重新进入的网络异常走页面恢复：每次课程切换最多重载原课程地址两次，等待目录并处理弹题、验证码后重新定位待处理课程。该操作不表示服务器进度已补交。
+- 保留本轮已处理课程；恢复后目录顺序或标题变化、目标不能唯一定位时停止，避免旧下标造成重复或跳过。相同未知遮挡连续出现两次即停止无效点击，错误结果携带实际遮挡文案。
+- 进度提交失败提示从被动卡片清理中排除；验证码、弹题及表单保留原处理流程。
+
+验证：新增 12 项恢复/分类浏览器回归，覆盖网络错误恢复、两次重载上限、目录变化、恢复中停止、未知类名分离弹窗、普通提示可信关闭、重复未知遮挡和仅转录运行不重复处理；与既有浮层/课程 DOM 测试共 59 项通过，类型检查和生产构建通过。真实站点网络故障恢复仍需实测。
+
+## 设置页缓存清理（2026-10-11）
+
+- 新增「设置 → 缓存 → 清理缓存」，显示清理中、完成及错误状态，阻止重复提交。
+- 通过白名单 IPC 清理主界面网页缓存、传统/工作流浏览器的 Chromium 缓存和应用临时下载目录；保留 Cookie、网站存储、账号配置、数据库、题库、转录成品和模型，不接受渲染层传入清理路径。
+- 只在所有运行实例及其 Browser Host 清理结束后执行；维护锁同步阻止手动启动，调度器在清理期间保留待执行规则，清理失败也释放锁。退出等待清理完成。
+- 文件清理不跟随符号链接，限定 Chromium 缓存目录与应用下载目录，不递归删除整个浏览器配置。
+
+验证：缓存边界/工作流单元测试 16 项、现有页面交互及新增缓存交互测试 37 项通过；Node/Web 类型检查与生产构建通过。真实 Electron 在独立临时用户目录中完成 preload/IPC 清理冒烟，确认缓存删除后登录文件及设置保留；已检查设置页截图。未清理实际用户数据。

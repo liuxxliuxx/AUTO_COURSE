@@ -11,8 +11,8 @@
 import type { Locator, Page } from 'playwright-core'
 import {
   INITIAL_DIALOG_MAX_ATTEMPTS,
-  LEARNING_PROGRESS_POPUP_CSS,
-  LEARNING_PROGRESS_POPUP_KEYWORDS,
+  CLICK_VIDEO_MAX_RETRIES,
+  COURSE_CLICK_PROBE_MS,
   PRESCHOOL_CLOSE_CSS,
   PRESCHOOL_DIALOG_CSS,
   SLEEP,
@@ -23,9 +23,10 @@ import {
   VIDEO_SMALL_LESSON_CSS,
   VIDEO_TITLE_CSS
 } from '../constants'
-import { firstVisible, isVisible, safeClick } from '../locators'
+import { firstVisibleWithin, isVisible } from '../locators'
 import type { CaptchaService } from '../captcha'
 import type { QuizService } from '../quiz'
+import { CourseOverlays } from './course-overlays'
 import type { Logger } from '../../services/logger'
 
 export interface VideoEntry {
@@ -46,13 +47,15 @@ export interface NextVideoResult {
 }
 
 export class ClassicCourseNavigator {
+  private readonly overlays: CourseOverlays
+  lastClickError: string | null = null
   constructor(
     private readonly page: Page,
     private readonly log: Logger,
     private readonly captcha: CaptchaService,
     private readonly quiz: QuizService,
     private readonly skipCompleted: boolean
-  ) {}
+  ) { this.overlays = new CourseOverlays(page, log) }
 
   // ---------------------------------------------------------------- 导航
 
@@ -78,6 +81,12 @@ export class ClassicCourseNavigator {
     for (let attempt = 0; attempt < INITIAL_DIALOG_MAX_ATTEMPTS; attempt += 1) {
       let foundAny = false
 
+      if (await this.closeLearningProgressPopup()) {
+        foundAny = true
+        this.log.info(`已关闭课程信息浮层（第 ${attempt + 1} 次尝试）`)
+        await this.page.waitForTimeout(SLEEP.medium)
+      }
+
       if (await this.closePreschoolDialog()) {
         foundAny = true
         this.log.info(`检测到「学前必读」弹窗（第 ${attempt + 1} 次尝试）`)
@@ -92,12 +101,6 @@ export class ClassicCourseNavigator {
         await this.page.waitForTimeout(SLEEP.medium)
       }
 
-      if (await this.closeLearningProgressPopup()) {
-        foundAny = true
-        this.log.info(`已关闭学习进度提醒（第 ${attempt + 1} 次尝试）`)
-        await this.page.waitForTimeout(SLEEP.medium)
-      }
-
       if (!foundAny) {
         this.log.debug(`初始弹窗已全部处理完毕（经过 ${attempt + 1} 次检查）`)
         return
@@ -107,120 +110,27 @@ export class ClassicCourseNavigator {
   }
 
   private async closePreschoolDialog(): Promise<boolean> {
-    const dialog = this.page.locator(PRESCHOOL_DIALOG_CSS).first()
+    const dialog = this.page.locator(`${PRESCHOOL_DIALOG_CSS}:visible`).first()
     if (!(await isVisible(dialog))) return false
 
-    this.log.info("检测到「学前必读」弹窗，正在关闭...")
-    const closeBtn = await firstVisible(this.page, PRESCHOOL_CLOSE_CSS, TIMEOUT.short)
+    const closeBtn = await firstVisibleWithin(this.page, PRESCHOOL_CLOSE_CSS, 700)
     if (closeBtn) {
-      await safeClick(closeBtn)
-      this.log.info("已关闭「学前必读」弹窗")
-    } else {
-      // 不再用 JS 合成点击（学习页会把 isTrusted === false 的点击当成异常脚本），
-      // 直接摘掉这个遮挡层节点即可 —— v1 对同类遮挡卡片也是这么兜底的。
-      await this.page
-        .evaluate(() => {
-          const d = document.querySelector('.dialog-read')
-          d?.remove()
-        })
-        .catch(() => undefined)
-      this.log.info("已通过移除 DOM 关闭「学前必读」弹窗")
+      await closeBtn.click({ timeout: 700 }).catch(() => {})
+      await dialog.waitFor({ state: 'hidden', timeout: 500 }).catch(() => {})
     }
-    await this.page.waitForTimeout(SLEEP.long)
-    return true
+    if (await isVisible(dialog)) await dialog.evaluate(el => el.remove()).catch(() => {})
+    const closed = !(await isVisible(dialog))
+    if (closed) this.log.info('已关闭「学前必读」弹窗')
+    else this.log.warn('「学前必读」弹窗仍未关闭')
+    return closed
   }
 
-  /**
-   * 关闭/移除挡住点击的"学习进度提醒"卡片。
-   * 逻辑与 v1 的注入脚本等价：找到含关键字的卡片，优先点关闭按钮，
-   * 没有按钮就直接从 DOM 移除，最后才退到隐藏。
-   *
-   * 与 v1 的唯一差异：关闭按钮**不再用 JS 合成点击**，而是把按钮中心坐标
-   * 交给 `page.mouse.click()`。卡片就压在学习页的 `#container` 上，合成点击
-   * 会触发站点的防脚本守卫（弹「检测到异常脚本…」并在 3 秒后跳回首页）。
-   * 没有可点的关闭按钮时，仍然直接从 DOM 移除节点（不派发任何事件）。
-   */
+  async dismissCourseOverlays(): Promise<number> {
+    return this.overlays.dismiss()
+  }
+
   private async closeLearningProgressPopup(): Promise<boolean> {
-    try {
-      const result = await this.page.evaluate(
-        ([selectors, keywords]) => {
-          const seen = new Set<Element>()
-          let count = 0
-          const points: Array<{ x: number; y: number }> = []
-
-          const textOf = (node: Element | null): string =>
-            ((node as HTMLElement | null)?.innerText ?? node?.textContent ?? '').trim()
-          const hasKeyword = (node: Element): boolean => {
-            const text = textOf(node)
-            return keywords.some((k) => text.includes(k))
-          }
-          const findPanel = (card: Element): Element => {
-            for (
-              let node: Element | null = card;
-              node && node !== document.body;
-              node = node.parentElement
-            ) {
-              if (
-                node.classList?.contains('main') &&
-                node.querySelector('.head') &&
-                node.querySelector('.box') &&
-                hasKeyword(node)
-              ) {
-                return node
-              }
-            }
-            return card
-          }
-
-          for (const selector of selectors) {
-            for (const node of Array.from(document.querySelectorAll(selector))) {
-              if (seen.has(node) || !hasKeyword(node)) continue
-              seen.add(node)
-
-              const card = node.closest('.ss2077-msg-custom') ?? node
-              const item = card.closest('.item')
-              const panel = findPanel(card)
-              const root = panel ?? item ?? card
-              const closeButton = root.querySelector(
-                "[class*='close'],[class*='guanbi'],.el-dialog__close,.el-dialog__headerbtn,button[aria-label='Close']"
-              )
-
-              // 关闭按钮只回报坐标，由调用方用真实鼠标点击（不可信事件会被站点拦下）
-              const rect = closeButton?.getBoundingClientRect()
-              if (rect && rect.width > 0 && rect.height > 0) {
-                points.push({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
-              } else if (root.parentElement) {
-                root.remove()
-              } else {
-                const el = root as HTMLElement
-                el.style.display = 'none'
-                el.style.pointerEvents = 'none'
-              }
-              count += 1
-            }
-          }
-          return { count, points }
-        },
-        [
-          LEARNING_PROGRESS_POPUP_CSS as unknown as string[],
-          LEARNING_PROGRESS_POPUP_KEYWORDS as unknown as string[]
-        ] as const
-      )
-
-      const closed = result?.count ?? 0
-      for (const point of result?.points ?? []) {
-        await this.page.mouse.click(point.x, point.y).catch(() => undefined)
-      }
-
-      if (closed > 0) {
-        this.log.info(`已关闭学习进度提醒（${closed} 处）`)
-        await this.page.waitForTimeout(SLEEP.long)
-        return true
-      }
-    } catch (error) {
-      this.log.debug(`学习进度提醒清理跳过: ${String(error)}`)
-    }
-    return false
+    return (await this.dismissCourseOverlays()) > 0
   }
 
   // ------------------------------------------------------------ 列表解析
@@ -346,8 +256,13 @@ export class ClassicCourseNavigator {
     this.log.info(`点击课程: ${title}`)
     try {
       await video.scrollIntoViewIfNeeded({ timeout: TIMEOUT.short }).catch(() => undefined)
-      await this.page.waitForTimeout(SLEEP.short)
-      await video.click({ timeout: TIMEOUT.medium })
+      await this.dismissCourseOverlays()
+      const obstruction = await this.overlays.obstruction(video)
+      if (obstruction) {
+        this.log.warn(`课程目录被遮挡「${title}」: ${obstruction}`)
+        return false
+      }
+      await video.click({ timeout: COURSE_CLICK_PROBE_MS })
       await this.page.waitForTimeout(SLEEP.extraLong)
 
       await this.captcha.checkAndHandle('course', `切换课程「${title}」时出现验证码，请完成验证`)
@@ -358,20 +273,79 @@ export class ClassicCourseNavigator {
     }
   }
 
-  /** 点击失败时交叉处理弹窗后重试（v1 `_click_video_with_retry`）。 */
+  /** Resolve real blockers, recover broken page state, and bound retries by observed progress. */
   async clickVideoWithRetry(
     video: Locator,
     title: string,
     shouldStop: () => boolean
   ): Promise<boolean> {
+    this.lastClickError = null
+    const courseUrl = this.page.url()
+    const originalEntries = await this.listVideos()
     let retry = 0
-    while (!(await this.clickVideo(video, title))) {
+    let reloads = 0
+    let previousBlocker: string | null = null
+    let unchanged = 0
+    const fail = (message: string): false => {
+      this.lastClickError = message
+      this.log.error(message)
+      return false
+    }
+    while (!shouldStop()) {
+      if (await this.clickVideo(video, title)) return true
       if (shouldStop()) return false
-      retry += 1
-      this.log.warn(`点击课程失败（第 ${retry} 次重试），交叉检测弹窗: ${title}`)
       await this.handleInitialDialogs()
+      await this.captcha.checkAndHandle('course', `课程目录被遮挡「${title}」，请完成验证`)
+      if (shouldStop()) return false
+      const blocker = await this.overlays.inspect(video)
+      if (blocker?.reloadRequired) {
+        if (reloads >= 2) return fail(`课程页面恢复失败「${title}」：${blocker.description}（已重载 2 次，请检查网络后重新运行）`)
+        if (!/^https?:/.test(courseUrl)) return fail(`课程页面无法重载「${title}」：${blocker.description}`)
+        reloads++
+        this.log.warn(`检测到课程连接/进度提交异常，重载课程页后恢复「${title}」（${reloads}/2）: ${blocker.description}`)
+        try {
+          if (shouldStop()) return false
+          await this.page.goto(courseUrl, { waitUntil: 'domcontentloaded', timeout: TIMEOUT.extraLong })
+          await this.page.locator(VIDEO_LIST_ITEM_CSS).first().waitFor({ state: 'visible', timeout: TIMEOUT.extraLong })
+          if (shouldStop()) return false
+          await this.handleInitialDialogs()
+          await this.captcha.checkAndHandle('course', '恢复课程页面时出现验证码，请完成验证')
+          if (shouldStop()) return false
+          const entries = await this.listVideos()
+          // Runner tracks completed indices: reject a changed catalogue rather than repeat/skip lessons.
+          if (entries.length !== originalEntries.length || entries.some((entry, i) => entry.title !== originalEntries[i].title)) {
+            return fail(`课程目录在恢复后发生变化，停止以避免重复或跳过课程「${title}」，请重新运行`)
+          }
+          const matches = entries.filter(entry => entry.title === title)
+          if (matches.length !== 1) return fail(`恢复后无法唯一定位课程「${title}」，请检查课程目录后重新运行`)
+          video = this.page.locator(VIDEO_LIST_ITEM_CSS).nth(matches[0].index)
+          previousBlocker = null
+          unchanged = 0
+          continue
+        } catch (error) {
+          if (shouldStop()) return false
+          return fail(`恢复课程页面失败「${title}」：${String(error)}`)
+        }
+      }
+      if (blocker) {
+        unchanged = blocker.signature === previousBlocker ? unchanged + 1 : 1
+        previousBlocker = blocker.signature
+        if (unchanged >= 2) return fail(`课程目录持续被同一浮层遮挡「${title}」：${blocker.description}，请关闭遮挡浮层后重新运行`)
+        if (blocker.closeId && !shouldStop()) {
+          this.log.info(`尝试关闭遮挡课程目录的提示: ${blocker.description}`)
+          await this.overlays.closeBlocker(blocker.closeId)
+        }
+      } else {
+        previousBlocker = null
+        unchanged = 0
+      }
+      retry += 1
+      if (retry > CLICK_VIDEO_MAX_RETRIES) {
+        return fail(`课程目录持续被遮挡或不可点击「${title}」，请关闭遮挡浮层后重新运行`)
+      }
+      this.log.warn(`点击课程失败（第 ${retry} 次重试），交叉检测弹窗: ${title}`)
       await this.page.waitForTimeout(SLEEP.medium)
     }
-    return true
+    return false
   }
 }

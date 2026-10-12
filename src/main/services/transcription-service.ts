@@ -3,7 +3,7 @@
  *
  * 边界划分：
  *   Node 负责 —— 媒体获取、下载、音频录制、ffmpeg、WAV 文件管理、任务编排、输出文件
- *   Python 负责 —— 加载 SenseVoice、跑推理、返回文本
+ *   WASM Worker 负责 —— 加载 SenseVoiceSmall、语音分段、推理、返回文本
  *
  * 两种模式都要保留（handoff §22）：
  *   1. 刷课 + 转录：课程视频真实播放，页面内 MediaRecorder 录音 → WAV → 转写
@@ -147,7 +147,7 @@ export interface TranscriptionDeps {
   /** 每次设置变更后重新读取 */
   tempNamespace?: string
   getSettings: () => AppSettings
-  /** STT worker 的路径；测试时可注入假实现 */
+  /** STT worker 的路径与模型缓存目录；测试时可注入假实现 */
   worker: ConstructorParameters<typeof SttWorker>[0]
 }
 
@@ -174,6 +174,10 @@ export class TranscriptionService implements MediaPort {
 
   constructor(private readonly deps: TranscriptionDeps) {
     this.worker = new SttWorker(deps.worker)
+    this.worker.onStatus(status => {
+      if (this.phase === 'starting-worker') this.setStatus(status.message, 'neutral', 'starting-worker')
+      if (this.phase === 'transcribing' && status.ready) this.setStatus(this.message, 'neutral', 'transcribing', status.percent)
+    })
   }
 
   // ------------------------------------------------------------------ 状态

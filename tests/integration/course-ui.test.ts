@@ -21,6 +21,7 @@ let fixtureLogs: LogEntry[]
 let workflows: WorkflowService
 let runFixtures: WorkflowRun[] | null
 let lastFlowId: string
+let cacheClears: number
 let cancelExport: boolean
 let failFlowListOnce: boolean
 let failSettingsLoadOnce:boolean
@@ -31,7 +32,7 @@ afterAll(async () => { await browser?.close(); await server?.close() })
 beforeEach(async () => {
   db = new Database(':memory:'); settings = new SettingsService(db)
   starts = 0; failSave = false; fixtureLogs = []; perRunLogs = null; delayedLogs = {}; runFixtures = null
-  cancelExport = false
+  cancelExport = false; cacheClears = 0
   failFlowListOnce = false;actionDelay=0;startRejection=null;failSettingsLoadOnce=false
   state = { state: 'idle', mode: null, currentTitle: null, completedCount: 0, watchedSeconds: 0, stoppedReason: null, message: '准备好后开始一门课程', tone: 'neutral' }
   courses = new CourseService(db, settings, () => state.state !== 'idle' ? state.courseId ?? null : null)
@@ -82,6 +83,7 @@ beforeEach(async () => {
       case 'courses.select': result = courses.select(args[0] as string); break
       case 'courses.defaults': result = courses.defaults(args[0] as CourseRunOptions); break
       case 'settings.getAll': if(failSettingsLoadOnce){failSettingsLoadOnce=false;throw Error('fixture 设置读取失败')};return settings.getAll()
+      case 'settings.clearCache': cacheClears++; if(actionDelay)await new Promise(resolve=>setTimeout(resolve,actionDelay));if(failSave)throw Error('请先停止所有运行中的任务');return {bytes:2048}
       case 'settings.update': if (failSave) throw new Error('fixture 设置保存失败'); return settings.update(args[0] as SettingsPatch)
       case 'credentials.get': return { username: 'fixture-user', hasPassword: true }
       case 'credentials.state': case 'credentials.set': return { hasUsername: true, hasPassword: true, encryptionAvailable: true }
@@ -145,7 +147,7 @@ describe('课程与运行界面', () => {
     await page.getByRole('alert').filter({ hasText: '写入失败' }).waitFor()
     failSave = false; cancelExport = true; await button.click()
     await page.waitForFunction(() => !document.querySelector('[role="alert"]') && !document.querySelector('[role="status"]'))
-    cancelExport = false; await button.click()
+    cancelExport = false; cacheClears = 0; await button.click()
     await page.getByRole('status').filter({ hasText: '题库已导出，共 1 道题' }).waitFor()
     expect(starts).toBe(0)
   })
@@ -1103,5 +1105,32 @@ describe('条目导航连续性',()=>{
     await page.getByRole('link',{name:'管理工作流',exact:true}).click()
     await page.getByRole('heading',{name:saved.name,exact:true}).waitFor()
     expect(await page.locator('.workspace-list .tool-row[aria-pressed=true]').innerText()).toContain(saved.name)
+  })
+})
+
+describe('settings cache cleanup', () => {
+  it('cleans immediately with progress feedback and prevents duplicate clicks', async () => {
+    await page.getByRole('link', { name: '设置', exact: true }).click()
+    await page.getByRole('button', { name: '缓存', exact: true }).click()
+    await page.getByText('保留登录状态、账号设置、课程进度、题库、转录文件和已下载的转录模型。', { exact: true }).waitFor()
+    actionDelay = 400
+    await page.getByRole('button', { name: '清理缓存', exact: true }).click()
+    expect(await page.getByRole('button', { name: '正在清理…', exact: true }).isDisabled()).toBe(true)
+    await page.getByText('缓存清理完成，已清理临时文件和课程网页缓存 2.0 KiB', { exact: true }).waitFor()
+    expect(cacheClears).toBe(1)
+    expect(await page.getByRole('button', { name: '清理缓存', exact: true }).isEnabled()).toBe(true)
+    expect(await page.getByRole('button', { name: '保存当前分类', exact: true }).count()).toBe(0)
+    await page.screenshot({ path: `${shots}/settings-cache.png`, fullPage: true })
+  })
+  it('shows the backend rejection and allows retry after tasks have stopped', async () => {
+    await page.getByRole('link', { name: '设置', exact: true }).click()
+    await page.getByRole('button', { name: '缓存', exact: true }).click()
+    failSave = true
+    await page.getByRole('button', { name: '清理缓存', exact: true }).click()
+    await page.getByRole('alert').filter({ hasText: '请先停止所有运行中的任务' }).waitFor()
+    failSave = false
+    await page.getByRole('button', { name: '清理缓存', exact: true }).click()
+    await page.getByRole('status').filter({ hasText: '缓存清理完成' }).waitFor()
+    expect(cacheClears).toBe(2)
   })
 })

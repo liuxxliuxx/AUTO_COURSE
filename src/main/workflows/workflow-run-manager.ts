@@ -12,11 +12,22 @@ type RuntimeFactory = (run: WorkflowRun, report: (status?: BotStatus, transcript
 export class WorkflowRunManager {
   private active = new Map<string, { executor: WorkflowExecutor; done: Promise<void> }>()
   private closing = false
+  private maintenance: Promise<unknown> | null = null
+  get isMaintaining(): boolean { return this.maintenance !== null }
+  async withMaintenance<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.closing) throw new Error('应用正在退出')
+    if (this.maintenance) throw new Error('正在清理缓存，请稍候')
+    if (this.active.size) throw new Error('请先停止所有运行中的任务，等待课程窗口关闭后再清理缓存')
+    const pending = Promise.resolve().then(operation)
+    this.maintenance = pending
+    try { return await pending } finally { this.maintenance = null }
+  }
   constructor(private flows: WorkflowService, private courses: CourseService, private settings: SettingsService, private credentials: () => Credentials, readonly repository: RunRepository, private factory: RuntimeFactory, private publish: (run: WorkflowRun) => void = () => { }) { repository.recover() }
   isActive(id: string): boolean { return [...this.active.values()].some(a => a.executor.run.workflowId === id) }
   occupiedCourses(): string[] { return [...this.active.values()].flatMap(a => a.executor.run.snapshot.steps.map(s => s.courseId)) }
   start(workflowId: string, source: 'manual' | 'schedule' = 'manual'): WorkflowStartResult {
     if (this.closing) return { ok: false, message: '应用正在退出' }
+    if (this.isMaintaining) return { ok: false, message: '正在清理缓存，请稍候再启动任务' }
     const flow = this.flows.get(workflowId)
     if (!flow) return { ok: false, message: '工作流不存在' }
     let run: WorkflowRun
@@ -71,5 +82,5 @@ export class WorkflowRunManager {
     if (!step || !requestId || step.status?.intervention?.id !== requestId) throw new Error('处理请求已过期')
     a!.executor.runtime.task.bot.confirmIntervention()
   }
-  async dispose(): Promise<void> { this.closing = true; await Promise.all([...this.active.keys()].map(id => this.stop(id))) }
+  async dispose(): Promise<void> { this.closing = true; await this.maintenance?.catch(() => {}); await Promise.all([...this.active.keys()].map(id => this.stop(id))) }
 }

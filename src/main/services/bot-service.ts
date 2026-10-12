@@ -82,7 +82,7 @@ export class BotService {
     private readonly createRunner: RunnerFactory,
     /**
      * 取得媒体/转录端口。返回 null 表示本次不转录。
-     * 由 TranscriptionService 提供；不转录时**不会**启动 Python worker。
+     * 由 TranscriptionService 提供；不转录时**不会**启动 WASM worker。
      */
     private readonly acquireMedia: (
       settings: AppSettings,

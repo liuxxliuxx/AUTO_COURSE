@@ -129,6 +129,23 @@ export const LEARNING_PROGRESS_POPUP_KEYWORDS = [
   '班级平均学习进度'
 ]
 
+/** Optional information cards only; question/captcha controls belong to their own handlers. */
+export const COURSE_INFO_MARKERS = [
+  '欢迎', '学习时间', '考试时间', '考核比',
+  ...LEARNING_PROGRESS_POPUP_KEYWORDS
+]
+export const COURSE_INFO_CLOSE_CSS = [
+  '[aria-label="关闭"]', '[aria-label="Close" i]', '[title="关闭"]',
+  '[class*="close" i]', '[class*="guanbi" i]', '.el-dialog__headerbtn',
+  'button', '[role="button"]', 'i', 'svg', 'span', 'div'
+]
+export const COURSE_INFO_PROTECTED_CSS = [
+  'video', 'li.video', '.yidun_popup', '.yidun_modal', '[class*="captcha" i]',
+  'iframe', '[aria-label*="弹题"]', '.topic-item', '.topic-option-item',
+  'input', 'textarea', 'select'
+]
+export const COURSE_CLICK_PROBE_MS = 800
+
 // ============================================================================
 // 课程视频列表
 // ============================================================================

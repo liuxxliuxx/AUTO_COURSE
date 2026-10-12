@@ -7,7 +7,7 @@
 
 更改版本时同时更新 lockfile 根版本和 `packages[""].version`（可用 `npm version <版本> --no-git-tag-version`），然后构建并执行 `npm run release:check`。发布 tag 必须是 `v<package.json version>`。可先使用 `2.0.0-rc.1` 验收，正式版为 `2.0.0`；不要为尚未验证的平台声明已通过。
 
-图标转换：`python3 scripts/build-icons.py`（需要 Pillow）。用户文档使用 Markdown 保存在 `docs/`，目录导航为 `docs/README.md`，使用指南为 `docs/user/README.md`。`package.json` 的 `documentation` 配置浏览器打开的仓库文档目录；当前指向 v2 所在的 `rewrite/electron` 分支，后续分支合并时同步更新该地址。无需生成 HTML 或将文档打进安装包。许可证汇总由 `npm run licenses` 生成，包含所有生产 Node 依赖的许可证正文；Electron/Chromium 原生 notices 由 Electron 运行时提供，Python 与模型不随包分发。
+图标转换：`python3 scripts/build-icons.py`（需要 Pillow）。用户文档使用 Markdown 保存在 `docs/`，目录导航为 `docs/README.md`，使用指南为 `docs/user/README.md`。`package.json` 的 `documentation` 配置浏览器打开的仓库文档目录；当前指向 v2 所在的 `rewrite/electron` 分支，后续分支合并时同步更新该地址。无需生成 HTML 或将文档打进安装包。许可证汇总由 `npm run licenses` 生成，包含所有生产 Node 依赖的许可证正文；Electron/Chromium 原生 notices 由 Electron 运行时提供，sherpa-onnx WASM 随包分发，模型首次使用下载。
 
 ## 本地验证
 

@@ -15,13 +15,13 @@
 import type { TaskMode, AppSettings, LoginMethod } from '@shared/types'
 import type { CourseRunner, RunOutcome, RunnerContext } from '../runner'
 import { ClassicCourseNavigator, type NextVideoResult } from './navigator'
+import { CourseOverlays } from './course-overlays'
 import { VideoController } from './video-controller'
 import { CaptchaService } from '../captcha'
 import { QuizService } from '../quiz'
 import { createLoginProvider, type LoginProvider } from '../login/provider'
 import { isLoginUrl } from '../login/session-check'
 import {
-  CLICK_VIDEO_MAX_RETRIES,
   INTERVAL,
   SLEEP,
   TIMEOUT
@@ -127,10 +127,9 @@ export class ClassicCourseRunner implements CourseRunner {
           reason = 'user'
           break
         }
-        log.warn(`跳过无法点击的视频: ${next.title}`)
-        processed.add(next.index)
-        next = await navigator.nextVideoAfter(next.title)
-        continue
+        const message = navigator.lastClickError ?? `课程目录持续被遮挡或不可点击「${next.title}」，请关闭遮挡浮层后重新运行`
+        log.error(message)
+        return { completedCount, watchedSeconds, reason: 'error', error: { stage: 'executing', code: 'course', message } }
       }
 
       // ---- 仅转录模式：下载音轨转写，不播放视频 ----
@@ -219,19 +218,7 @@ export class ClassicCourseRunner implements CourseRunner {
     locator: Parameters<ClassicCourseNavigator['clickVideo']>[0],
     title: string
   ): Promise<boolean> {
-    let retry = 0
-    while (!(await navigator.clickVideo(locator, title))) {
-      if (ctx.shouldStop()) return false
-      retry += 1
-      if (retry > CLICK_VIDEO_MAX_RETRIES) {
-        ctx.log.error(`点击「${title}」连续失败 ${retry} 次，放弃`)
-        return false
-      }
-      ctx.log.warn(`点击课程失败（第 ${retry} 次重试），交叉处理弹窗: ${title}`)
-      await navigator.handleInitialDialogs()
-      await ctx.session.playwrightPage.waitForTimeout(SLEEP.medium)
-    }
-    return true
+    return navigator.clickVideoWithRetry(locator, title, ctx.shouldStop)
   }
 
   /** 进入视频后立刻处理一次弹题/验证码（点击课程后弹题常会自动弹出）。 */
@@ -269,6 +256,7 @@ export class ClassicCourseRunner implements CourseRunner {
     const { log, session } = ctx
     const page = session.playwrightPage
 
+    const overlays = new CourseOverlays(page, log)
     log.info(`开始监控视频播放: ${title}`)
 
     let elapsed = 0
@@ -291,6 +279,8 @@ export class ClassicCourseRunner implements CourseRunner {
         log.info('收到停止信号，退出视频监控')
         return { ended: false, stopped: true, elapsedSeconds: elapsed / 1000 }
       }
+
+      await overlays.dismiss()
 
       // ---- 弹题（高频）----
       const dialog = await quiz.findDialog()

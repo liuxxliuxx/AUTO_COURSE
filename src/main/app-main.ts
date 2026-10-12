@@ -4,7 +4,7 @@
  * 职责：
  *  - 创建应用窗口（Vue 控制面板）
  *  - 装配 Service 容器并注册 typed IPC
- *  - 保证退出时清理所有子进程 / 浏览器 / Python worker
+ *  - 保证退出时清理所有子进程 / 浏览器 / WASM worker
  *
  * 业务逻辑不在这个文件里，全部委托给 services/ 与 automation/。
  */

@@ -26,6 +26,7 @@ export function registerSettingsIpc(container: ServiceContainer): void {
   })
 
   handle(IPC_INVOKE.settingsValidate, () => container.settings.validate())
+  handle(IPC_INVOKE.settingsClearCache, () => container.clearCache())
 
   // ------------------------------------------------------------------ 凭据
 

@@ -18,18 +18,16 @@ extraResources:
     to: LICENSE
   - from: THIRD_PARTY_NOTICES.txt
     to: THIRD_PARTY_NOTICES.txt
-  # Python STT worker：Node 侧用 resourcesPath 定位它
-  # （见 services/container.ts::resolveWorkerScript）
-  - from: python/transcriber
-    to: python/transcriber
+  - from: resources/stt
+    to: stt
     filter:
-      - '**/*'
-      - '!__pycache__/**'
+      - '*.cjs'
 
 # 原生模块必须解开 asar 才能被 dlopen
 asarUnpack:
   - '**/node_modules/better-sqlite3/**'
   - '**/*.node'
+  - '**/node_modules/sherpa-onnx/**'
 
 # 不做代码签名（本仓库没有发布证书）
 mac:

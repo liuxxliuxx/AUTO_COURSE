@@ -9,6 +9,7 @@ export class WorkflowScheduler {
   start(): void { if (this.timer) return; this.tick(); this.timer = setInterval(() => this.tick(), 1000); this.timer.unref?.() }
   stop(): void { if (this.timer) clearInterval(this.timer); this.timer = null }
   tick(now = Date.now()): void {
+    if (this.runs.isMaintaining) return
     const due = this.flows.list().filter(f => f.schedule?.enabled && f.schedule.nextAt && Date.parse(f.schedule.nextAt) <= now)
       .sort((a, b) => a.schedule!.nextAt!.localeCompare(b.schedule!.nextAt!) || a.id.localeCompare(b.id))
     for (const flow of due) {

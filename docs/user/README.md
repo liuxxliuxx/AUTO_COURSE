@@ -35,14 +35,17 @@ Windows：运行安装向导，可选择安装目录并创建桌面或开始菜�
 
 ## 转录（可选）
 
-仅使用学习功能可跳过这一节。转录需要系统 PATH 能找到 ffmpeg 和 Python，另外安装 `python/transcriber/requirements.txt` 中的 funasr、modelscope、torch 与 torchaudio。完整源码中的安装命令：
+仅使用学习功能可跳过这一节。转录需要系统 PATH 能找到 ffmpeg，无需安装 Python、PyTorch 或 FunASR。应用内置 sherpa-onnx 的 JavaScript/WASM 运行库，模型在独立线程中处理，音频不会上传到云端。
 
-```sh
-pip install -r python/transcriber/requirements.txt
-pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
-```
+首次使用从 Hugging Face 下载固定版本的 SenseVoiceSmall INT8 模型（约 239 MB）与词表，从 GitHub 下载 Silero VAD 模型，缓存于用户数据目录的 `models/sensevoice-small-int8-2024-07-17/`。下载失败可检查网络后重试；已完整下载的文件会复用。也可预先将 `model.int8.onnx`、`tokens.txt`、`LICENSE`、`silero_vad.onnx` 放入该目录后离线使用。
 
-首次使用会下载 SenseVoiceSmall 模型（数百 MB），需可用网络与磁盘空间。在设置 → 转录选择输出位置，结果为 `课程录音/<课程名>/<课时名>.txt`；同名课程附加序号隔离目录。失败时查看运行日志，检查模型下载、ffmpeg、Python 和依赖安装是否处于同一可用环境。
+在设置 → 转录选择输出位置，结果为 `课程录音/<课程名>/<课时名>.txt`；同名课程附加序号隔离目录。长课程按语音活动分段转录，输出按片段换行，并显示处理进度。失败时查看运行日志，检查模型下载网络、ffmpeg、磁盘空间和目录写权限。
+
+## 清理缓存
+
+进入「设置 → 缓存」，点击「清理缓存」，可清除课程网页缓存和应用临时下载文件。需先停止所有任务并等待课程窗口关闭；清理期间暂不启动新任务，定时任务会等待清理结束后继续检查。
+
+清理保留网站登录状态、账号设置、课程进度、题库、转录成品和已下载的 SenseVoice 模型。网页资源会在下次访问时重新加载。
 
 ## FAQ
 
@@ -64,7 +67,7 @@ pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 - 登录失败：检查登录方式、账号、密码和旧门户 URL；三条路径不自动回退，失败页面会保留以便检查。
 - 课程地址被拒绝：粘贴学习页而非首页或分享链接，并确认课程类型。
 - 任务卡住：查看运行页是否等待人工处理；完成页面操作后点击继续。如是普通执行错误，停止后根据日志修正配置再运行。
-- 转录失败：核对 ffmpeg、Python、模型下载网络、磁盘空间以及输出目录写权限。
+- 转录失败：核对 ffmpeg、模型下载网络、磁盘空间以及输出目录写权限。
 - 定时未启动：检查规则是否启用、时区和时间、应用是否运行，以及课程是否冲突。
 - 界面或页面改版问题：通过「关于与帮助」复制诊断信息并打开反馈页，附上复现步骤、错误提示和必要日志。截图与日志发送前检查账号、课程地址和个人信息。
 

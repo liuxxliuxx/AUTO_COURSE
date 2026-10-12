@@ -9,7 +9,7 @@
 - Windows x64：下载 `AUTO_COURSE-<版本>-win-x64.exe`，按安装向导完成安装。
 - Apple Silicon：下载 `AUTO_COURSE-<版本>-mac-arm64.dmg`；Intel Mac：选择 `mac-x64.dmg`。打开磁盘镜像，将 AUTO_COURSE 拖入 Applications。
 - 当前构建未签名或公证；下载时核对仓库与 SHA256 校验值。macOS 的具体打开步骤见安装指南。
-- 普通课程学习无需安装 Node、Python、Chrome 或 ChromeDriver。转录功能另需 Python、ffmpeg 与模型依赖。
+- 普通课程学习无需安装 Node、Python、Chrome 或 ChromeDriver。转录功能另需 ffmpeg；SenseVoiceSmall 通过内置 JavaScript/WASM 运行，首次使用自动下载模型，无需 Python。
 
 打开应用，在「设置 → 账号与登录」选择登录方式并保存账号，然后在「课程」页添加学习页地址和课程名称，选中课程点击「开始运行」。在「运行」页查看进度，按提示处理登录或验证码后继续。
 

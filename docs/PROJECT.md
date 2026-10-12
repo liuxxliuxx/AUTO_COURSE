@@ -13,4 +13,4 @@
 v1 使用 PySide6 / Selenium；v2 使用 Electron / Vue 3 / TypeScript / Playwright。
 保留应用 ID `com.autocourse.zhihuishu`，维护已有安装和系统身份。
 第三方依赖保持各自许可证；构建时生成 `THIRD_PARTY_NOTICES.txt`，Electron 自带的许可证与 Chromium notices 随运行时保留。
-Python 转录依赖和模型由用户单独安装，未随桌面程序打包。
+转录内置 sherpa-onnx JavaScript/WASM 运行库，无需 Python；模型首次使用下载缓存，ffmpeg 仍需单独安装。

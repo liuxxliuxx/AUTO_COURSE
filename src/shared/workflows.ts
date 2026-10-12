@@ -1,6 +1,7 @@
+import type { Account } from './accounts'
 import type { AppSettings, BotStatus, Course, CourseRunOptions, LogEntry, TranscriptionStatus } from './types'
 
-export interface WorkflowStep { id: string; courseId: string; options: CourseRunOptions }
+export interface WorkflowStep { id: string; accountId: string; courseId: string; options: CourseRunOptions }
 export interface WorkflowSchedule {
   kind: 'once' | 'daily'; enabled: boolean; timeZone: string
   /** ISO instant for once; HH:mm in timeZone for daily. */
@@ -10,7 +11,7 @@ export interface WorkflowInput { name: string; steps: WorkflowStep[]; schedule: 
 export interface Workflow extends WorkflowInput { id: string; version: number; createdAt: string; updatedAt: string; notice: string | null }
 export type WorkflowState = 'running' | 'stopping' | 'succeeded' | 'partial' | 'failed' | 'cancelled' | 'interrupted' | 'rejected'
 export type StepState = 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
-export interface WorkflowStepSnapshot extends WorkflowStep { course: Course }
+export interface WorkflowStepSnapshot extends WorkflowStep { course: Course; account: Account }
 export interface WorkflowSnapshot { workflow: Workflow; steps: WorkflowStepSnapshot[]; settings: AppSettings }
 export interface WorkflowStepRun { stepId: string; state: StepState; startedAt: string | null; finishedAt: string | null; status: BotStatus | null; transcription: TranscriptionStatus | null; error: string | null }
 export interface WorkflowRun {

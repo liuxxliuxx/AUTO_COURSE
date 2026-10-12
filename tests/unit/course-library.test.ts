@@ -11,36 +11,13 @@ const input = (id: string, name = id) => ({ name, url: `https://studyvideoh5.zhi
 function created(result: CourseMutationResult): Course { expect(result.ok).toBe(true); if (!result.ok) throw new Error(result.message); return result.library.courses.find(c => c.id === result.courseId)! }
 
 describe('课程库与迁移', () => {
-  it('从当前课程与历史去重迁移，保留独立设置及唯一备注进度，重复初始化不重复导入', () => {
-    const {db, settings} = setup()
-    settings.update({ videoUrl: input('a').url, courseNote: '课程 A', fromLastProgress: true, timeLimitMinutes: 35, autoMode: true })
-    db.saveUrlHistory('video', input('a').url, '课程 A'); db.saveUrlHistory('video', input('b').url, '课程 B')
-    db.saveCourseProgress('课程 A', '第一章')
-    const courses = new CourseService(db, settings)
-    const a = courses.list().courses.find(c => c.name === '课程 A')!
-    expect(courses.list().selectedCourseId).toBe(a.id)
-    expect(a.options.timeLimitMinutes).toBe(35); expect(a.lastVideoTitle).toBe('第一章')
-    expect(db.getSetting('schedulerCourseId')).toBe(a.id)
-    expect(new CourseService(db, settings).list().courses).toHaveLength(2)
-    expect(db.getCourseProgress('课程 A')?.lastVideoTitle).toBe('第一章')
-  })
-  it('同名旧课程的进度不猜测关联；不认识的链接保留为待修复', () => {
-    const {db, settings} = setup()
-    db.saveUrlHistory('video', input('a').url, '同名'); db.saveUrlHistory('video', input('b').url, '同名')
-    db.saveUrlHistory('video', 'https://old.example/course', '旧链接'); db.saveCourseProgress('同名', '第五章')
-    const courses = new CourseService(db, settings).list().courses
-    for (const c of courses.filter(c => c.name === '同名')) { expect(c.lastVideoTitle).toBeNull(); expect(c.progressWarning).toContain('多个同名') }
-    expect(courses.find(c => c.name === '旧链接')?.kind).toBe('unknown')
-  })
-  it('中途迁移失败会回滚课程、选择和迁移标记，修正后可重新执行', () => {
-    const {db, settings} = setup()
-    db.saveUrlHistory('video', input('a').url, 'A'); db.saveUrlHistory('video', input('b').url, 'B')
-    db.raw().exec("CREATE TRIGGER fail_import BEFORE INSERT ON courses WHEN (SELECT COUNT(*) FROM courses)>0 BEGIN SELECT RAISE(ABORT, 'fixture fail'); END;")
-    expect(() => new CourseService(db, settings)).toThrow('fixture fail')
-    expect(db.raw().prepare('SELECT COUNT(*) AS n FROM courses').get()).toEqual({ n: 0 })
-    expect(db.getSetting('courseLibraryMigrated')).toBe('')
-    db.raw().exec('DROP TRIGGER fail_import')
-    expect(new CourseService(db, settings).list().courses).toHaveLength(2)
+  it('旧课程、历史与进度不导入新版课程库', () => {
+    const {db,settings}=setup()
+    settings.update({videoUrl:input('a').url,courseNote:'旧课程'})
+    db.saveUrlHistory('video',input('b').url,'旧历史');db.saveCourseProgress('旧课程','第一章')
+    expect(new CourseService(db,settings).list().courses).toEqual([])
+    expect(new CourseService(db,settings).list().courses).toEqual([])
+    expect(db.getCourseProgress('旧课程')?.lastVideoTitle).toBe('第一章')
   })
   it('课程配置与默认值隔离，选择课程不覆盖全局旧字段', () => {
     const {db, settings} = setup(); const courses = new CourseService(db, settings)
@@ -55,12 +32,12 @@ describe('课程库与迁移', () => {
   })
   it('重命名保持进度，移除与重加同一门课程保留 ID 与进度，并停用关联调度', () => {
     const {db, settings} = setup(); const courses = new CourseService(db, settings)
-    const a = created(courses.create(input('a'))); courses.saveProgress(a.id, '第二章')
-    courses.update(a.id, input('a', '新名称')); expect(courses.get(a.id)?.lastVideoTitle).toBe('第二章')
+    const a = created(courses.create(input('a')))
+    courses.update(a.id, input('a', '新名称'))
     db.setSetting('schedulerCourseId', a.id); settings.update({ autoMode: true })
     courses.remove(a.id); expect(courses.get(a.id)).toBeNull(); expect(settings.getAll().autoMode).toBe(false)
     const restored = created(courses.create(input('a', '恢复课程')))
-    expect(restored.id).toBe(a.id); expect(restored.lastVideoTitle).toBe('第二章')
+    expect(restored.id).toBe(a.id)
   })
   it('重复地址返回已有课程，运行课程禁止编辑删除，不能用另一门课程覆盖原课程', () => {
     const {db, settings} = setup(); let running: string | null = null

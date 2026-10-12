@@ -4,7 +4,7 @@ import yaml from 'js-yaml'
 const pkg = JSON.parse(readFileSync('package.json','utf8'))
 const lock = JSON.parse(readFileSync('package-lock.json','utf8'))
 const cfg = yaml.load(readFileSync('electron-builder.yml','utf8'))
-assert.match(pkg.version, /^2\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
+assert.match(pkg.version, /^3\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/)
 assert.equal(pkg.version, lock.version)
 assert.equal(pkg.version, lock.packages[''].version)
 assert.equal(pkg.productName, 'AUTO_COURSE')

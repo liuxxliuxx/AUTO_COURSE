@@ -2,7 +2,7 @@ name: Build release candidates
 on:
   workflow_dispatch:
   push:
-    tags: ['v2.*']
+    tags: ['v3.*']
 permissions:
   contents: read
 jobs:

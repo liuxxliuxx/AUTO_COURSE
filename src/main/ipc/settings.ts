@@ -1,11 +1,11 @@
 /** 设置 / 凭据 / 课程 / 对话框 / 应用信息 相关 IPC。 */
 
-import { dialog, BrowserWindow } from 'electron'
+import { dialog, BrowserWindow, app, shell } from 'electron'
 import { appInfo, openSupport, openProjectLink } from '../support'
 import { writeFile } from 'node:fs/promises'
 import { buildCourseQuestionBankExport } from '../services/question-bank-export'
 import { IPC_INVOKE, IPC_EVENT } from '@shared/ipc'
-import type { CredentialState } from '@shared/types'
+import { legacyDataDirectory } from '../util/user-data'
 import { handle } from './handle'
 import type { ServiceContainer } from '../services/container'
 
@@ -15,6 +15,19 @@ function parentWindow(): BrowserWindow | undefined {
 }
 
 export function registerSettingsIpc(container: ServiceContainer): void {
+  handle('accounts:list', () => container.accounts.list())
+  handle('accounts:create', input => container.accounts.create(input))
+  handle('accounts:update', ({id,input}) => container.accounts.update(id,input))
+  handle('accounts:remove', ({id}) => container.accounts.remove(id))
+  handle('accounts:progress', ({courseId}) => container.accounts.progress(courseId))
+  handle('app:welcome', () => container.db.getSetting('v3WelcomeDismissed') !== '1')
+  handle('app:dismiss-welcome', () => container.db.setSetting('v3WelcomeDismissed','1'))
+  handle('app:open-legacy-data', async () => {
+    const path = legacyDataDirectory(app.getPath('appData'))
+    if (!path) throw new Error('未找到旧版数据目录')
+    const error = await shell.openPath(path)
+    if (error) throw new Error(error)
+  })
   // ------------------------------------------------------------------ 设置
 
   handle(IPC_INVOKE.settingsGetAll, () => container.settings.getAll())
@@ -29,16 +42,6 @@ export function registerSettingsIpc(container: ServiceContainer): void {
   handle(IPC_INVOKE.settingsClearCache, () => container.clearCache())
 
   // ------------------------------------------------------------------ 凭据
-
-  handle(IPC_INVOKE.credentialsGet, () => { const c = container.credentials.get(); return { username: c.username, hasPassword: !!c.password } })
-
-  handle(IPC_INVOKE.credentialsSet, (creds) => {
-    const saved = container.credentials.get()
-    if (creds.password === undefined && creds.username !== saved.username) throw new Error('账号已变更，请重新输入密码')
-    return container.credentials.set({ username: creds.username, password: creds.password ?? saved.password })
-  })
-
-  handle(IPC_INVOKE.credentialsState, (): CredentialState => container.credentials.state())
 
   // ------------------------------------------------------------------ 课程
 
@@ -84,7 +87,7 @@ export function registerSettingsIpc(container: ServiceContainer): void {
   handle(IPC_INVOKE.appVersion, appInfo)
   handle(IPC_INVOKE.appSupport, openSupport)
   handle(IPC_INVOKE.appLink, openProjectLink)
-  handle(IPC_INVOKE.appDiagnostics, () => JSON.stringify({ ...appInfo(), schemaVersion: container.migration.schemaVersion, encryptionAvailable: container.credentials.state().encryptionAvailable }, null, 2))
+  handle(IPC_INVOKE.appDiagnostics, () => JSON.stringify({ ...appInfo(), schemaVersion: container.migration.schemaVersion, encryptionAvailable: container.accounts.encryptionAvailable }, null, 2))
 
   handle(IPC_INVOKE.logsRecent, () => container.getRecentLogs())
 

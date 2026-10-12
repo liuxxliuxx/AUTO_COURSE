@@ -1,14 +1,15 @@
+import { AccountService } from './account-service'
 import { WorkflowService } from '../workflows/workflow-service'
 import { WorkflowRunManager } from '../workflows/workflow-run-manager'
 import { WorkflowScheduler } from '../workflows/workflow-scheduler'
 import { RunRepository } from '../workflows/run-repository'
-import { CourseTaskExecutor } from '../workflows/course-task-executor'
+import { createWorkflowRuntime } from '../workflows/workflow-runtime'
 /**
  * Service 容器 —— 主进程唯一的依赖装配点。
  *
  * 装配顺序（后面的依赖前面的）：
- *   Logger → Database(含 v1 导入) → Credentials → Settings
- *   → EventBus → BrowserService → BotService → SchedulerService
+ *   Database → Settings / Accounts / Courses → Workflows → Runs → Scheduler
+ *   每个步骤独立创建 BrowserService / BotService / TranscriptionService
  *
  * Renderer 永远看不到这些对象本身，只能通过 typed IPC 调用。
  */
@@ -20,12 +21,8 @@ import { addLogSink, createLogger } from './logger'
 import { EventBus } from './event-bus'
 import { SettingsService } from './settings-service'
 import { CourseService } from './course-service'
-import { BotService, type RunnerFactory } from './bot-service'
+import { type RunnerFactory } from './bot-service'
 import { Database } from '../storage/database'
-import { CredentialStore } from '../storage/credentials'
-import { maybeImportLegacy } from '../storage/migrations/v1-import'
-import { BrowserService } from '../automation/browser-service'
-import { TranscriptionService } from './transcription-service'
 import type { SttWorkerOptions } from './stt-worker'
 import { IPC_EVENT, type EventName } from '@shared/ipc'
 import type { LogEntry, LogLevel, MigrationReport } from '@shared/types'
@@ -48,10 +45,8 @@ function sttOptions(userData: string): SttWorkerOptions {
 export interface AppPaths {
   /** 应用数据目录（Electron userData） */
   userData: string
-  /** v2 数据库文件 */
+  /** v3 数据库文件 */
   databaseFile: string
-  /** 加密凭据文件 */
-  credentialsFile: string
   /** 转录输出与临时文件根目录 */
   transcriptionDir: string
   /** Browser Host 的下载落盘目录 */
@@ -67,7 +62,7 @@ export class ServiceContainer {
   readonly paths: AppPaths
   readonly bus = new EventBus()
   readonly db: Database
-  readonly credentials: CredentialStore
+  readonly accounts: AccountService
   readonly settings: SettingsService
   readonly courses: CourseService
   readonly workflows: WorkflowService
@@ -87,7 +82,6 @@ export class ServiceContainer {
     this.paths = {
       userData,
       databaseFile: join(userData, 'auto_course.db'),
-      credentialsFile: join(userData, 'credentials.bin'),
       transcriptionDir: join(userData, 'transcription'),
       downloadDir: join(userData, 'downloads'),
       // 刻意放在 userData 下而不是系统临时目录：
@@ -96,40 +90,14 @@ export class ServiceContainer {
     }
 
     this.db = new Database(this.paths.databaseFile)
-    this.migration = maybeImportLegacy(this.db)
+    this.migration = { imported: false, sourcePath: null, schemaVersion: this.db.userVersion, message: 'v3 使用独立数据目录，旧数据未导入', importedRows: {} }
 
-    this.credentials = new CredentialStore(this.paths.credentialsFile)
     this.settings = new SettingsService(this.db)
     this.courses = new CourseService(this.db, this.settings, () => this.workflowRuns?.occupiedCourses() ?? [])
-    this.workflows = new WorkflowService(this.db, this.courses, id => this.workflowRuns?.isActive(id) ?? false)
-    this.workflows.migrateLegacy()
-    this.workflowRuns = new WorkflowRunManager(this.workflows,this.courses,this.settings,()=>this.credentials.get(),new RunRepository(this.db),(run,report)=> {
-      const bus = new EventBus()
-      const browser = new BrowserService({downloadDir:join(userData,'workflow-downloads',run.id),profileDir:join(userData,'workflow-profiles',run.workflowId),migrateLegacyProfile:false})
-      let media = new TranscriptionService({bus,tempNamespace:run.id,getSettings:()=>run.snapshot.settings,worker:sttOptions(userData)})
-      bus.on('event:bot-status', status=>report(status))
-      bus.on('event:transcription-status', status=>report(undefined,status))
-      bus.on('event:progress', progress=> {
-        const status=bot.getStatus();report({...status,watchedSeconds:progress.sessionSeconds})
-      })
-      const bot = new BotService(this.db,this.credentials,this.settings,bus,browser,(mode,ctx)=>{
-        if(!this.runnerFactory)throw new Error('执行器尚未注册')
-        return this.runnerFactory(mode,ctx)
-      },async(settings,only,courseId)=>{
-        const enabled=await media.configure(settings,only,this.courses.transcriptFolderName(courseId))
-        if((settings.transcribeEnabled||only)&&!enabled)throw new Error(media.getStatus().message)
-        return enabled?media:null
-      },this.courses)
-      return {
-        task:new CourseTaskExecutor(bot,this.courses),
-        openWindow:async()=>{await browser.ensureSession();await browser.focusCourseWindow()},
-        cleanupStep:async()=>{
-          await media.dispose()
-          await browser.close()
-          media=new TranscriptionService({bus,tempNamespace:run.id,getSettings:()=>run.snapshot.settings,worker:sttOptions(userData)})
-        },
-        dispose:async()=>{try{await bot.dispose();await media.dispose()}finally{await browser.close();browser.dispose();bus.clear()}}
-      }
+    this.accounts = new AccountService(this.db, userData, () => this.workflowRuns?.occupiedAccounts() ?? [])
+    this.workflows = new WorkflowService(this.db, this.courses, id => this.workflowRuns?.isActive(id) ?? false, this.accounts)
+    this.workflowRuns = new WorkflowRunManager(this.workflows,this.courses,this.settings,this.accounts,new RunRepository(this.db),(run,report)=> {
+      return createWorkflowRuntime(run,report,{db:this.db,accounts:this.accounts,courses:this.courses,settingsService:this.settings,userData,worker:sttOptions(userData),runnerFactory:()=>this.runnerFactory})
     },run=>this.bus.emit('event:workflow-run',run))
     this.workflowScheduler = new WorkflowScheduler(this.db,this.workflows,this.workflowRuns)
 

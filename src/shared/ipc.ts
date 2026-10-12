@@ -1,3 +1,4 @@
+import type { Account, AccountInput, AccountApi, AccountCourseProgress } from './accounts'
 import type { AppInfo, SupportResource } from './app-info'
 import type { WorkflowApi, Workflow, WorkflowInput, WorkflowRun, WorkflowStartResult, RunEvent } from './workflows'
 /**
@@ -11,7 +12,6 @@ import type {
   AppSettings,
   CourseLibrary, CourseInput, CourseMutationResult, CourseRunOptions, RunRequest,
   BotStatus,
-  CredentialState,
   DailyProgress,
   LogEntry,
   MigrationReport,
@@ -40,10 +40,6 @@ export const IPC_INVOKE = {
   settingsUpdate: 'settings:update',
   settingsValidate: 'settings:validate',
   settingsClearCache: 'settings:clear-cache',
-
-  credentialsGet: 'credentials:get',
-  credentialsSet: 'credentials:set',
-  credentialsState: 'credentials:state',
 
   coursesList: 'courses:list',
   coursesSelect: 'courses:select',
@@ -108,6 +104,14 @@ export type EventName = keyof EventPayloads
 // ============================================================================
 
 export interface InvokeMap {
+  'accounts:list': {req:void;res:Account[]}
+  'accounts:create': {req:AccountInput;res:Account}
+  'accounts:update': {req:{id:string;input:AccountInput};res:Account}
+  'accounts:remove': {req:{id:string};res:void}
+  'accounts:progress': {req:{courseId:string};res:AccountCourseProgress[]}
+  'app:open-legacy-data': {req:void;res:void}
+  'app:welcome': {req:void;res:boolean}
+  'app:dismiss-welcome': {req:void;res:void}
   'workflows:list': {req:void;res:Workflow[]}
   'workflows:get': {req:{id:string};res:Workflow|null}
   'workflows:create': {req:WorkflowInput;res:Workflow}
@@ -129,10 +133,6 @@ export interface InvokeMap {
   [IPC_INVOKE.settingsUpdate]: { req: SettingsPatch; res: AppSettings }
   [IPC_INVOKE.settingsValidate]: { req: void; res: ValidationError[] }
   [IPC_INVOKE.settingsClearCache]: { req: void; res: { bytes: number } }
-
-  [IPC_INVOKE.credentialsGet]: { req: void; res: { username: string; hasPassword: boolean } }
-  [IPC_INVOKE.credentialsSet]: { req: { username: string; password?: string }; res: CredentialState }
-  [IPC_INVOKE.credentialsState]: { req: void; res: CredentialState }
 
   [IPC_INVOKE.coursesList]: { req: void; res: CourseLibrary }
   [IPC_INVOKE.coursesSelect]: { req: { id: string }; res: CourseMutationResult }
@@ -177,6 +177,7 @@ export type InvokeName = keyof InvokeMap
 export type Unsubscribe = () => void
 
 export interface AppApi {
+  accounts: AccountApi
   workflows: WorkflowApi
   bot: {
     start(request: RunRequest): Promise<InvokeMap[typeof IPC_INVOKE.botStart]['res']>
@@ -189,12 +190,6 @@ export interface AppApi {
     update(patch: SettingsPatch): Promise<AppSettings>
     validate(): Promise<ValidationError[]>
     clearCache(): Promise<{ bytes: number }>
-  }
-
-  credentials: {
-    get(): Promise<{ username: string; hasPassword: boolean }>
-    set(creds: { username: string; password?: string }): Promise<CredentialState>
-    state(): Promise<CredentialState>
   }
 
   courses: {
@@ -243,6 +238,9 @@ export interface AppApi {
   }
 
   app: {
+    openLegacyData(): Promise<void>
+    welcome(): Promise<boolean>
+    dismissWelcome(): Promise<void>
     openSupport(resource: SupportResource): Promise<void>
     openLink(resource: 'homepage' | 'issues' | 'releases'): Promise<void>
     diagnostics(): Promise<string>

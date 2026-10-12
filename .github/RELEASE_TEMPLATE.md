@@ -1,6 +1,6 @@
 # {{productName}} {{version}}
 
-Electron + Vue 3 + TypeScript + Playwright 的 v2 桌面版本，支持课程库、工作流与进度持久化。
+Electron + Vue 3 + TypeScript + Playwright 的 v3 桌面版本，支持多个账号、账号与课程绑定的工作流步骤，以及组合进度持久化。
 
 ## 下载
 
@@ -14,7 +14,7 @@ Electron + Vue 3 + TypeScript + Playwright 的 v2 桌面版本，支持课程库
 
 ## 升级说明
 
-先退出应用并备份数据。v1 数据仅在 v2 数据库为空时只读导入，不覆盖已有数据；旧密码需重新填写。旧 v2 数据目录继续复用。详细步骤见仓库中的用户指南。
+先退出应用并备份数据。v3 使用独立的 auto-course-v3 目录，不导入旧账号、课程、工作流、进度或登录态，所有设置恢复默认。旧目录和输出文件保留。详细步骤见仓库中的用户指南。
 
 ## 本次变化
 
@@ -29,7 +29,7 @@ Electron + Vue 3 + TypeScript + Playwright 的 v2 桌面版本，支持课程库
 - [ ] Windows x64：安装、启动、SQLite、Browser Host、卸载与数据保留。
 - [ ] macOS arm64：DMG、启动、SQLite、Browser Host 与人工登录。
 - [ ] macOS x64：DMG、启动、SQLite、Browser Host 与人工登录。
-- [ ] 全新安装、已有 v2 升级、v1 只读导入、备份恢复。
+- [ ] 全新安装、v3 重启恢复、旧数据目录不变、多账号隔离、备份恢复。
 - [ ] 三种课程、人工验证码、工作流停止/冲突/定时、可选转录。
 
 勾选项只表示实际验证，不以 CI 打包成功代替真实平台验收。

@@ -7,8 +7,9 @@ import { accentHue } from '@shared/appearance'
 import { RouterLink, RouterView, useRouter } from 'vue-router'
 import { useWorkflowsStore } from './stores/workflows'
 import { useCoursesStore } from './stores/courses'
+import { useAccountStore } from './stores/account'
 import { useSettingsStore } from './stores/settings'
-const run = useWorkflowsStore(), courses = useCoursesStore(), settings = useSettingsStore()
+const run = useWorkflowsStore(), courses = useCoursesStore(), settings = useSettingsStore(), accounts = useAccountStore()
 watch(() => settings.settings?.accentColor, value => {
   document.documentElement.style.setProperty('--accent-hue', String(accentHue(value)))
   document.documentElement.style.setProperty('--accent-lightness', `${accentLightness(value)}%`)
@@ -16,7 +17,9 @@ watch(() => settings.settings?.accentColor, value => {
 const attentionCount=computed(()=>run.runs.filter(needsAttention).length)
 const router = useRouter()
 const productName = ref(''), version = ref(''), platform = ref(''), error = ref('')
-const ready = ref(false)
+const ready = ref(false), welcome = ref(false)
+async function dismissWelcome(): Promise<void> { await window.appApi.app.dismissWelcome(); welcome.value = false }
+async function openLegacy(): Promise<void> { try { await window.appApi.app.openLegacyData() } catch(e) { window.alert(String(e).replace(/^Error: /,'')) } }
 let unsubscribers: Array<() => void> = []
 async function initialize(): Promise<void> {
   error.value = ''
@@ -26,10 +29,11 @@ async function initialize(): Promise<void> {
       window.appApi.events.onCourseLibraryChanged(value => { courses.library = value }),
       window.appApi.events.onSettingsChanged(value => { settings.settings = value })
     ]
-    await Promise.all([run.load(), courses.load(), settings.load()])
+    await Promise.all([run.load(), courses.load(), settings.load(), accounts.load()])
     if (courses.error || settings.error) throw new Error(courses.error || settings.error)
     const info = await window.appApi.app.version(); productName.value = info.name; version.value = info.version; platform.value = info.platform
     if (run.running.length > 0 && router.currentRoute.value.path !== '/run') await router.replace('/run')
+    welcome.value = await window.appApi.app.welcome()
     ready.value = true
   } catch (e) { error.value = `初始化失败：${String(e)}` }
 }
@@ -43,6 +47,7 @@ onUnmounted(() => { unsubscribers.forEach(off => off()); clearInterval(poll);cle
       <div class="window-space"></div>
       <div class="brand">{{ productName }}</div>
       <nav aria-label="主导航">
+        <RouterLink to="/accounts">账号</RouterLink>
         <RouterLink to="/courses"><UiIcon name="courses"/>课程</RouterLink>
         <RouterLink to="/workflows"><UiIcon name="workflows"/>工作流</RouterLink>
         <RouterLink to="/run" aria-label="运行" :title="attentionCount ? attentionCount+' 个任务需要登录或验证码处理' : run.running.length+' 个任务进行中'"><UiIcon name="run"/>运行<span v-if="attentionCount" class="attention-count">{{attentionCount}}</span><span v-else-if="run.running.length > 0" class="live-dot"></span></RouterLink>
@@ -53,7 +58,10 @@ onUnmounted(() => { unsubscribers.forEach(off => off()); clearInterval(poll);cle
     </aside>
     <main class="workspace"><div class="titlebar"></div>
       <div v-if="error" class="page"><div class="notice error" role="alert">{{ error }}</div><button @click="initialize">重新加载</button></div>
-      <RouterView v-else-if="ready" />
+      <template v-else-if="ready">
+        <div v-if="welcome" class="notice" role="status"><strong>欢迎使用多账号版</strong><p>新版从空账号、课程和工作流开始，设置恢复默认。旧数据目录和已有输出文件已保留。</p><div class="actions"><RouterLink to="/accounts">添加账号</RouterLink><button @click="openLegacy">打开旧数据目录</button><button @click="dismissWelcome">知道了</button></div></div>
+        <RouterView />
+      </template>
       <div v-else class="empty" role="status">正在加载课程与设置…</div>
     </main>
   </div>

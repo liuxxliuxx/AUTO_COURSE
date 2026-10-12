@@ -54,9 +54,9 @@ export class CredentialStore {
         username: typeof parsed.username === 'string' ? parsed.username : '',
         password: typeof parsed.password === 'string' ? parsed.password : ''
       }
-    } catch (error) {
+    } catch {
       // 解密失败（换机器、钥匙串被重置等）按"没有凭据"处理，不阻塞启动
-      logger.exception('读取凭据失败，按未保存处理', error)
+      logger.warn('读取凭据失败，按未保存处理')
       return { ...EMPTY }
     }
   }
@@ -68,6 +68,7 @@ export class CredentialStore {
     }
 
     if (!this.encryptionAvailable) {
+      rmSync(this.file, { force: true })
       this.memoryOnly = true
       this.memory = normalized
       logger.warn('safeStorage 不可用，凭据仅保存在内存中')

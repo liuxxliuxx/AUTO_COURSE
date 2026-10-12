@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import type { WorkflowInput, WorkflowStep } from '@shared/workflows'
+import type { Account } from '@shared/accounts'
 import type { CourseRunOptions, Course } from '@shared/types'
 import { validateRunOptions } from '@shared/courses'
 import { unavailableCourse as unavailable } from '../lib/workflow-editor'
@@ -10,7 +11,7 @@ import WorkflowStepConfig from './WorkflowStepConfig.vue'
 import WorkflowScheduleForm from './WorkflowScheduleForm.vue'
 import UiIcon from './UiIcon.vue'
 
-const props = defineProps<{ courses: Course[]; busy: boolean; dirty: boolean; error: string }>()
+const props = defineProps<{ accounts: Account[]; courses: Course[]; busy: boolean; dirty: boolean; error: string }>()
 const draft = defineModel<WorkflowInput>({ required: true })
 const originalSchedule = JSON.stringify(draft.value.schedule)
 const emit = defineEmits<{ save: []; cancel: [] }>()
@@ -20,7 +21,7 @@ const undoButton=ref<HTMLButtonElement|null>(null)
 const validation = ref('')
 const undoState=ref<{kind:'remove'|'restore';step:WorkflowStep;index:number;restored?:CourseRunOptions}|null>(null)
 watch(()=>JSON.stringify(draft.value),()=>{validation.value='';const undo=undoState.value;if(undo?.kind==='restore' && JSON.stringify(draft.value.steps.find(s=>s.id===undo.step.id)?.options)!==JSON.stringify(undo.restored))undoState.value=null})
-const saveHint=computed(()=>!draft.value.name.trim()?'请填写工作流名称':!draft.value.steps.length?'请添加至少一个课程步骤':draft.value.steps.some(s=>!!unavailable(course(s.courseId)))?'有不可用课程，请移除对应步骤后保存':'')
+const saveHint=computed(()=>!draft.value.name.trim()?'请填写工作流名称':!draft.value.steps.length?'请添加至少一个课程步骤':draft.value.steps.some(s=>!!unavailable(course(s.courseId)))?'有不可用课程，请移除对应步骤后保存':draft.value.steps.some(s=>!props.accounts.some(a=>a.id===s.accountId))?'请选择每一步使用的账号':'')
 async function undo():Promise<void> {
   const value=undoState.value;if(!value||props.busy)return
   if(value.kind==='remove')draft.value.steps.splice(Math.min(value.index,draft.value.steps.length),0,JSON.parse(JSON.stringify(value.step)))
@@ -74,7 +75,7 @@ async function selectStep(id: string): Promise<void> {
 }
 function add(value: Course): void {
   if (props.busy || unavailable(value)) return
-  const step = { id: crypto.randomUUID(), courseId: value.id, options: { ...value.options } }
+  const step = { id: crypto.randomUUID(), accountId: props.accounts.length === 1 ? props.accounts[0].id : '', courseId: value.id, options: { ...value.options } }
   draft.value.steps.push(step)
   selected.value = step.id
   if (!draft.value.name) draft.value.name = value.name + ' 工作流'
@@ -114,6 +115,7 @@ async function save(): Promise<void> {
   for (const step of draft.value.steps) {
     try {
       const value = course(step.courseId)
+      if (!props.accounts.some(a=>a.id===step.accountId)) throw Error('请选择账号')
       const reason = unavailable(value)
       if (reason) throw Error(reason)
       validateRunOptions(step.options, value!.kind)
@@ -148,8 +150,8 @@ async function save(): Promise<void> {
 <div class="editor-mobile-tools"><button ref="pickerTrigger" type="button" :aria-expanded="picker" @click="picker=!picker"><UiIcon name="add"/>添加课程</button><span class="muted editor-context">选中步骤即可编辑配置</span></div>
 <div ref="editorBody" class="editor-body">
 <WorkflowCourseLibrary ref="library" v-model:search="search" :courses="courses" :disabled="busy" :picker="picker" :step-count="draft.steps.length" :counts="Object.fromEntries(courses.map(c=>[c.id,draft.steps.filter(s=>s.courseId===c.id).length]))" @add="add" @close="picker=false" />
-<WorkflowStepList ref="stepList" :steps="draft.steps" :courses="courses" :selected="selected" :disabled="busy" @select="selectStep" @move="move" @remove="remove" />
-<WorkflowStepConfig ref="configPanel" :step="current" :position="draft.steps.findIndex(s=>s.id===selected)+1" :course="current && course(current.courseId)" :disabled="busy" @restore="restore" />
+<WorkflowStepList :accounts="accounts" ref="stepList" :steps="draft.steps" :courses="courses" :selected="selected" :disabled="busy" @select="selectStep" @move="move" @remove="remove" />
+<WorkflowStepConfig :accounts="accounts" ref="configPanel" :step="current" :position="draft.steps.findIndex(s=>s.id===selected)+1" :course="current && course(current.courseId)" :disabled="busy" @restore="restore" />
 </div>
 <footer class="editor-footer"><div class="footer-feedback"><span v-if="undoState" role="status">{{undoState.kind==='remove'?'已移除步骤':'已恢复课程配置'}} <button type="button" ref="undoButton" class="quiet" :disabled="busy" @click="undo">撤销</button></span><span class="muted">{{saveHint || (dirty?'有未保存的修改':'草稿未修改')}}</span></div><div class="actions"><button type="button" :disabled="busy" @click="emit('cancel')">取消</button><button type="submit" class="primary" :title="saveHint || '保存工作流，不会自动启动；⌘/Ctrl+S'" :disabled="busy||!draft.name.trim()||!draft.steps.length||draft.steps.some(s=>!!unavailable(course(s.courseId)))"><UiIcon name="save"/>{{busy?'正在保存…':'保存工作流'}}</button></div></footer>
 </form>

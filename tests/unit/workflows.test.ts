@@ -1,3 +1,7 @@
+import { AccountService } from '../../src/main/services/account-service'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { randomUUID } from 'node:crypto'
 import { Database } from '../../src/main/storage/database'
@@ -16,25 +20,29 @@ import type { RunnerContext, RunOutcome } from '../../src/main/automation/runner
 import type { BrowserService } from '../../src/main/automation/browser-service'
 import type { CredentialStore } from '../../src/main/storage/credentials'
 import type { WorkflowInput } from '../../src/shared/workflows'
-const dbs: Database[] = []
-afterEach(() => dbs.splice(0).forEach(db => db.close()))
+const dbs: Database[] = [], dirs: string[] = []
+afterEach(() => {dbs.splice(0).forEach(db => db.close());dirs.splice(0).forEach(dir=>rmSync(dir,{recursive:true,force:true}))})
 function harness(work: (ctx: RunnerContext) => Promise<RunOutcome> = async () => ({ reason: 'completed', completedCount: 1, watchedSeconds: 1 })) {
   const db = new Database(':memory:'); dbs.push(db)
   const settings = new SettingsService(db); let manager: WorkflowRunManager
   const courses = new CourseService(db, settings, () => manager?.occupiedCourses() ?? [])
-  const flows = new WorkflowService(db, courses, id => manager?.isActive(id) ?? false)
+  const dir=mkdtempSync(join(tmpdir(),'ac-flow-'));dirs.push(dir)
+  const accounts=new AccountService(db,dir,()=>manager?.occupiedAccounts()??[])
+  const flows = new WorkflowService(db, courses, id => manager?.isActive(id) ?? false, accounts)
   const repo = new RunRepository(db), credentials = { username: 'fixture', password: 'secret' }
   const cleanup = vi.fn(async () => { }), opened: string[] = [], contexts: RunnerContext[] = []
-  manager = new WorkflowRunManager(flows, courses, settings, () => credentials, repo, (run, report) => {
+  manager = new WorkflowRunManager(flows, courses, settings, accounts, repo, (run, report) => {
     const bus = new EventBus(); bus.on('event:bot-status', s => report(s))
     const browser = { openSession: async () => ({}) } as unknown as BrowserService
-    const bot = new BotService(db, { get: () => credentials } as CredentialStore, settings, bus, browser, () => ({ mode: 'classic', run: async (ctx) => { contexts.push(ctx); return work(ctx) } }), async () => null, courses)
-    return { task: new CourseTaskExecutor(bot, courses), openWindow: async () => { opened.push(run.id) }, cleanupStep: cleanup, dispose: async () => { await bot.dispose(); bus.clear() } }
+    const bot = new BotService(db, { get: () => credentials } as CredentialStore, settings, bus, browser, () => ({ mode: 'classic', run: async (ctx) => { contexts.push(ctx); return work(ctx) } }), async () => null, courses, accounts)
+    return { task: new CourseTaskExecutor(bot, accounts), openWindow: async () => { opened.push(run.id) }, cleanupStep: cleanup, stop:()=>bot.stop('user'), dispose: async () => { await bot.dispose(); bus.clear() } }
   })
   const add = (name: string) => { const result = courses.create({ name, url: `https://studyvideoh5.zhihuishu.com/stuStudy?recruitAndCourseId=${name}`, options: { ...DEFAULT_COURSE_OPTIONS } }); if (!result.ok) throw Error(result.message); return result.courseId! }
-  const input = (ids: string[]): WorkflowInput => ({ name: ids.join(','), steps: ids.map(courseId => ({ id: randomUUID(), courseId, options: { ...DEFAULT_COURSE_OPTIONS } })), schedule: null })
+  const byCourse = new Map<string,string>()
+  const accountFor=(courseId:string)=>{let id=byCourse.get(courseId);if(!id){id=accounts.create({name:courseId,username:'fixture',password:'secret',loginMethod:'zhihuishu',loggedUrl:''}).id;byCourse.set(courseId,id)}return id}
+  const input = (ids: string[]): WorkflowInput => ({ name: ids.join(','), steps: ids.map(courseId => ({ id: randomUUID(), accountId:accountFor(courseId), courseId, options: { ...DEFAULT_COURSE_OPTIONS } })), schedule: null })
   const done = async () => vi.waitFor(() => expect(manager.occupiedCourses()).toHaveLength(0))
-  return { db, settings, courses, flows, repo, manager, add, input, done, cleanup, contexts, opened }
+  return { db, accounts, accountFor, settings, courses, flows, repo, manager, add, input, done, cleanup, contexts, opened }
 }
 describe('workflow persistence and lifecycle', () => {
   it('disabled schedules persist and never fire, including overdue one-time schedules', () => {
@@ -45,7 +53,7 @@ describe('workflow persistence and lifecycle', () => {
       h.flows.setSchedule(flow.id, { ...flow.schedule!, time: kind === 'once' ? new Date(now - 60000).toISOString() : '09:00', nextAt: new Date(now - 60000).toISOString() })
       const current = h.flows.get(flow.id)!
       h.flows.update(flow.id, current.version, { ...current, schedule: { ...current.schedule!, enabled: false } })
-      const reloaded = new WorkflowService(h.db, h.courses, () => false).get(flow.id)!
+      const reloaded = new WorkflowService(h.db, h.courses, () => false, h.accounts).get(flow.id)!
       expect(reloaded.schedule).toMatchObject({ enabled: false, nextAt: null })
       expect(reloaded.steps).toEqual(flow.steps)
     }
@@ -56,18 +64,18 @@ describe('workflow persistence and lifecycle', () => {
   it('persists ordered independent options, rejects stale edits and deletion of referenced courses', () => {
     const h = harness(), a = h.add('A'), b = h.add('B'), input = h.input([a, b]); input.steps[0].options.timeLimitMinutes = 3
     const flow = h.flows.create(input); input.steps[0].options.timeLimitMinutes = 99
-    expect(new WorkflowService(h.db, h.courses, () => false).get(flow.id)?.steps[0].options.timeLimitMinutes).toBe(3)
+    expect(new WorkflowService(h.db, h.courses, () => false, h.accounts).get(flow.id)?.steps[0].options.timeLimitMinutes).toBe(3)
     const updated = h.flows.update(flow.id, 1, { ...flow, steps: [...flow.steps].reverse() })
     expect(updated.steps[0].courseId).toBe(b); expect(() => h.flows.update(flow.id, 1, flow)).toThrow('修改')
     expect(h.courses.remove(a)).toMatchObject({ ok: false }); h.flows.remove(flow.id); expect(h.courses.remove(a).ok).toBe(true)
   })
-  it('transaction rolls back partial writes and legacy migration is idempotent', () => {
+  it('transaction rolls back partial writes without importing legacy schedules', () => {
     const h = harness(), a = h.add('A'); h.db.setSetting('schedulerCourseId', a)
-    h.flows.migrateLegacy(); h.flows.migrateLegacy(); expect(h.flows.list()).toHaveLength(1); expect(h.flows.list()[0].schedule).toBeNull()
+    expect(h.flows.list()).toHaveLength(0)
     h.db.raw().exec("CREATE TRIGGER fail_step BEFORE INSERT ON workflow_steps BEGIN SELECT RAISE(ABORT,'fail insert'); END")
-    expect(() => h.flows.create(h.input([a]))).toThrow(); expect(h.flows.list()).toHaveLength(1)
+    expect(() => h.flows.create(h.input([a]))).toThrow(); expect(h.flows.list()).toHaveLength(0)
   })
-  it('parallel runs reserve ALL courses synchronously and reject later overlap before execution', async () => {
+  it('parallel runs reserve ALL accounts synchronously and reject later overlap before execution', async () => {
     const release: Array<() => void> = []; const h = harness(async () => { await new Promise<void>(r => release.push(r)); return { reason: 'completed', completedCount: 1, watchedSeconds: 0 } })
     const a = h.add('A'), b = h.add('B'), c = h.add('C'), first = h.flows.create(h.input([a, b])), other = h.flows.create(h.input([c]))
     const r1 = h.manager.start(first.id), r2 = h.manager.start(other.id), conflict = h.manager.start(h.flows.create(h.input([b])).id)
@@ -155,3 +163,5 @@ describe('cache maintenance launch lock', () => {
     expect(h.db.raw().prepare('SELECT * FROM workflow_schedule_firings').all()).toHaveLength(1)
   })
 })
+
+vi.mock('electron', () => ({safeStorage:{isEncryptionAvailable:()=>true,encryptString:(value:string)=>Buffer.from(value),decryptString:(value:Buffer)=>value.toString()}}))

@@ -1,10 +1,14 @@
+import { AccountService } from '../../src/main/services/account-service'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { WorkflowService } from '../../src/main/workflows/workflow-service'
 import { MasteryQuestionBank } from '../../src/main/automation/mastery/question-bank'
 import { buildCourseQuestionBankExport } from '../../src/main/services/question-bank-export'
 import type { WorkflowInput, WorkflowRun } from '../../src/shared/workflows'
 /** Built Vue UI with real course persistence and an isolated desktop IPC boundary. */
 import { chromium, type Browser, type BrowserContext, type Page, type Locator } from 'playwright-core'
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resolve } from 'node:path'
 import { mkdirSync } from 'node:fs'
 import { startFixtureServer, type FixtureServer } from '../../scripts/poc/fixture-server.mjs'
@@ -18,6 +22,7 @@ let pageErrors: string[]
 let perRunLogs: Record<string, LogEntry[]> | null
 let delayedLogs: Record<string, number>
 let fixtureLogs: LogEntry[]
+let accounts: AccountService, accountId: string, accountDir: string
 let workflows: WorkflowService
 let runFixtures: WorkflowRun[] | null
 let lastFlowId: string
@@ -36,13 +41,23 @@ beforeEach(async () => {
   failFlowListOnce = false;actionDelay=0;startRejection=null;failSettingsLoadOnce=false
   state = { state: 'idle', mode: null, currentTitle: null, completedCount: 0, watchedSeconds: 0, stoppedReason: null, message: '准备好后开始一门课程', tone: 'neutral' }
   courses = new CourseService(db, settings, () => state.state !== 'idle' ? state.courseId ?? null : null)
-  workflows = new WorkflowService(db,courses,()=>state.state!=='idle'); lastFlowId=''
+  accountDir=mkdtempSync(join(tmpdir(),'ac-ui-'));accounts=new AccountService(db,accountDir)
+  accountId=accounts.create({name:'默认账号',username:'fixture-user',password:'secret',loginMethod:'zhihuishu',loggedUrl:''}).id
+  workflows = new WorkflowService(db,courses,()=>state.state!=='idle',accounts); lastFlowId=''
   context = await browser.newContext({ viewport: { width: 1180, height: 780 } }); page = await context.newPage()
   pageErrors = []; page.on('pageerror', error => pageErrors.push(error.message))
   let config: SchedulerConfig = { enabled: false, courseId: null, startTime: '06:00', endTime: '23:00', allDay: false, dailyLimitMinutes: 0 }
   await page.exposeFunction('_invoke', async (name: string, args: unknown[]) => {
     let result: unknown
     switch (name) {
+      case 'accounts.list': return accounts.list()
+      case 'accounts.progress': return accounts.progress(args[0] as string)
+      case 'accounts.create': if(failSave)throw Error('fixture 保存失败');return accounts.create(args[0] as import('../../src/shared/accounts').AccountInput)
+      case 'accounts.update': if(failSave)throw Error('fixture 保存失败');return accounts.update(args[0] as string,args[1] as import('../../src/shared/accounts').AccountInput)
+      case 'accounts.remove': return accounts.remove(args[0] as string)
+      case 'app.welcome': return false
+      case 'app.dismissWelcome': return
+
       case 'workflows.list': if (failFlowListOnce) { failFlowListOnce = false; throw Error('fixture 列表刷新失败') }; return workflows.list()
       case 'workflows.get': return workflows.get(args[0] as string)
       case 'workflows.create': if(failSave)throw Error('fixture 保存失败');return workflows.create(args[0] as WorkflowInput)
@@ -61,8 +76,8 @@ beforeEach(async () => {
         if (runFixtures) return runFixtures
         if(!state.snapshot)return []
         const course=state.snapshot.course
-        const flow=workflows.get(lastFlowId)??{id:'fixture-flow',version:1,name:course.name,steps:[{id:'fixture-step',courseId:course.id,options:course.options}],schedule:null,notice:null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()}
-        return [{id:'fixture-run',workflowId:flow.id,source:'manual',state:state.state==='idle'?(state.error?'failed':'cancelled'):state.state==='stopping'?'stopping':'running',snapshot:{workflow:flow,steps:flow.steps.map(s=>({...s,course:courses.get(s.courseId)!})),settings:settings.getAll()},startedAt:new Date().toISOString(),finishedAt:null,message:state.error?.message??'',steps:flow.steps.map(s=>({stepId:s.id,state:state.state==='idle'?'failed':'running',status:state,transcription:null,error:state.error?.message??null,startedAt:null,finishedAt:null}))}] satisfies WorkflowRun[]
+        const flow=workflows.get(lastFlowId)??{id:'fixture-flow',version:1,name:course.name,steps:[{id:'fixture-step',accountId, courseId:course.id,options:course.options}],schedule:null,notice:null,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()}
+        return [{id:'fixture-run',workflowId:flow.id,source:'manual',state:state.state==='idle'?(state.error?'failed':'cancelled'):state.state==='stopping'?'stopping':'running',snapshot:{workflow:flow,steps:flow.steps.map(s=>({...s,account:accounts.get(s.accountId)!,course:courses.get(s.courseId)!})),settings:settings.getAll()},startedAt:new Date().toISOString(),finishedAt:null,message:state.error?.message??'',steps:flow.steps.map(s=>({stepId:s.id,state:state.state==='idle'?'failed':'running',status:state,transcription:null,error:state.error?.message??null,startedAt:null,finishedAt:null}))}] satisfies WorkflowRun[]
       }
       case 'workflows.start': {
         if(startRejection)return {ok:false,...startRejection}
@@ -100,7 +115,7 @@ beforeEach(async () => {
       case 'progress.get': return { today: { date: '2026-09-16', watchedSeconds: 0 }, sessionSeconds: 0, targetMinutes: 0 }
       case 'logs.recent': return fixtureLogs
       case 'transcription.get': return { phase: 'idle', title: null, completed: 0, failed: 0, message: '转录未启用', tone: 'neutral', percent: null }
-      case 'app.version': return { version: '2.0.0', platform: 'darwin' }
+      case 'app.version': return { version: '3.0.0', platform: 'darwin' }
       default: return null
     }
     return result
@@ -115,7 +130,7 @@ beforeEach(async () => {
   await page.goto(server.origin + '/index.html')
   await page.getByRole('heading', { name: '我的课程', exact: true }).waitFor()
 })
-afterEach(async () => { await context?.close(); db?.close(); expect(pageErrors).toEqual([]) })
+afterEach(async () => { await context?.close(); db?.close(); if(accountDir)rmSync(accountDir,{recursive:true,force:true}); expect(pageErrors).toEqual([]) })
 const choiceLabels: Record<string,string>={learn:'学习','learn-transcribe':'学习并转录',transcribe:'仅转录',limited:'指定分钟',unlimited:'不限时长',none:'仅手动',daily:'每日定时',once:'单次定时',beginning:'课程开头',resume:'上次位置',info:'信息',warning:'警告',error:'错误',debug:'调试','':'全部'}
 async function choose(scope:Page|Locator,label:string,value:string):Promise<void>{await scope.getByRole('radiogroup',{name:label,exact:true}).getByRole('radio',{name:choiceLabels[value],exact:true}).click()}
 async function add(name: string, key: string, action = 'learn'): Promise<void> {
@@ -199,10 +214,12 @@ describe('课程与运行界面', () => {
   })
   it('账号密码不回填、默认设置不改变现有课程、定时入口迁移到工作流', async () => {
     await add('课程 A', 'a'); await add('课程 B', 'b')
-    await page.getByRole('link', { name: '设置', exact: true }).click()
-    await page.getByText('留空保留已保存的密码', { exact: false }).count() // placeholder assertion below
+    await page.getByRole('navigation',{name:'主导航'}).getByRole('link', { name: '账号', exact: true }).click()
+    await page.getByRole('button', {name:'编辑',exact:true}).click()
     await page.getByPlaceholder('留空保留已保存的密码').waitFor()
     expect(await page.getByPlaceholder('留空保留已保存的密码').inputValue()).toBe('')
+    await page.getByRole('button',{name:'取消',exact:true}).click()
+    await page.getByRole('link', {name:'设置',exact:true}).click()
     await page.screenshot({ path: `${shots}/settings.png`, fullPage: true })
     await page.getByRole('button', { name: '课程默认配置', exact: true }).click()
     await choose(page,'运行方式','transcribe')
@@ -249,7 +266,7 @@ describe('紧凑工作区布局', () => {
         const label = `${size.width}-${size.height}-${scale}`
         for (const route of ['课程', '运行', '设置']) {
           await page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: route, exact: true }).click()
-          if (route === '设置') await page.getByLabel('账号', { exact: true }).waitFor()
+          if (route === '设置') await page.getByRole('radiogroup', {name:'运行方式',exact:true}).waitFor()
           expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
           expect(await page.locator('.page').evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true)
           if (route === '课程') {
@@ -293,7 +310,7 @@ describe('紧凑界面操作与提示', () => {
     const course = courses.list().courses[0]
     fixtureLogs = Array.from({ length: 100 }, () => ({ time: Date.now(), level: 'info', message: '等待用户处理' }))
     await page.setViewportSize({ width: 740, height: 570 })
-    lastFlowId=workflows.create({name:'人工处理工作流',steps:[{id:'fixture-step',courseId:course.id,options:course.options}],schedule:null}).id
+    lastFlowId=workflows.create({name:'人工处理工作流',steps:[{id:'fixture-step',accountId, courseId:course.id,options:course.options}],schedule:null}).id
     state = { ...state, state: 'running', phase: 'waiting', courseId: course.id,
       snapshot: { id: 'notice-run', course, settings: settings.getAll(), startedAt: new Date().toISOString(), source: 'manual' } }
     for (const kind of ['captcha', 'manual-login'] as const) {
@@ -404,10 +421,10 @@ describe('运行记录显示', () => {
   it('空页接收运行记录后显示详情，切换运行 ID 同步详情，步骤按 ID 匹配', async () => {
     await add('显示测试课程', 'display')
     const course = courses.list().courses[0]
-    const flow = workflows.create({ name: '显示测试工作流', steps: [{ id: 's1', courseId: course.id, options: course.options }, { id: 's2', courseId: course.id, options: course.options }], schedule: null })
+    const flow = workflows.create({ name: '显示测试工作流', steps: [{ id: 's1', accountId, courseId: course.id, options: course.options }, { id: 's2', accountId, courseId: course.id, options: course.options }], schedule: null })
     const makeRun = (id: string, name: string): WorkflowRun => ({
       id, workflowId: flow.id, source: 'manual', state: 'running', startedAt: '2026-09-19T01:00:00Z', finishedAt: null, message: '',
-      snapshot: { workflow: { ...flow, name }, steps: flow.steps.map(s => ({ ...s, course })), settings: settings.getAll() },
+      snapshot: { workflow: { ...flow, name }, steps: flow.steps.map(s => ({ ...s, account:accounts.get(s.accountId)!, course })), settings: settings.getAll() },
       steps: [...flow.steps].reverse().map(s => ({ stepId: s.id, state: s.id === 's1' ? 'succeeded' : 'running', status: null, error: null, transcription: null, startedAt: null, finishedAt: null }))
     })
     await page.getByRole('navigation').getByRole('link', { name: '运行', exact: true }).click()
@@ -529,8 +546,8 @@ describe('运行详情隔离与滚动',()=>{
   it('过滤、快照及切换记录后的日志隔离，刷新不重置滚动位置',async()=>{
     await add('原始课程','log-snapshot')
     const course=courses.list().courses[0]
-    const flow=workflows.create({name:'快照工作流',steps:[{id:'step-log',courseId:course.id,options:course.options}],schedule:null})
-    const makeRun=(id:string,state:WorkflowRun['state']):WorkflowRun=>({id,workflowId:flow.id,source:'manual',state,startedAt:'2026-10-01T00:00:00Z',finishedAt:null,message:'',snapshot:{workflow:flow,steps:flow.steps.map(s=>({...s,course})),settings:settings.getAll()},steps:[{stepId:'step-log',state:'running',status:null,transcription:null,error:null,startedAt:null,finishedAt:null}]})
+    const flow=workflows.create({name:'快照工作流',steps:[{id:'step-log',accountId, courseId:course.id,options:course.options}],schedule:null})
+    const makeRun=(id:string,state:WorkflowRun['state']):WorkflowRun=>({id,workflowId:flow.id,source:'manual',state,startedAt:'2026-10-01T00:00:00Z',finishedAt:null,message:'',snapshot:{workflow:flow,steps:flow.steps.map(s=>({...s,account:accounts.get(s.accountId)!,course})),settings:settings.getAll()},steps:[{stepId:'step-log',state:'running',status:null,transcription:null,error:null,startedAt:null,finishedAt:null}]})
     runFixtures=[makeRun('alpha','running'),makeRun('beta','failed')]
     perRunLogs={alpha:Array.from({length:200},(_,i)=>({time:Date.now(),level:'info',message:`alpha 日志 ${i}`})),beta:[{time:Date.now(),level:'error',message:'beta 独立日志'}]}
     await page.getByRole('navigation',{name:'主导航'}).getByRole('link',{name:'运行',exact:true}).click()
@@ -589,7 +606,7 @@ describe('舒适工具界面',()=>{
     expect(await page.getByRole('region',{name:'课程详情'}).count()).toBe(0)
     expect(await page.locator('.course-row').count()).toBe(0)
     const course = courses.list().courses[0]
-    for (const name of ['搜索工作流 A', '搜索工作流 B']) workflows.create({ name, steps: [{ id: crypto.randomUUID(), courseId: course.id, options: course.options }], schedule: null })
+    for (const name of ['搜索工作流 A', '搜索工作流 B']) workflows.create({ name, steps: [{ id: crypto.randomUUID(), accountId, courseId: course.id, options: course.options }], schedule: null })
     await page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '工作流', exact: true }).click()
     const flowSearch = page.getByRole('searchbox', { name: '搜索工作流' })
     await flowSearch.fill('工作流 B')
@@ -649,7 +666,7 @@ describe('舒适工具界面',()=>{
   it('编辑已到期但未改动的单次定时，保留原补跑规则', async () => {
     await add('补跑课程', 'due-edit')
     const course = courses.list().courses[0]
-    const flow = workflows.create({ name:'等待补跑', steps:[{id:'due-step',courseId:course.id,options:course.options}], schedule:{kind:'once',enabled:true,time:new Date(Date.now()+3600000).toISOString(),timeZone:'Asia/Shanghai',nextAt:null} })
+    const flow = workflows.create({ name:'等待补跑', steps:[{id:'due-step',accountId, courseId:course.id,options:course.options}], schedule:{kind:'once',enabled:true,time:new Date(Date.now()+3600000).toISOString(),timeZone:'Asia/Shanghai',nextAt:null} })
     const due = new Date(Date.now()-3600000).toISOString()
     const schedule = { ...flow.schedule!, time:due, nextAt:due }
     db.raw().prepare('UPDATE workflow_schedules SET config=? WHERE workflow_id=?').run(JSON.stringify(schedule),flow.id)
@@ -752,7 +769,7 @@ describe('舒适工具界面',()=>{
     await page.locator('.course-row[aria-pressed=false]').click()
     expect(await courseDetail.evaluate(el=>el.scrollTop)).toBe(0)
     const course=courses.list().courses[0]
-    for(const name of ['长详情工作流 A','长详情工作流 B']) workflows.create({name,steps:Array.from({length:20},()=>({id:crypto.randomUUID(),courseId:course.id,options:course.options})),schedule:null})
+    for(const name of ['长详情工作流 A','长详情工作流 B']) workflows.create({name,steps:Array.from({length:20},()=>({id:crypto.randomUUID(),accountId, courseId:course.id,options:course.options})),schedule:null})
     await page.setViewportSize({width:1180,height:780})
     await page.getByRole('navigation',{name:'主导航'}).getByRole('link',{name:'工作流',exact:true}).click()
     const detail=page.locator('.workspace-detail')
@@ -770,7 +787,7 @@ describe('舒适工具界面',()=>{
   it('不可识别和已移除的课程步骤显示原因，移除失效步骤后可保存', async () => {
     for(const name of ['正常课程','旧类型课程','已移除课程']) await add(name,`unavailable-${name}`)
     const library=courses.list().courses
-    const flow=workflows.create({name:'修复失效步骤',steps:library.map(course=>({id:crypto.randomUUID(),courseId:course.id,options:course.options})),schedule:null})
+    const flow=workflows.create({name:'修复失效步骤',steps:library.map(course=>({id:crypto.randomUUID(),accountId, courseId:course.id,options:course.options})),schedule:null})
     const unknown=library.find(course=>course.name==='旧类型课程')!
     const removed=library.find(course=>course.name==='已移除课程')!
     db.raw().prepare('UPDATE courses SET kind=? WHERE id=?').run('unknown',unknown.id)
@@ -796,7 +813,7 @@ describe('舒适工具界面',()=>{
   it('长工作流列表首尾跳转后，选中行不会被固定搜索栏遮挡', async () => {
     await add('列表滚动课程','list-scroll')
     const course = courses.list().courses[0]
-    for(let i=0;i<12;i++) workflows.create({name:`列表工作流 ${i}`,steps:[{id:crypto.randomUUID(),courseId:course.id,options:course.options}],schedule:null})
+    for(let i=0;i<12;i++) workflows.create({name:`列表工作流 ${i}`,steps:[{id:crypto.randomUUID(),accountId, courseId:course.id,options:course.options}],schedule:null})
     await page.getByRole('navigation',{name:'主导航'}).getByRole('link',{name:'工作流',exact:true}).click()
     await page.setViewportSize({width:740,height:570})
     const rows = page.locator('.workspace-list .tool-row')
@@ -955,11 +972,11 @@ describe('交互状态与直接操作',()=>{
   it('待执行课程显示占用来源，人工处理覆盖普通运行状态，停止不阻塞另一记录',async()=>{
     await add('当前课程','occupy-current');await add('待执行课程','occupy-pending');await add('另一课程','occupy-other')
     const a=courses.list().courses.find(c=>c.name==='当前课程')!,b=courses.list().courses.find(c=>c.name==='待执行课程')!
-    const flow=workflows.create({name:'占用测试',steps:[{id:'first',courseId:a.id,options:a.options},{id:'next',courseId:b.id,options:b.options}],schedule:null})
-    const make=(id:string):WorkflowRun=>({id,workflowId:flow.id,source:'manual',state:'running',startedAt:'2026-10-01T00:00:00Z',finishedAt:null,message:'',snapshot:{workflow:flow,steps:flow.steps.map(s=>({...s,course:s.courseId===a.id?a:b})),settings:settings.getAll()},steps:flow.steps.map((s,i)=>({stepId:s.id,state:i?'pending':'running',startedAt:i?null:'2026-10-01T00:00:00Z',finishedAt:null,error:null,transcription:null,status:i?null:{...state,state:'running',phase:'waiting',intervention:{id:'human',kind:'manual-login',scene:'login',message:'请完成登录',at:Date.now()}}}))})
+    const flow=workflows.create({name:'占用测试',steps:[{id:'first',accountId, courseId:a.id,options:a.options},{id:'next',accountId, courseId:b.id,options:b.options}],schedule:null})
+    const make=(id:string):WorkflowRun=>({id,workflowId:flow.id,source:'manual',state:'running',startedAt:'2026-10-01T00:00:00Z',finishedAt:null,message:'',snapshot:{workflow:flow,steps:flow.steps.map(s=>({...s,account:accounts.get(s.accountId)!,course:s.courseId===a.id?a:b})),settings:settings.getAll()},steps:flow.steps.map((s,i)=>({stepId:s.id,state:i?'pending':'running',startedAt:i?null:'2026-10-01T00:00:00Z',finishedAt:null,error:null,transcription:null,status:i?null:{...state,state:'running',phase:'waiting',intervention:{id:'human',kind:'manual-login',scene:'login',message:'请完成登录',at:Date.now()}}}))})
     const c=courses.list().courses.find(course=>course.name==='另一课程')!
-    const other=workflows.create({name:'另一任务',steps:[{id:'third',courseId:c.id,options:c.options}],schedule:null})
-    const next=make('attention-b');next.workflowId=other.id;next.snapshot={workflow:other,steps:other.steps.map(s=>({...s,course:c})),settings:settings.getAll()};next.steps=[{...next.steps[0],stepId:'third'}]
+    const other=workflows.create({name:'另一任务',steps:[{id:'third',accountId, courseId:c.id,options:c.options}],schedule:null})
+    const next=make('attention-b');next.workflowId=other.id;next.snapshot={workflow:other,steps:other.steps.map(s=>({...s,account:accounts.get(s.accountId)!,course:c})),settings:settings.getAll()};next.steps=[{...next.steps[0],stepId:'third'}]
     runFixtures=[make('attention-a'),next]
     await page.locator('.course-row').filter({hasText:'待执行课程'}).getByText('已被占用',{exact:true}).waitFor()
     await page.locator('.course-row').filter({hasText:'待执行课程'}).click()
@@ -984,8 +1001,8 @@ describe('交互状态与直接操作',()=>{
   it('日志明确加载与筛选空状态，跟随可关闭并显示新日志，选择同步深链接',async()=>{
     await add('日志反馈课程','log-feedback')
     const course=courses.list().courses[0]
-    const flow=workflows.create({name:'日志反馈工作流',steps:[{id:'log',courseId:course.id,options:course.options}],schedule:null})
-    runFixtures=[{id:'log-feedback',workflowId:flow.id,source:'manual',state:'succeeded',startedAt:'2026-10-01T00:00:00Z',finishedAt:'2026-10-01T00:30:00Z',message:'',snapshot:{workflow:flow,steps:flow.steps.map(s=>({...s,course})),settings:settings.getAll()},steps:[{stepId:'log',state:'succeeded',startedAt:'2026-10-01T00:00:00Z',finishedAt:'2026-10-01T00:30:00Z',status:{...state,stoppedReason:'time-limit'},error:null,transcription:null}]}]
+    const flow=workflows.create({name:'日志反馈工作流',steps:[{id:'log',accountId, courseId:course.id,options:course.options}],schedule:null})
+    runFixtures=[{id:'log-feedback',workflowId:flow.id,source:'manual',state:'succeeded',startedAt:'2026-10-01T00:00:00Z',finishedAt:'2026-10-01T00:30:00Z',message:'',snapshot:{workflow:flow,steps:flow.steps.map(s=>({...s,account:accounts.get(s.accountId)!,course})),settings:settings.getAll()},steps:[{stepId:'log',state:'succeeded',startedAt:'2026-10-01T00:00:00Z',finishedAt:'2026-10-01T00:30:00Z',status:{...state,stoppedReason:'time-limit'},error:null,transcription:null}]}]
     perRunLogs={'log-feedback':Array.from({length:80},(_,i)=>({time:Date.now(),level:'info',message:`反馈日志 ${i}`}))};delayedLogs['log-feedback']=700
     await page.getByRole('link',{name:'运行',exact:true}).click()
     const pre=page.locator('.logs pre')
@@ -1010,8 +1027,8 @@ describe('交互状态与直接操作',()=>{
   it('历史记录重跑显示最新配置含义，拒绝入口定位记录，删除原工作流后禁止启动',async()=>{
     await add('历史状态课程','restart-feedback')
     const course=courses.list().courses[0]
-    const flow=workflows.create({name:'历史任务',steps:[{id:'history',courseId:course.id,options:course.options}],schedule:null})
-    const make=(id:string,state:WorkflowRun['state']):WorkflowRun=>({id,workflowId:flow.id,source:'manual',state,startedAt:'2026-10-01T00:00:00Z',finishedAt:'2026-10-01T00:30:00Z',message:'',snapshot:{workflow:flow,steps:flow.steps.map(s=>({...s,course})),settings:settings.getAll()},steps:[]})
+    const flow=workflows.create({name:'历史任务',steps:[{id:'history',accountId, courseId:course.id,options:course.options}],schedule:null})
+    const make=(id:string,state:WorkflowRun['state']):WorkflowRun=>({id,workflowId:flow.id,source:'manual',state,startedAt:'2026-10-01T00:00:00Z',finishedAt:'2026-10-01T00:30:00Z',message:'',snapshot:{workflow:flow,steps:flow.steps.map(s=>({...s,account:accounts.get(s.accountId)!,course})),settings:settings.getAll()},steps:[]})
     runFixtures=[make('old-run','failed'),make('rejected-run','rejected')]
     startRejection={message:'请先保存登录账号和密码',runId:'rejected-run'}
     await page.getByRole('link',{name:'运行',exact:true}).click()
@@ -1085,7 +1102,7 @@ describe('条目导航连续性',()=>{
     await page.getByRole('link',{name:'课程',exact:true}).click()
     expect(await page.locator('.course-row[aria-pressed=true]').innerText()).toContain('导航课程 B')
     expect(courses.list().selectedCourseId).toBe(selectedBefore)
-    const other=workflows.create({name:'较早工作流',steps:[{id:'other',courseId:a.id,options:a.options}],schedule:null})
+    const other=workflows.create({name:'较早工作流',steps:[{id:'other',accountId, courseId:a.id,options:a.options}],schedule:null})
     await page.getByRole('button',{name:'构建工作流',exact:true}).click()
     await page.getByRole('button',{name:'保存工作流',exact:true}).waitFor()
     expect(page.url()).not.toContain('courseId=')
@@ -1099,7 +1116,7 @@ describe('条目导航连续性',()=>{
     await page.getByRole('link',{name:'设置',exact:true}).click()
     await page.getByRole('navigation',{name:'主导航'}).getByRole('link',{name:'工作流',exact:true}).click()
     expect(await page.locator('.workspace-list .tool-row[aria-pressed=true]').innerText()).toContain('导航课程 B')
-    runFixtures=[{id:'navigation-run',workflowId:saved.id,source:'manual',state:'failed',snapshot:{workflow:saved,steps:saved.steps.map(s=>({...s,course:b})),settings:settings.getAll()},startedAt:'2026-10-01T00:00:00Z',finishedAt:'2026-10-01T00:01:00Z',message:'',steps:[]}]
+    runFixtures=[{id:'navigation-run',workflowId:saved.id,source:'manual',state:'failed',snapshot:{workflow:saved,steps:saved.steps.map(s=>({...s,account:accounts.get(s.accountId)!,course:b})),settings:settings.getAll()},startedAt:'2026-10-01T00:00:00Z',finishedAt:'2026-10-01T00:01:00Z',message:'',steps:[]}]
     await page.locator('.workspace-list .tool-row').filter({hasText:'较早工作流'}).click()
     await page.getByRole('link',{name:'运行',exact:true}).click()
     await page.getByRole('link',{name:'管理工作流',exact:true}).click()
@@ -1132,5 +1149,58 @@ describe('settings cache cleanup', () => {
     await page.getByRole('button', { name: '清理缓存', exact: true }).click()
     await page.getByRole('status').filter({ hasText: '缓存清理完成' }).waitFor()
     expect(cacheClears).toBe(2)
+  })
+})
+
+vi.mock('electron', () => ({safeStorage:{isEncryptionAvailable:()=>true,encryptString:(value:string)=>Buffer.from(value),decryptString:(value:Buffer)=>value.toString()}}))
+
+describe('多账号界面',()=>{
+  it('创建、编辑和删除账号，编辑时不回填密码',async()=>{
+    await page.getByRole('navigation',{name:'主导航'}).getByRole('link',{name:'账号',exact:true}).click()
+    await page.getByRole('button',{name:'添加账号',exact:true}).click()
+    await page.getByLabel('账号名称',{exact:true}).fill('第二账号')
+    await page.getByLabel('登录账号',{exact:true}).fill('second-user')
+    await page.getByLabel('密码',{exact:true}).fill('second-password')
+    await page.getByRole('button',{name:'保存账号',exact:true}).click()
+    await page.getByRole('heading',{name:'第二账号',exact:true}).waitFor()
+    expect(accounts.list()).toHaveLength(2)
+    expect(JSON.stringify(accounts.list())).not.toContain('second-password')
+    await page.getByRole('button',{name:'编辑',exact:true}).click()
+    expect(await page.getByLabel('密码',{exact:true}).inputValue()).toBe('')
+    await page.getByLabel('账号名称',{exact:true}).fill('已改名')
+    await page.getByRole('button',{name:'保存账号',exact:true}).click()
+    await page.getByRole('heading',{name:'已改名',exact:true}).waitFor()
+    const second=accounts.list().find(a=>a.name==='已改名')!
+    expect(accounts.credentials(second.id).password).toBe('second-password')
+    page.once('dialog',dialog=>dialog.accept())
+    await page.getByRole('button',{name:'删除',exact:true}).click()
+    await page.getByRole('status').filter({hasText:'账号已删除'}).waitFor()
+    expect(accounts.list()).toHaveLength(1)
+    await page.setViewportSize({width:569,height:438})
+    expect(await page.locator('.page').evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true)
+    await page.screenshot({path:`${shots}/accounts-narrow.png`})
+    await page.setViewportSize({width:1180,height:780})
+    await page.screenshot({path:`${shots}/accounts.png`})
+  })
+  it('多账号时每一步显式选择账号，保存后展示账号，课程详情按账号显示进度',async()=>{
+    const second=accounts.create({name:'第二账号',username:'second-user',password:'second-password',loginMethod:'upc-institution',loggedUrl:''})
+    await add('共享课程','multi-account')
+    const course=courses.list().courses[0]
+    accounts.saveProgress(accountId,course.id,'默认账号第二章');accounts.saveProgress(second.id,course.id,'第二账号第一章')
+    await page.reload()
+    await page.getByText('默认账号第二章',{exact:false}).waitFor();await page.getByText('第二账号第一章',{exact:false}).waitFor()
+    await page.getByRole('button',{name:'构建工作流',exact:true}).click()
+    const select=page.getByLabel('执行账号',{exact:true})
+    await select.waitFor();expect(await select.inputValue()).toBe('')
+    await select.selectOption(second.id)
+    await page.getByText('此账号上次完成的位置：第二账号第一章',{exact:true}).waitFor()
+    await page.getByRole('button',{name:'保存工作流',exact:true}).click()
+    await page.getByRole('button',{name:'立即运行',exact:true}).waitFor()
+    expect(workflows.list()[0].steps[0].accountId).toBe(second.id)
+    await page.getByText('账号：第二账号',{exact:true}).waitFor()
+    await page.screenshot({path:`${shots}/multi-account-workflow.png`})
+    await page.getByRole('navigation',{name:'主导航'}).getByRole('link',{name:'账号',exact:true}).click()
+    await page.getByRole('button').filter({hasText:'第二账号'}).click()
+    expect(await page.getByRole('button',{name:'删除',exact:true}).isDisabled()).toBe(true)
   })
 })

@@ -12,7 +12,7 @@ import type { CourseItem, DailyProgress, LogEntry } from '@shared/types'
 const logger = createLogger('database')
 
 /** v2 schema 版本。每次改表结构都要 +1 并补一条迁移。 */
-export const SCHEMA_VERSION = 5
+export const SCHEMA_VERSION = 6
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS url_history (
@@ -55,6 +55,7 @@ export class Database {
 
   constructor(readonly file: string) {
     this.db = new BetterSqlite3(file)
+    if ((this.userVersion !== 0 && this.userVersion !== SCHEMA_VERSION) || (this.userVersion === 0 && this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' LIMIT 1").get())) { this.db.close(); throw new Error('此目录包含旧版数据，请使用新版独立数据目录') }
     this.db.pragma('journal_mode = WAL')
     this.db.pragma('foreign_keys = ON')
     this.ensureSchema()
@@ -66,6 +67,15 @@ export class Database {
     this.db.transaction(() => {
       this.db.exec(SCHEMA_SQL)
       this.db.exec(`
+        CREATE TABLE IF NOT EXISTS accounts (
+          id TEXT PRIMARY KEY, name TEXT NOT NULL, username TEXT NOT NULL, login_method TEXT NOT NULL,
+          logged_url TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS account_course_progress (
+          account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+          course_id TEXT NOT NULL REFERENCES courses(id), last_video_title TEXT, last_run_at TEXT,
+          updated_at TEXT NOT NULL, PRIMARY KEY(account_id,course_id)
+        );
         CREATE TABLE IF NOT EXISTS courses (
           id TEXT PRIMARY KEY, identity TEXT NOT NULL UNIQUE, name TEXT NOT NULL, url TEXT NOT NULL,
           kind TEXT NOT NULL, options TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
@@ -103,7 +113,7 @@ export class Database {
       `)
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS workflows (id TEXT PRIMARY KEY, name TEXT NOT NULL, version INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, notice TEXT);
-        CREATE TABLE IF NOT EXISTS workflow_steps (id TEXT NOT NULL, workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE, position INTEGER NOT NULL, course_id TEXT NOT NULL REFERENCES courses(id), options TEXT NOT NULL, PRIMARY KEY(workflow_id,id), UNIQUE(workflow_id,position));
+        CREATE TABLE IF NOT EXISTS workflow_steps (id TEXT NOT NULL, workflow_id TEXT NOT NULL REFERENCES workflows(id) ON DELETE CASCADE, position INTEGER NOT NULL, account_id TEXT NOT NULL REFERENCES accounts(id), course_id TEXT NOT NULL REFERENCES courses(id), options TEXT NOT NULL, PRIMARY KEY(workflow_id,id), UNIQUE(workflow_id,position));
         CREATE TABLE IF NOT EXISTS workflow_schedules (workflow_id TEXT PRIMARY KEY REFERENCES workflows(id) ON DELETE CASCADE, config TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS workflow_runs (id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL, state TEXT NOT NULL, started_at TEXT NOT NULL, data TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS workflow_step_runs (run_id TEXT NOT NULL REFERENCES workflow_runs(id), step_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(run_id,step_id));

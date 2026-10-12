@@ -1,3 +1,5 @@
+import type { AccountService } from '../services/account-service'
+import { redactSecrets } from '../services/logger'
 import { randomUUID } from 'node:crypto'
 import type { BotStatus, Credentials, TranscriptionStatus } from '@shared/types'
 import type { WorkflowRun, WorkflowStartResult } from '@shared/workflows'
@@ -11,6 +13,7 @@ import { identifyCourse, validateRunOptions, settingsForCourse } from '@shared/c
 type RuntimeFactory = (run: WorkflowRun, report: (status?: BotStatus, transcription?: TranscriptionStatus) => void) => WorkflowRuntime
 export class WorkflowRunManager {
   private active = new Map<string, { executor: WorkflowExecutor; done: Promise<void> }>()
+  private reservations = new Map<string, string[]>()
   private closing = false
   private maintenance: Promise<unknown> | null = null
   get isMaintaining(): boolean { return this.maintenance !== null }
@@ -22,8 +25,9 @@ export class WorkflowRunManager {
     this.maintenance = pending
     try { return await pending } finally { this.maintenance = null }
   }
-  constructor(private flows: WorkflowService, private courses: CourseService, private settings: SettingsService, private credentials: () => Credentials, readonly repository: RunRepository, private factory: RuntimeFactory, private publish: (run: WorkflowRun) => void = () => { }) { repository.recover() }
+  constructor(private flows: WorkflowService, private courses: CourseService, private settings: SettingsService, private accounts: AccountService, readonly repository: RunRepository, private factory: RuntimeFactory, private publish: (run: WorkflowRun) => void = () => { }) { repository.recover() }
   isActive(id: string): boolean { return [...this.active.values()].some(a => a.executor.run.workflowId === id) }
+  occupiedAccounts(): string[] { return [...new Set([...this.reservations.values()].flat())] }
   occupiedCourses(): string[] { return [...this.active.values()].flatMap(a => a.executor.run.snapshot.steps.map(s => s.courseId)) }
   start(workflowId: string, source: 'manual' | 'schedule' = 'manual'): WorkflowStartResult {
     if (this.closing) return { ok: false, message: '应用正在退出' }
@@ -33,10 +37,12 @@ export class WorkflowRunManager {
     let run: WorkflowRun
     try {
       const steps = flow.steps.map(s => {
+        const account = this.accounts.get(s.accountId)
+        if (!account) throw new Error('账号不存在')
         const course = this.courses.get(s.courseId)
         if (!course) throw new Error('课程不存在')
         identifyCourse(course.url); validateRunOptions(s.options, course.kind)
-        return { ...s, course: structuredClone(course) }
+        return { ...s, course: structuredClone(course), account: structuredClone(account) }
       })
       if (!steps.length) throw new Error('工作流没有步骤')
       const settings = { ...this.settings.getAll(), autoMode: false }
@@ -45,16 +51,24 @@ export class WorkflowRunManager {
     const reject = (message: string): WorkflowStartResult => { run.state = 'rejected'; run.message = message; run.finishedAt = new Date().toISOString(); run.steps.forEach(s => s.state = 'cancelled'); this.repository.save(run); return { ok: false, message, runId: run.id } }
     for (const { executor } of this.active.values()) {
       if (executor.run.workflowId === workflowId) return reject('该工作流已在运行')
-      const overlap = run.snapshot.steps.find(s => executor.run.snapshot.steps.some(other => other.courseId === s.courseId))
-      if (overlap) return reject(`课程“${overlap.course.name}”已被工作流“${executor.run.snapshot.workflow.name}”占用`)
+      const overlap = run.snapshot.steps.find(s => executor.run.snapshot.steps.some(other => other.accountId === s.accountId))
+      if (overlap) return reject(`账号“${overlap.account.name}”已被工作流“${executor.run.snapshot.workflow.name}”占用`)
     }
-    const creds = { ...this.credentials() }
-    if (!creds.username.trim() || !creds.password) return reject('请先保存登录账号和密码')
+    const creds = new Map<string, Credentials>()
     for (const step of run.snapshot.steps) {
-      const errors = this.settings.validate(settingsForCourse(run.snapshot.settings, { ...step.course, options: step.options }))
+      if (!creds.has(step.accountId)) {
+        const value = this.accounts.credentials(step.accountId)
+        if (!value.username.trim() || !value.password) return reject(`请为账号“${step.account.name}”保存登录账号和密码`)
+        creds.set(step.accountId, { ...value })
+      }
+    }
+    for (const step of run.snapshot.steps) {
+      const errors = this.settings.validate(settingsForCourse({ ...run.snapshot.settings, loginMethod: step.account.loginMethod, loggedUrl: step.account.loggedUrl }, { ...step.course, options: step.options }))
       if (errors.length) return reject(errors.map(e => e.message).join('；'))
     }
+    if (run.snapshot.steps.some(s => this.occupiedAccounts().includes(s.accountId))) return reject('账号已被其他工作流占用')
     this.repository.save(run)
+    this.reservations.set(run.id, [...new Set(run.snapshot.steps.map(s => s.accountId))])
     const changed = (): void => { this.repository.save(run); this.publish(structuredClone(run)) }
     let runtime: WorkflowRuntime
     try {
@@ -62,17 +76,17 @@ export class WorkflowRunManager {
         const step = run.steps.find(s => s.state === 'running')
         if (!step) return
         if (status) step.status = status
-        if (transcription) step.transcription = transcription
+        if (transcription) step.transcription = {...transcription,message:redactSecrets(transcription.message)}
         changed()
       })
-    } catch (e) { return reject(`初始化失败：${String(e)}`) }
+    } catch (e) { this.reservations.delete(run.id); creds.clear(); return reject(`初始化失败：${String(e)}`) }
     const executor = new WorkflowExecutor(run, runtime, changed)
     // No await before reservation. Concurrent IPC starts cannot pass the same check.
     const slot = { executor, done: Promise.resolve() }
     this.active.set(run.id, slot)
     slot.done = Promise.resolve().then(() => executor.execute(creds)).catch(e => {
       run.state = 'failed'; run.message = String(e); run.finishedAt = new Date().toISOString(); changed()
-    }).finally(() => this.active.delete(run.id))
+    }).finally(() => { this.active.delete(run.id); this.reservations.delete(run.id); creds.clear() })
     return { ok: true, runId: run.id }
   }
   async stop(id: string): Promise<void> { const a = this.active.get(id); if (!a) return; await a.executor.stop(); await a.done }

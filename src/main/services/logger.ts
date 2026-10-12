@@ -6,6 +6,12 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks'
+export const secretLogContext = new AsyncLocalStorage<readonly string[]>()
+/** Input values can appear in Playwright exception call logs. */
+export function redactSecrets(value: string): string {
+  const secrets = [...(secretLogContext.getStore() ?? [])].filter(Boolean).sort((a,b)=>b.length-a.length)
+  return secrets.reduce((text,secret)=>text.split(secret).join('[已隐藏]'),value)
+}
 export const runLogContext = new AsyncLocalStorage<{ workflowId: string; runId: string; stepId: string | null }>()
 
 import type { LogLevel } from '@shared/types'
@@ -45,6 +51,7 @@ export interface Logger {
 export function createLogger(scope: string): Logger {
   const emit = (level: LogLevel, message: string): void => {
     if (ORDER[level] < ORDER[minLevel]) return
+    message = redactSecrets(message)
     const line = `${timestamp()} [${level.toUpperCase()}] [${scope}] ${message}`
     if (level === 'error') process.stderr.write(`${line}\n`)
     else process.stdout.write(`${line}\n`)
@@ -65,7 +72,7 @@ export function createLogger(scope: string): Logger {
     exception: (m, error) => {
       emit('error', m)
       const detail = error instanceof Error ? (error.stack ?? error.message) : String(error)
-      process.stderr.write(`${detail}\n`)
+      process.stderr.write(`${redactSecrets(detail)}\n`)
     }
   }
 }

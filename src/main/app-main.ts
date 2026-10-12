@@ -112,7 +112,7 @@ async function shutdown(): Promise<void> {
 }
 
 export function startApplication(): void {
-  // Keep installed v2 data when the display name changes; honour isolated test profiles.
+  // v3 starts independently; honour isolated test profiles.
   if (!app.commandLine.hasSwitch('user-data-dir')) {
     const base = app.getPath('appData')
     const directory = userDataDirectory(base)

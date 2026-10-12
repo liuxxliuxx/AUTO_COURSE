@@ -31,6 +31,13 @@ function subscribe<E extends EventName>(
 
 export function createApi(ipcRenderer: IpcRenderer): AppApi {
   return {
+    accounts: {
+      list: () => invoke(ipcRenderer, 'accounts:list'),
+      create: input => invoke(ipcRenderer, 'accounts:create', input),
+      update: (id, input) => invoke(ipcRenderer, 'accounts:update', {id,input}),
+      remove: id => invoke(ipcRenderer, 'accounts:remove', {id}),
+      progress: courseId => invoke(ipcRenderer, 'accounts:progress', {courseId})
+    },
     workflows: {
       list:()=>invoke(ipcRenderer,'workflows:list'),get:(id)=>invoke(ipcRenderer,'workflows:get',{id}),
       create:(input)=>invoke(ipcRenderer,'workflows:create',input),update:(id,version,input)=>invoke(ipcRenderer,'workflows:update',{id,version,input}),remove:(id)=>invoke(ipcRenderer,'workflows:remove',{id}),
@@ -49,12 +56,6 @@ export function createApi(ipcRenderer: IpcRenderer): AppApi {
       update: (patch) => invoke(ipcRenderer, IPC_INVOKE.settingsUpdate, patch),
       validate: () => invoke(ipcRenderer, IPC_INVOKE.settingsValidate),
       clearCache: () => invoke(ipcRenderer, IPC_INVOKE.settingsClearCache)
-    },
-
-    credentials: {
-      get: () => invoke(ipcRenderer, IPC_INVOKE.credentialsGet),
-      set: (creds) => invoke(ipcRenderer, IPC_INVOKE.credentialsSet, creds),
-      state: () => invoke(ipcRenderer, IPC_INVOKE.credentialsState)
     },
 
     courses: {
@@ -102,6 +103,9 @@ export function createApi(ipcRenderer: IpcRenderer): AppApi {
     },
 
     app: {
+      openLegacyData: () => invoke(ipcRenderer, 'app:open-legacy-data'),
+      welcome: () => invoke(ipcRenderer, 'app:welcome'),
+      dismissWelcome: () => invoke(ipcRenderer, 'app:dismiss-welcome'),
       openSupport: (resource) => invoke(ipcRenderer, IPC_INVOKE.appSupport, resource),
       openLink: (resource) => invoke(ipcRenderer, IPC_INVOKE.appLink, resource),
       diagnostics: () => invoke(ipcRenderer, IPC_INVOKE.appDiagnostics),

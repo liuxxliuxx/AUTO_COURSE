@@ -1,6 +1,6 @@
 {
   "name": "auto-course",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "description": "智慧树自动刷课桌面应用 (Electron + Vue 3 + Playwright)",
   "main": "./out/main/index.js",
   "author": "InvalidNamee",

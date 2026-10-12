@@ -27,7 +27,7 @@ export async function clearApplicationCache(userData: string, clearUiCache: () =
   await clearUiCache()
   const targets = ['downloads', 'workflow-downloads'].map(name => join(userData, name))
   const profiles = [join(userData, 'browser-profile')]
-  const workflows = join(userData, 'workflow-profiles')
+  const workflows = join(userData, 'account-profiles')
   if (await directory(workflows)) {
     for (const name of await readdir(workflows)) profiles.push(join(workflows, name))
   }

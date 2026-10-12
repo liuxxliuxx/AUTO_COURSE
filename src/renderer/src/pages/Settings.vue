@@ -4,31 +4,27 @@ import ChoiceButtons from '../components/ChoiceButtons.vue'
 import { onBeforeUnmount, onMounted, ref, computed, useId } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { useSettingsStore } from '../stores/settings'
-import { useAccountStore } from '../stores/account'
 import { useCoursesStore } from '../stores/courses'
 import { accentLightness } from '../lib/appearance'
 import { ACCENT_COLORS, DEFAULT_ACCENT, accentHue } from '@shared/appearance'
 import CourseOptionsForm from '../components/CourseOptionsForm.vue'
-import type { CourseRunOptions, LoginMethod } from '@shared/types'
-const settings = useSettingsStore(), account = useAccountStore(), courses = useCoursesStore()
+import type { CourseRunOptions } from '@shared/types'
+const settings = useSettingsStore(), courses = useCoursesStore()
 const uid = useId()
-type Section = 'account' | 'defaults' | 'transcription' | 'appearance' | 'cache'
+type Section = 'defaults' | 'transcription' | 'appearance' | 'cache'
 const sections: Array<{ id: Section; label: string; description: string }> = [
-  { id: 'account', label: '账号与登录', description: '管理登录账号和认证方式' },
   { id: 'defaults', label: '课程默认配置', description: '仅用于之后添加的新课程' },
   { id: 'transcription', label: '转录', description: '设置转录文件的保存位置' },
   { id: 'appearance', label: '外观', description: '调整适合自己的界面大小' },
   { id: 'cache', label: '缓存', description: '清理网页缓存和临时下载文件' }
 ]
-const section = ref<Section>('account'), loading = ref(true), loaded=ref(false), saving = ref(false), error = ref(''), success = ref('')
-const username = ref(''), password = ref('')
+const section = ref<Section>('defaults'), loading = ref(true), loaded=ref(false), saving = ref(false), error = ref(''), success = ref('')
 const clearingCache = ref(false)
-const globalDraft = ref({ loginMethod: 'zhihuishu' as LoginMethod, loggedUrl: '', transcribeBaseDir: '', uiScale: 1, accentColor: DEFAULT_ACCENT })
+const globalDraft = ref({ transcribeBaseDir: '', uiScale: 1, accentColor: DEFAULT_ACCENT })
 const defaults = ref<CourseRunOptions>({ ...courses.library.defaults })
-const baseline = ref<Record<Section,string>>({ account:'', defaults:'', transcription:'', appearance:'', cache:'' })
+const baseline = ref<Record<Section,string>>({ defaults:'', transcription:'', appearance:'', cache:'' })
 function serialize(id: Section): string {
   if (id==='cache') return ''
-  if (id==='account') return JSON.stringify({username:username.value,password:password.value,loginMethod:globalDraft.value.loginMethod,loggedUrl:globalDraft.value.loggedUrl})
   if (id==='defaults') return JSON.stringify(defaults.value)
   if (id==='transcription') return JSON.stringify({transcribeBaseDir:globalDraft.value.transcribeBaseDir})
   return JSON.stringify({uiScale:globalDraft.value.uiScale,accentColor:globalDraft.value.accentColor})
@@ -39,8 +35,7 @@ function mayLeave(): boolean { if (clearingCache.value) return false; return !di
 function cancelSection(): void {
   if (saving.value || !dirty.value) return
   const saved = JSON.parse(baseline.value[section.value])
-  if (section.value==='account') { username.value=saved.username;password.value=saved.password;Object.assign(globalDraft.value,{loginMethod:saved.loginMethod,loggedUrl:saved.loggedUrl}) }
-  else if (section.value==='defaults') defaults.value=saved
+  if (section.value==='defaults') defaults.value=saved
   else Object.assign(globalDraft.value,saved)
   error.value='';success.value='已取消当前分类的修改'
 }
@@ -49,12 +44,12 @@ function beforeUnload(e: BeforeUnloadEvent): void { if (dirtySections.value.leng
 async function load(): Promise<void> {
   loading.value = true; error.value = ''
   try {
-    await Promise.all([settings.load(), account.load(), courses.load()])
+    await Promise.all([settings.load(), courses.load()])
     if(settings.error || courses.error)throw Error(settings.error || courses.error)
     if (!settings.settings) throw new Error(settings.error || '设置加载失败')
     const s = settings.settings
-    globalDraft.value = { loginMethod: s.loginMethod, loggedUrl: s.loggedUrl, transcribeBaseDir: s.transcribeBaseDir, uiScale: s.uiScale, accentColor: s.accentColor }
-    username.value = account.username; password.value = ''; defaults.value = { ...courses.library.defaults }
+    globalDraft.value = { transcribeBaseDir: s.transcribeBaseDir, uiScale: s.uiScale, accentColor: s.accentColor }
+    defaults.value = { ...courses.library.defaults }
     for (const item of sections) baseline.value[item.id] = serialize(item.id)
     loaded.value=true
   } catch(e) { error.value = String(e) }
@@ -68,13 +63,6 @@ async function save(): Promise<void> {
   saving.value = true; error.value = ''; success.value = ''
   try {
     switch(section.value) {
-      case 'account':
-        if (!username.value.trim()) throw new Error('请输入账号')
-        if (!password.value && !account.state.hasPassword) throw new Error('请输入密码')
-        if (globalDraft.value.loginMethod === 'upc' && !globalDraft.value.loggedUrl.trim()) throw new Error('旧门户登录需要填写登录跳转 URL')
-        await account.save({ username: username.value.trim(), ...(password.value ? { password: password.value } : {}) })
-        await settings.save({ loginMethod: globalDraft.value.loginMethod, loggedUrl: globalDraft.value.loggedUrl })
-        password.value = ''; break
       case 'defaults': {
         const result = courses.accept(await window.appApi.courses.defaults({ ...defaults.value }))
         if (!result.ok) throw new Error(result.message)
@@ -103,7 +91,7 @@ async function pickDirectory(): Promise<void> { if (saving.value) return; try { 
   <div class="page">
     <WorkspaceToolbar title="设置"></WorkspaceToolbar>
     <div class="settings-layout">
-      <nav class="settings-nav" aria-label="设置分类"><button v-for="item in sections" :key="item.id" :aria-label="item.label" :class="{ active: section === item.id }" :disabled="saving || clearingCache || !loaded" :title="dirtySections.some(s=>s.id===item.id) ? item.label+'：有未保存的修改' : item.description" :aria-current="section === item.id ? 'page' : undefined" @click="changeSection(item.id)">{{ item.label }}<span v-if="dirtySections.some(s=>s.id===item.id)" class="dirty-mark" aria-label="未保存">•</span></button><RouterLink to="/courses" class="course-link">管理我的课程</RouterLink></nav>
+      <nav class="settings-nav" aria-label="设置分类"><button v-for="item in sections" :key="item.id" :aria-label="item.label" :class="{ active: section === item.id }" :disabled="saving || clearingCache || !loaded" :title="dirtySections.some(s=>s.id===item.id) ? item.label+'：有未保存的修改' : item.description" :aria-current="section === item.id ? 'page' : undefined" @click="changeSection(item.id)">{{ item.label }}<span v-if="dirtySections.some(s=>s.id===item.id)" class="dirty-mark" aria-label="未保存">•</span></button><RouterLink to="/accounts" class="course-link">管理账号</RouterLink><RouterLink to="/courses" class="course-link">管理我的课程</RouterLink></nav>
       <section class="settings-panel">
         <div v-if="loading" class="empty" role="status">正在加载设置…</div>
         <div v-else-if="!loaded" class="notice error" role="alert">{{error}} <button @click="load">重新加载</button></div>
@@ -111,14 +99,7 @@ async function pickDirectory(): Promise<void> { if (saving.value) return; try { 
           <header><h2>{{ sections.find(s => s.id === section)?.label }}</h2></header>
           <div v-if="error" class="notice error" role="alert">{{ error }}</div><div v-if="success" class="notice success" role="status">{{ success }}</div>
           <fieldset class="stack" :disabled="saving">
-          <template v-if="section === 'account'">
-            <div v-if="!account.state.encryptionAvailable" class="notice warning">系统加密不可用，凭据仅在本次会话保留，退出后不会保存。</div>
-            <div class="field"><label :for="`${uid}-method`">登录方式</label><ChoiceButtons :id="`${uid}-method`" v-model="globalDraft.loginMethod" label="登录方式" :disabled="saving" :choices="[{value:'zhihuishu',label:'智慧树'},{value:'upc-institution',label:'机构 SSO'},{value:'upc',label:'旧门户'}]" /><small>三种方式独立运行，不会在失败后自动切换。</small></div>
-            <div class="field"><label :for="`${uid}-username`">账号</label><input :id="`${uid}-username`" v-model="username" autocomplete="username" required placeholder="手机号或统一认证账号" /></div>
-            <div class="field"><label :for="`${uid}-password`">密码<span v-if="account.state.hasPassword" class="saved-password"> 已保存</span></label><input :id="`${uid}-password`" v-model="password" type="password" autocomplete="new-password" :placeholder="account.state.hasPassword ? '留空保留已保存的密码' : '输入密码'" /><small>更换账号时需要重新输入密码。</small></div>
-            <div v-if="globalDraft.loginMethod === 'upc'" class="field"><label :for="`${uid}-logged-url`">登录跳转 URL</label><input :id="`${uid}-logged-url`" v-model="globalDraft.loggedUrl" type="url" required placeholder="https://…" /><small>仅旧门户使用：登录后工作台的目标地址。</small></div>
-          </template>
-          <template v-else-if="section === 'defaults'"><div class="notice">这些配置只会复制给新课程。已有课程请在课程详情中编辑。</div><CourseOptionsForm v-model="defaults" /><p class="muted small">图谱课不支持仅转录，添加图谱课时会改用“学习”。</p></template>
+          <template v-if="section === 'defaults'"><div class="notice">这些配置只会复制给新课程。已有课程请在课程详情中编辑。</div><CourseOptionsForm v-model="defaults" /><p class="muted small">图谱课不支持仅转录，添加图谱课时会改用“学习”。</p></template>
           <template v-else-if="section === 'transcription'"><div class="field"><label :for="`${uid}-dir`">输出目录</label><div class="directory-row"><input :id="`${uid}-dir`" v-model="globalDraft.transcribeBaseDir" placeholder="请选择文件夹" /><button type="button" @click="pickDirectory">选择文件夹</button></div><small>是否转录由每门课程的运行方式决定。</small></div><div class="notice">修改目录对下一次运行生效，不会移动已有文件。</div></template>
           <template v-else-if="section === 'cache'">
             <p class="muted">清除课程网页缓存和临时下载文件。下次打开课程时会重新加载网页资源。</p>

@@ -24,6 +24,7 @@ import type {
   ValidationError
 } from '@shared/types'
 import { TASK_MODE_LABEL } from '@shared/ipc'
+import type { AccountService } from './account-service'
 import type { Database } from '../storage/database'
 import type { CredentialStore } from '../storage/credentials'
 import type { SettingsService } from './settings-service'
@@ -34,7 +35,7 @@ import type { CourseRunner, MediaPort, RunOutcome, RunnerContext } from '../auto
 import { randomUUID } from 'node:crypto'
 import { identifyCourse, settingsForCourse, validateRunOptions } from '@shared/courses'
 import type { CourseService } from './course-service'
-import { createLogger } from './logger'
+import { createLogger, redactSecrets } from './logger'
 import { MasteryQuestionBank } from '../automation/mastery/question-bank'
 
 const logger = createLogger('bot')
@@ -75,7 +76,7 @@ export class BotService {
 
   constructor(
     private readonly db: Database,
-    private readonly credentials: CredentialStore,
+    private readonly credentials: Pick<CredentialStore, 'get'>,
     private readonly settings: SettingsService,
     private readonly bus: EventBus,
     private readonly browser: BrowserService,
@@ -89,7 +90,8 @@ export class BotService {
       transcribeOnly: boolean,
       courseId: string
     ) => Promise<MediaPort | null>,
-    private readonly courses: CourseService
+    private readonly courses: CourseService,
+    private readonly accounts?: AccountService
   ) {}
 
   // ------------------------------------------------------------------ 状态
@@ -97,7 +99,7 @@ export class BotService {
   getStatus(): BotStatus {
     return {
       runId: this.snapshot?.id ?? null, courseId: this.snapshot?.course.id ?? null,
-      snapshot: this.snapshot, phase: this.phase, error: this.error, intervention: this.intervention,
+      snapshot: this.snapshot, phase: this.phase, error: this.error ? {...this.error, message:redactSecrets(this.error.message)} : null, intervention: this.intervention,
       state: this.state,
       mode: this.mode,
       currentTitle: this.currentTitle,
@@ -120,7 +122,7 @@ export class BotService {
     reason: StopReason | null = null
   ): void {
     this.state = state
-    this.message = message
+    this.message = redactSecrets(message)
     this.tone = tone
     this.stoppedReason = reason
     this.bus.emit('event:bot-status', this.getStatus())
@@ -157,7 +159,7 @@ export class BotService {
     this.phase = 'preparing'
     this.error = null
     this.intervention = null
-    this.courses.markRun(course.id)
+    if (this.snapshot.accountId) this.accounts?.markRun(this.snapshot.accountId, course.id)
     this.mode = mode
     this.completedCount = 0
     this.watchedSeconds = 0
@@ -245,7 +247,7 @@ export class BotService {
         settings,
         credentials,
         session,
-        snapshot.course.options.startPosition === 'resume' ? snapshot.course.lastVideoTitle ?? '' : '',
+        snapshot.course.options.startPosition === 'resume' ? snapshot.lastVideoTitle ?? '' : '',
         media
       )
 
@@ -348,7 +350,7 @@ export class BotService {
 
   private reportVideoCompleted(title: string): void {
     this.completedCount += 1
-    if (this.snapshot && title) this.courses.saveProgress(this.snapshot.course.id, title)
+    if (this.snapshot?.accountId && title) this.accounts?.saveProgress(this.snapshot.accountId, this.snapshot.course.id, title)
     this.emitStatus()
   }
 
@@ -375,7 +377,7 @@ export class BotService {
   private async requestCaptcha(scene: CaptchaRequiredEvent['scene'], message: string, kind: InterventionRequest['kind'] = 'captcha'): Promise<boolean> {
     if (this.stopRequested) return false
 
-    const event: InterventionRequest = { id: randomUUID(), kind, message, scene, at: Date.now() }
+    const event: InterventionRequest = { id: randomUUID(), kind, message: redactSecrets(message), scene, at: Date.now() }
     const previousPhase = this.phase
     this.phase = 'waiting'
     this.intervention = event

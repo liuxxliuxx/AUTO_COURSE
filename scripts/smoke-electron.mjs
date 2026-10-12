@@ -70,8 +70,9 @@ try {
     fail(`Renderer 隔离被破坏: ${JSON.stringify(leaked)}`)
   }
 
-  // 4. 三个页面都能导航
+  // 4. 主要页面都能导航
   for (const [label, heading] of [
+    ['账号', '账号'],
     ['课程', '我的课程'],
     ['工作流', '工作流'],
     ['运行', '运行'],
@@ -83,7 +84,7 @@ try {
     pass(`路由切换正常：${label} 页显示「${heading}」`)
   }
 
-  // 5. Phase 3 服务层：SQLite / 设置 / 凭据 / 调度 / v1 迁移
+  // 5. v3 服务层：SQLite / 多账号 / 工作流 / 独立数据目录
   const settings = await window.evaluate(() => window.appApi.settings.getAll())
   if (settings && typeof settings.skipCompleted === 'boolean') {
     pass(
@@ -93,8 +94,26 @@ try {
     fail(`设置读取异常: ${JSON.stringify(settings)}`)
   }
 
-  const credState = await window.evaluate(() => window.appApi.credentials.state())
-  pass(`safeStorage 可用: ${credState.encryptionAvailable}`)
+  const accounts = await window.evaluate(() => window.appApi.accounts.list())
+  if (Array.isArray(accounts)) pass(`账号库可读：${accounts.length} 个账号`)
+  else fail('账号库读取失败')
+  if (isolatedUserData && accounts.length === 0) {
+    const checks = await window.evaluate(async () => {
+      const account = await window.appApi.accounts.create({name:'冒烟账号',username:'smoke-user',password:'smoke-test-password',loginMethod:'zhihuishu',loggedUrl:''})
+      const publicRecord = !('password' in account) && account.hasPassword
+      const {hasPassword:_,encryptionAvailable:__,id,createdAt:___,updatedAt:____,...input}=account
+      await window.appApi.accounts.update(id,{...input,name:'已改名'})
+      const retained = (await window.appApi.accounts.list()).find(a=>a.id===id)?.hasPassword
+      await window.appApi.accounts.remove(id)
+      return {publicRecord,retained,removed:(await window.appApi.accounts.list()).length===0}
+    })
+    if (checks.publicRecord && checks.retained && checks.removed) pass('多账号 typed IPC 增删改、密码保留及公开记录脱敏正常')
+    else fail('多账号 IPC 检查失败')
+    const welcome = await window.evaluate(() => window.appApi.app.welcome())
+    await window.evaluate(() => window.appApi.app.dismissWelcome())
+    if (welcome && !(await window.evaluate(() => window.appApi.app.welcome()))) pass('首次启动说明可读取与关闭')
+    else fail('首次启动说明状态异常')
+  }
 
   const sched = await window.evaluate(() => window.appApi.scheduler.get())
   if (sched?.config) pass(`调度器状态就绪（启用=${sched.config.enabled}）`)
@@ -108,7 +127,8 @@ try {
   }
 
   const migration = await window.evaluate(() => window.appApi.migration.report())
-  pass(`v1 迁移: imported=${migration.imported} — ${migration.message}`)
+  if (!migration.imported) pass(`v3 未导入旧数据：${migration.message}`)
+  else fail('v3 不应导入旧数据')
 
   const validation = await window.evaluate(() => window.appApi.settings.validate())
   pass(`设置校验返回 ${validation.length} 条违规项`)

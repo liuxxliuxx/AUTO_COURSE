@@ -17,11 +17,11 @@ describe('cache cleanup boundaries', () => {
   it('removes all workflow and legacy caches/downloads while preserving application data and login state', async () => {
     const base = await root(), clearUi = vi.fn(async () => {})
     const caches = ['browser-profile/Cache/data', 'browser-profile/Code Cache/js/data',
-      'workflow-profiles/a/GPUCache/data', 'workflow-profiles/b/Cache/data',
-      'workflow-profiles/b/Service Worker/CacheStorage/data', 'downloads/media.webm', 'workflow-downloads/run/media.mp4']
+      'account-profiles/a/GPUCache/data', 'account-profiles/b/Cache/data',
+      'account-profiles/b/Service Worker/CacheStorage/data', 'downloads/media.webm', 'workflow-downloads/run/media.mp4']
     const saved = ['credentials.bin', 'auto_course.db', 'models/sensevoice/model.onnx',
-      'browser-profile/Cookies', 'browser-profile/Local Storage/leveldb/data', 'workflow-profiles/a/Network/Cookies',
-      'workflow-profiles/b/IndexedDB/data', '课程录音/课程/结果.txt', 'settings.json', 'workflow-profiles/b/Preferences']
+      'browser-profile/Cookies', 'browser-profile/Local Storage/leveldb/data', 'account-profiles/a/Network/Cookies',
+      'account-profiles/b/IndexedDB/data', '课程录音/课程/结果.txt', 'settings.json', 'account-profiles/b/Preferences']
     for (const path of [...caches, ...saved]) await file(base, path)
     expect(await clearApplicationCache(base, clearUi)).toEqual({ bytes: caches.length * 5 })
     expect(clearUi).toHaveBeenCalledOnce()
@@ -37,14 +37,14 @@ describe('cache cleanup boundaries', () => {
   it('does not traverse symlinked profiles, service worker directories or cache contents', async () => {
     const base = await root(), outside = await root()
     await file(outside, 'Cache/protected', 'keep')
-    await file(base, 'workflow-profiles/local/Cache/normal')
+    await file(base, 'account-profiles/local/Cache/normal')
     await symlink(outside, join(base, 'browser-profile'))
-    await symlink(outside, join(base, 'workflow-profiles/linked'))
-    await symlink(outside, join(base, 'workflow-profiles/local/Service Worker'))
-    await symlink(outside, join(base, 'workflow-profiles/local/Cache/linked'))
+    await symlink(outside, join(base, 'account-profiles/linked'))
+    await symlink(outside, join(base, 'account-profiles/local/Service Worker'))
+    await symlink(outside, join(base, 'account-profiles/local/Cache/linked'))
     await clearApplicationCache(base, async () => {})
     expect(await readFile(join(outside, 'Cache/protected'), 'utf8')).toBe('keep')
-    expect(await exists(join(base, 'workflow-profiles/local/Cache'))).toBe(false)
+    expect(await exists(join(base, 'account-profiles/local/Cache'))).toBe(false)
   })
   it('propagates cleanup failures without reporting success or deleting downloads', async () => {
     const base = await root()

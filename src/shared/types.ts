@@ -19,7 +19,7 @@ export type TaskMode = 'classic' | 'map' | 'mastery' | 'transcribe-only'
 export type RunPhase = 'idle' | 'preparing' | 'login' | 'loading-course' | 'executing' | 'waiting' | 'stopping' | 'finished'
 export interface RunError { stage: RunPhase; code: 'login' | 'course' | 'execution'; message: string }
 export interface RunRequest { courseId: string }
-export interface RunSnapshot { id: string; course: Course; settings: AppSettings; startedAt: string; source: 'manual' | 'schedule' }
+export interface RunSnapshot { id: string; accountId?: string; lastVideoTitle?: string | null; course: Course; settings: AppSettings; startedAt: string; source: 'manual' | 'schedule' }
 export type RunStatus = BotStatus
 export interface BotStatus {
   runId?: string | null
@@ -109,7 +109,6 @@ export interface Course {
   updatedAt: string
   lastRunAt: string | null
   progressWarning: string | null
-  lastVideoTitle: string | null
 }
 export interface CourseInput { name: string; url: string; options: CourseRunOptions }
 export interface CourseLibrary { courses: Course[]; selectedCourseId: string | null; defaults: CourseRunOptions }

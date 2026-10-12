@@ -9,8 +9,12 @@ import ToolRow from '../components/ToolRow.vue'
 import UiIcon from '../components/UiIcon.vue'
 import CourseOptionsForm from '../components/CourseOptionsForm.vue'
 import { ACTION_LABELS, KIND_LABELS, identifyCourse } from '@shared/courses'
+import { useAccountStore } from '../stores/account'
+import type { AccountCourseProgress } from '@shared/accounts'
 import type { CourseInput } from '@shared/types'
 const store = useCoursesStore(), run = useWorkflowsStore()
+const accounts = useAccountStore(), progress = ref<AccountCourseProgress[]>([]), progressError = ref('')
+let progressRequest = 0
 const route = useRoute(), router = useRouter()
 const uid = useId()
 const kindFilter = ref('')
@@ -20,6 +24,13 @@ watch(focusedId, async () => { await nextTick(); if (detailPanel.value) detailPa
 watch(focusedId,id=>{store.viewedCourseId=id},{immediate:true})
 watch(()=>route.query.id,id=>{if(typeof id==='string' && store.library.courses.some(c=>c.id===id))focusedId.value=id})
 const focused = computed(() => store.library.courses.find(c => c.id === focusedId.value) ?? null)
+watch([focusedId, () => run.runs], async () => {
+  const request = ++progressRequest
+  progress.value = []; progressError.value = ''
+  if (!focusedId.value) return
+  try { const records = await window.appApi.accounts.progress(focusedId.value); if(request===progressRequest)progress.value=records }
+  catch(e) { if(request===progressRequest)progressError.value=String(e) }
+}, {immediate:true})
 const filterKinds = computed(() => Object.fromEntries(Object.entries(KIND_LABELS).filter(([kind]) => kind !== 'unknown' || store.library.courses.some(c => c.kind === 'unknown'))))
 const filtered = computed(() => store.library.courses.filter(c => c.name.toLowerCase().includes(search.value.toLowerCase()) && (!kindFilter.value || c.kind === kindFilter.value)))
 watch([search, kindFilter], () => {
@@ -135,7 +146,7 @@ const lastRun = (date: string | null): string => date ? new Date(date).toLocaleS
         <div v-if="focused.progressWarning" class="notice warning">{{ focused.progressWarning }}</div>
         <div class="divider"></div><h3>运行配置</h3>
         <dl class="detail-grid"><div><dt>运行方式</dt><dd>{{ ACTION_LABELS[focused.options.action] }}</dd></div><div><dt>起始位置</dt><dd>{{ focused.options.startPosition === 'resume' ? '从上次位置继续' : '从课程开头' }}</dd></div><div><dt>已完成内容</dt><dd>{{ focused.options.skipCompleted ? '自动跳过' : '仍然处理' }}</dd></div><div><dt>单次时长</dt><dd>{{ focused.options.timeLimitMinutes ? `${focused.options.timeLimitMinutes} 分钟` : '不限时长' }}</dd></div></dl>
-        <div class="last-position"><span class="muted small">上次完成的位置</span><p>{{ focused.lastVideoTitle || '暂无记录，完成内容后会自动保存' }}</p></div>
+        <div class="last-position"><span class="muted small">各账号学习进度</span><p v-if="progressError" role="alert">{{progressError}}</p><p v-else-if="!progress.length">暂无记录，完成内容后会自动保存</p><dl v-else><div v-for="record in progress" :key="record.accountId"><dt>{{accounts.accounts.find(a=>a.id===record.accountId)?.name || '账号已移除'}}</dt><dd>{{record.lastVideoTitle || '尚未完成内容'}} · {{lastRun(record.lastRunAt)}}</dd></div></dl></div>
         <div class="divider"></div><div class="address-header"><h3>课程地址</h3><button class="quiet" title="复制完整课程地址" @click="copyUrl">复制</button></div><p class="course-url">{{ focused.url }}</p>
         <div v-if="focused.kind === 'mastery'" class="notice">题库按课程记录。导出包含题目、选项及已确认答案；未确认答案会明确标记。旧题目在再次练习时自动关联。</div>
         <div class="detail-footer"><button v-if="focused.kind === 'mastery'" :disabled="busy" @click="exportQuestionBank">{{ busy ? '正在导出…' : '导出题库' }}</button><button :disabled="busy || store.library.selectedCourseId === focused.id" @click="selectCurrent">{{ store.library.selectedCourseId === focused.id ? '已设为默认课程' : '设为默认课程' }}</button></div>

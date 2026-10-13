@@ -53,8 +53,8 @@
   --r-control: 6px;
   --r-panel: 8px;
   --rail-height: 36px;
-  --motion-fast: 100ms;
-  --motion-base: 100ms;
+  --motion-fast: 140ms;
+  --motion-base: 180ms;
 }
 @media (prefers-reduced-motion: reduce) {
   :root { --motion-fast: 0ms; --motion-base: 0ms; }

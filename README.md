@@ -32,7 +32,7 @@
 
 ## 开发与打包
 
-要求 Node.js ≥ 22.12.0，建议 Node 24 LTS；使用本机对应平台构建。
+使用 Node 24 LTS（≥ 24.15.0）和 npm 12；使用本机对应平台构建。SQLite 自带预编译模块，Windows x64 开发环境无需为它安装 Visual Studio C++ 工具链。
 
 ```sh
 npm ci
@@ -44,7 +44,7 @@ npm run build:win
 ```
 
 `package.json` 是版本与产品名的来源。构建写入 Git commit 和时间；安装包输出到 `release/`。
-打包时检查原生 SQLite 模块。DOM 测试需 `npx playwright-core install chromium`。
+安装结束会检查 Node、Electron 的 SQLite 读写，也可运行 `npm run check:native` 单独检查。DOM 测试需 `npx playwright-core install chromium`。
 
 ## 数据与升级
 

@@ -87,9 +87,9 @@ function choose(id:string):void{runFilter.value='all';selected.value=id}
 </script>
 <template>
 <div class="page runs-page">
-  <WorkspaceToolbar title="运行"><span>{{store.running.length}} 个进行中<span v-if="attentionCount" class="attention"> · {{attentionCount}} 个需处理</span></span><RouterLink :to="current && latestFlow ? {path:'/workflows',query:{id:current.workflowId}} : '/workflows'">管理工作流</RouterLink></WorkspaceToolbar>
+  <WorkspaceToolbar title="运行"><span>{{store.running.length}} 个进行中<span v-if="attentionCount" class="attention"> · {{attentionCount}} 个需处理</span></span><RouterLink :to="current && latestFlow ? {path:'/workflows',query:{id:current.workflowId}} : '/workflows'">管理任务列表</RouterLink></WorkspaceToolbar>
   <div v-if="store.error" class="notice error" role="alert">运行记录更新失败，当前显示上次取得的数据。{{store.error}} <button @click="store.refreshRuns">重新加载</button></div>
-  <div v-if="!store.runs.length" class="empty"><h2>还没有运行记录</h2><p>保存工作流后，选择立即运行或定时运行。</p><RouterLink to="/workflows">创建工作流</RouterLink></div>
+  <div v-if="!store.runs.length" class="empty"><h2>还没有运行记录</h2><p>保存任务列表后，选择立即运行或定时运行。</p><RouterLink to="/workflows">创建任务列表</RouterLink></div>
   <WorkspaceSplit v-else class="runs-layout" :detail-key="selected">
     <template #list>
       <div class="run-toolbar"><div class="run-filters" role="group" aria-label="运行记录筛选"><button v-for="filter in [{id:'all',label:'全部'},{id:'active',label:'进行中'},{id:'attention',label:'需处理'},{id:'finished',label:'已结束'},{id:'abnormal',label:'异常'}]" :key="filter.id" :aria-pressed="runFilter===filter.id" @click="runFilter=filter.id">{{filter.label}}</button></div></div>
@@ -97,13 +97,13 @@ function choose(id:string):void{runFilter.value='all';selected.value=id}
     </template>
     <section v-if="current" class="stack run-detail" aria-label="运行详情">
       <h2>{{current.snapshot.workflow.name}}</h2>
-      <p><span class="run-state" :class="{attention:needsAttention(current),failure:['failed','partial','interrupted','rejected'].includes(current.state)}">{{runLabel(current)}}</span> · {{current.source==='schedule'?'定时触发':'手动运行'}} · <span title="下面的步骤和配置来自本次启动时保存的快照，编辑工作流不会改变这次运行">启动时配置</span></p>
+      <p><span class="run-state" :class="{attention:needsAttention(current),failure:['failed','partial','interrupted','rejected'].includes(current.state)}">{{runLabel(current)}}</span> · {{current.source==='schedule'?'定时触发':'手动运行'}} · <span title="下面的步骤和配置来自本次启动时保存的快照，编辑任务列表不会改变这次运行">启动时配置</span></p>
       <div v-if="errors[current.id]" class="notice error" role="alert">{{errors[current.id]}} <button v-if="rejectedIds[current.id]" @click="choose(rejectedIds[current.id])">查看启动记录</button></div>
       <div v-if="current.message" class="notice" :class="{error:['failed','partial','rejected'].includes(current.state)}">{{current.message}}</div>
       <div class="actions">
-        <button v-if="activeRun(current)" :disabled="busy||current.state==='stopping'" :title="current.state==='stopping'?'已收到停止请求，正在等待当前任务退出':'停止本次运行，尚未开始的步骤不会执行'" @click="action(current,'正在停止…',()=>api.workflows.stop(current!.id))"><UiIcon name="stop"/>{{current.state==='stopping'?'正在停止…':'停止工作流'}}</button>
+        <button v-if="activeRun(current)" :disabled="busy||current.state==='stopping'" :title="current.state==='stopping'?'已收到停止请求，正在等待当前任务退出':'停止本次运行，尚未开始的步骤不会执行'" @click="action(current,'正在停止…',()=>api.workflows.stop(current!.id))"><UiIcon name="stop"/>{{current.state==='stopping'?'正在停止…':'停止任务'}}</button>
         <button v-if="activeRun(current) && !needsAttention(current)" :disabled="busy" title="显示本次任务使用的课程窗口" @click="action(current,'正在打开窗口…',()=>api.workflows.openWindow(current!.id))">打开课程窗口</button>
-        <button v-if="!activeRun(current)" :disabled="busy||!!restartReason" :title="restartReason || '使用工作流目前保存的配置新建一次运行，历史记录保持不变'" @click="restart(current)"><UiIcon name="play"/>运行最新配置</button>
+        <button v-if="!activeRun(current)" :disabled="busy||!!restartReason" :title="restartReason || '使用任务列表目前保存的配置新建一次运行，历史记录保持不变'" @click="restart(current)"><UiIcon name="play"/>运行最新配置</button>
         <span v-if="busy" class="muted small" role="status">{{pending[current.id]}}</span>
       </div>
       <p v-if="!activeRun(current) && restartReason" class="muted small">{{restartReason}} <button v-if="relatedRun" class="quiet" @click="choose(relatedRun.id)">查看进行中的记录</button></p>

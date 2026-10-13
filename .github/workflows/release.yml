@@ -29,10 +29,11 @@ jobs:
         with:
           node-version: '24'
           cache: npm
+      - run: npm install -g npm@12
       - run: npm ci
       - run: npx playwright-core install chromium
       - run: npm test
-      - run: npx electron-builder install-app-deps
+      - run: npm run check:native
       - run: npm run build
       - run: npm run release:check
       - run: npx electron-builder --${{ matrix.platform }} --${{ matrix.arch }} --publish never --config electron-builder.yml

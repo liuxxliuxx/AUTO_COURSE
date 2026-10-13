@@ -15,12 +15,14 @@
 npm ci
 npx playwright-core install chromium
 npm test
-npx electron-builder install-app-deps
+npm run check:native
 npm run build
 npm run release:check
 ```
 
-单元测试运行在 Node 下，应用运行在 Electron 中；两处均需验证 SQLite 可用。当前 better-sqlite3 13 使用预构建 Node-API 模块，打包时 electron-builder 检查并准备原生依赖。升级原生依赖后重新验证两种运行环境。
+使用 npm 12 安装依赖；`allowScripts` 禁止 better-sqlite3 被 npm 隐式编译，并允许 Electron、esbuild 和 Windows 安装器的安装脚本。旧版 npm 会忽略该策略，可能仍触发 `node-gyp rebuild`。
+
+当前 better-sqlite3 13 自带 Node-API 预编译模块。`postinstall` 和 `npm run check:native` 分别在 Node、Electron 中执行内存数据库读写；首次检查会按 Electron 自身的安装逻辑下载运行时。打包设置 `npmRebuild: false`，避免 `@electron/rebuild` 因不识别该预编译格式而调用 C++ 工具链。不要再执行 `electron-builder install-app-deps`，这个显式命令不受 `npmRebuild` 控制。升级或新增原生依赖后，应重新检查预编译支持和两种运行环境。
 
 各平台本机构建：Windows 用 `npm run build:win`，Apple Silicon / Intel Mac 先用 `npm run build`，再用 `npx electron-builder --mac --arm64 --publish never --config electron-builder.yml`。Mac 默认构建当前宿主架构；显式指定 `--arm64 --x64` 可构建两种架构。CI 分别在各架构宿主构建，避免原生模块跨架构污染。未新增 portable 发行目标。
 
@@ -35,7 +37,7 @@ node scripts/verify-package.mjs "release/win-unpacked/AUTO_COURSE.exe"
 
 ## Workflow
 
-`.github/workflows/release.yml` 在手动触发或 `v3.*` tag 时运行：Windows x64、macOS arm64/x64 分开安装、测试、重建 SQLite、构建和启动验证。手动触发仅保存候选安装包；tag 全部通过后汇总校验值并创建 **draft Release**，预发布 tag 标记 prerelease。不会自动公开发布，不会覆盖已公开版本。
+`.github/workflows/release.yml` 在手动触发或 `v3.*` tag 时运行：Windows x64、macOS arm64/x64 分开安装、测试、验证 SQLite、构建和启动验证。手动触发仅保存候选安装包；tag 全部通过后汇总校验值并创建 **draft Release**，预发布 tag 标记 prerelease。不会自动公开发布，不会覆盖已公开版本。
 
 本次改动只准备 workflow；推送、创建 tag、执行 GitHub CI 和公开 Release 均需在验收后进行。
 

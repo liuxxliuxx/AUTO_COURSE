@@ -1,6 +1,10 @@
 appId: com.autocourse.zhihuishu
 copyright: Copyright © 2026 liuxxliuxx and InvalidNamee
 
+# better-sqlite3 13 自带 Node-API 预编译模块；sherpa-onnx 使用 WASM。
+# 安装时由 check:native 验证，避免 @electron/rebuild 回退到源码编译。
+npmRebuild: false
+
 directories:
   output: release
   buildResources: assets

@@ -82,6 +82,19 @@ function createMainWindow(): BrowserWindow {
 
   window.on('ready-to-show', () => window.show())
 
+  // 支持鼠标侧键及系统前进/后退快捷操作
+  window.on('app-command', (_event, cmd) => {
+    if (cmd === 'browser-backward') {
+      if (window.webContents.navigationHistory.canGoBack()) {
+        window.webContents.navigationHistory.goBack()
+      }
+    } else if (cmd === 'browser-forward') {
+      if (window.webContents.navigationHistory.canGoForward()) {
+        window.webContents.navigationHistory.goForward()
+      }
+    }
+  })
+
   // 外部链接一律交给系统浏览器，应用窗口本身永不导航到外部站点。
   window.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url)

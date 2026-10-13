@@ -16,10 +16,17 @@
     "test:watch": "vitest",
     "build:win": "npm run build && electron-builder --win --publish never --config electron-builder.yml",
     "build:mac": "npm run build && electron-builder --mac --publish never --config electron-builder.yml",
-    "postinstall": "electron-builder install-app-deps",
+    "postinstall": "node scripts/check-native.mjs",
+    "check:native": "node scripts/check-native.mjs",
     "release:check": "node scripts/release-check.mjs",
     "release:notes": "node scripts/release-notes.mjs",
     "licenses": "node scripts/collect-licenses.mjs"
+  },
+  "allowScripts": {
+    "better-sqlite3": false,
+    "electron": true,
+    "electron-winstaller": true,
+    "esbuild": true
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

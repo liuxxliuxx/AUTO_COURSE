@@ -38,6 +38,12 @@ export class ClassicPageInteractions {
           return {state:handled?'handled':'clear'}
         }
         if(layer.kind==='protected')return {state:'protected'}
+        if(layer.exiting){
+          const cleared=await this.overlays.waitForExit(layer)
+          if(this.shouldStop())return {state:'stopped'}
+          if(!cleared)return this.failure('弹窗退出后遮罩仍在遮挡页面',layer)
+          handled=true;continue
+        }
         if(layer.kind==='progress-error'){
           if(!this.evidence.has(layer.id))this.evidence.set(layer.id,await this.diagnostics?.capture(this.page,{reason:'进度提交或连接异常，恢复页面前保存',layer:{kind:layer.kind,description:layer.description}})??null)
           const path=this.evidence.get(layer.id)

@@ -40,6 +40,36 @@ describe('unified course interaction checkpoints',()=>{
     expect((await checkpoint().checkpoint(page.locator('li.video'))).state).toBe('handled')
     expect(await page.locator('#mask').count()).toBe(0)
   })
+  it('waits for the leaving mask after closing a dialog and continues without diagnostics',async()=>{
+    await page.locator('body').evaluate(body=>body.insertAdjacentHTML('beforeend',`<div id="mask" class="v-modal" style="position:fixed;inset:0;z-index:100;background:#8888"></div><div role="dialog" class="ai-helper-agreement-Dialog" style="position:fixed;inset:100px;z-index:101;background:white">使用提示<div onclick="document.querySelector('#mask').classList.add('v-modal-leave');setTimeout(()=>document.querySelector('#mask').remove(),400);this.parentElement.remove()">我知道了</div></div>`))
+    const diagnostics=new CourseDiagnostics(dir,{runId:'run',courseId:'course'},log)
+    const capture=vi.spyOn(diagnostics,'capture')
+    expect((await checkpoint(diagnostics).checkpoint(page.locator('li.video'))).state).toBe('handled')
+    expect(await page.locator('#mask').count()).toBe(0)
+    expect(capture).not.toHaveBeenCalled()
+    await diagnostics.finish()
+  })
+  it('rescans after a leaving mask disappears even without an operation target',async()=>{
+    await page.locator('body').evaluate(body=>{
+      body.insertAdjacentHTML('beforeend','<div class="v-modal v-modal-leave" style="position:fixed;inset:0;z-index:100;background:#8888"></div>')
+      setTimeout(()=>{
+        document.querySelector('.v-modal')!.remove()
+        body.insertAdjacentHTML('beforeend','<div role="dialog" style="position:fixed;inset:100px;background:white">欢迎你加入课程<button onclick="this.parentElement.remove()">关闭</button></div>')
+      },200)
+    })
+    expect((await checkpoint().checkpoint()).state).toBe('handled')
+    expect(await page.getByRole('dialog').count()).toBe(0)
+  })
+  it('captures and stops when a leaving mask remains stuck rather than deleting it',async()=>{
+    await page.locator('body').evaluate(body=>body.insertAdjacentHTML('beforeend','<div class="v-modal v-modal-leave" style="position:fixed;inset:0;z-index:100;opacity:0;background:#8888"></div>'))
+    const diagnostics=new CourseDiagnostics(dir,{runId:'run',courseId:'course'},log)
+    const result=await checkpoint(diagnostics).checkpoint(page.locator('li.video'))
+    expect(result.state).toBe('failed')
+    if(result.state==='failed')expect(result.message).toContain('遮罩仍在遮挡')
+    expect(await page.locator('.v-modal').count()).toBe(1)
+    expect((await readdir(dir)).length).toBe(1)
+    await diagnostics.finish()
+  })
   it('closes the top layer first and rescans a stacked assistant panel with an external collapse control',async()=>{
     await page.locator('body').evaluate(body=>body.insertAdjacentHTML('beforeend',`<section class="ai-helper-sections"><div class="ai-draggable-dialog" style="position:fixed;inset:100px;z-index:100;background:white">助教<input value="draft"></div><div class="not-expand-icon" style="position:fixed;left:100px;top:100px;width:30px;height:30px;z-index:100" onclick="this.parentElement.remove()">收起</div></section><div role="dialog" class="ai-helper-agreement-Dialog" style="position:fixed;inset:200px;z-index:101;background:white">使用提示<div onclick="this.parentElement.remove()">我知道了</div></div>`))
     expect((await checkpoint().checkpoint()).state).toBe('handled')

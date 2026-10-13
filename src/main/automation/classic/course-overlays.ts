@@ -9,18 +9,20 @@ export interface CourseLayer {
   closeId: string | null
   actionable: boolean
   blocking: boolean
+  exiting?: boolean
 }
 
 /** Browser-side inspection. All control discovery is scoped to one semantic panel. */
 export function inspectCourseLayers(targetId: string | null): CourseLayer[] {
   const excluded = '.video-topic'
+  const exitingMask = '.v-modal.v-modal-leave,.v-modal.v-modal-leave-active,.el-overlay.is-leaving'
   const protectedCss = '.yidun_popup,.yidun_modal,[class*="captcha" i],#tcaptcha_transform_dy,#lPwdError'
-  const visible = (el: Element): boolean => {
+  const visible = (el: Element, allowTransparent = false): boolean => {
     const r = el.getBoundingClientRect()
     if (r.width <= 0 || r.height <= 0 || r.right <= 0 || r.bottom <= 0 || r.left >= innerWidth || r.top >= innerHeight) return false
     for (let node: Element | null = el; node; node = node.parentElement) {
       const style = getComputedStyle(node)
-      if (style.display === 'none' || /hidden|collapse/.test(style.visibility) || Number(style.opacity) === 0) return false
+      if (style.display === 'none' || /hidden|collapse/.test(style.visibility) || !allowTransparent && Number(style.opacity) === 0) return false
       if (node !== el && /hidden|clip/.test(`${style.overflowX} ${style.overflowY}`)) {
         const b = node.getBoundingClientRect()
         if (r.right <= b.left || r.left >= b.right || r.bottom <= b.top || r.top >= b.bottom) return false
@@ -43,9 +45,9 @@ export function inspectCourseLayers(targetId: string | null): CourseLayer[] {
     }
   }
   const roots = new Set<Element>()
-  document.querySelectorAll('[role="dialog"],[aria-modal="true"],.el-dialog,.el-message-box,.ant-modal,.layui-layer,.dialog-read,.ss2077-msg-custom,.ai-draggable-dialog,' + protectedCss + ',iframe').forEach(el => {
+  document.querySelectorAll('[role="dialog"],[aria-modal="true"],.el-dialog,.el-message-box,.ant-modal,.layui-layer,.dialog-read,.ss2077-msg-custom,.ai-draggable-dialog,' + exitingMask + ',' + protectedCss + ',iframe').forEach(el => {
     if (el.matches('iframe') && !protectedNode(el)) return
-    if (visible(el) && !ignored(el) && !structural(el)) roots.add(el)
+    if (visible(el,el.matches(exitingMask)) && !ignored(el) && !structural(el)) roots.add(el)
   })
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
@@ -65,7 +67,7 @@ export function inspectCourseLayers(targetId: string | null): CourseLayer[] {
   const panels = [...roots].filter(el => ![...roots].some(other => other !== el && el.contains(other)))
   const results: Array<CourseLayer & { rank: number }> = []
   for (const root of panels) {
-    if (!visible(root) || ignored(root)) continue
+    if (!visible(root,root.matches(exitingMask)) || ignored(root)) continue
     const value = text(root), compact = value.replace(/\s+/g, '')
     const bounds = root.getBoundingClientRect()
     const wrapper = root.closest('.el-dialog__wrapper,.ant-modal-wrap,.dialog') ?? root
@@ -114,7 +116,7 @@ export function inspectCourseLayers(targetId: string | null): CourseLayer[] {
     }
     let rank = Number(getComputedStyle(wrapper).zIndex) || Number(getComputedStyle(root).zIndex) || 0
     for (let n = wrapper.parentElement; n; n = n.parentElement) rank = Math.max(rank, Number(getComputedStyle(n).zIndex) || 0)
-    results.push({id,kind,description:`${root.tagName.toLowerCase()}${root.id ? `#${root.id}` : ''} ${value.slice(0,500)}`,closeId:close?id:null,actionable,blocking,rank})
+    results.push({id,kind,description:`${root.tagName.toLowerCase()}${root.id ? `#${root.id}` : ''} ${value.slice(0,500)}`,closeId:close?id:null,actionable,blocking,exiting:kind === 'unknown' && root.matches(exitingMask),rank})
   }
   return results.sort((a,b) => Number(b.actionable)-Number(a.actionable) || b.rank-a.rank).map(({rank:_,...layer})=>layer)
 }
@@ -129,6 +131,22 @@ export class CourseOverlays {
     finally { if(target) await target.evaluate(el=>el.removeAttribute('data-ac-target')).catch(()=>{}) }
   }
   root(layer: CourseLayer): Locator { return this.page.locator(`[data-ac-layer="${layer.id}"]`) }
+  async waitForExit(layer: CourseLayer): Promise<boolean> {
+    try {
+      await this.page.waitForFunction(id => {
+        const el = document.querySelector(`[data-ac-layer="${id}"]`)
+        if (!el) return true
+        const r = el.getBoundingClientRect(), style = getComputedStyle(el)
+        if (!r.width || !r.height || style.display === 'none' || /hidden|collapse/.test(style.visibility)) return true
+        // Opacity zero alone is insufficient: a transparent mask can still intercept clicks.
+        return [[.5,.5],[.1,.1],[.9,.1],[.1,.9],[.9,.9]].every(([px,py]) => {
+          const top = document.elementFromPoint(r.left+r.width*px, r.top+r.height*py)
+          return !top || top !== el && !el.contains(top)
+        })
+      }, layer.id, {timeout:1500,polling:50})
+      return true
+    } catch { return false }
+  }
   async close(layer: CourseLayer, shouldStop: ()=>boolean = ()=>false): Promise<boolean> {
     if (!layer.closeId) return false
     for(let attempt=0;attempt<2&&!shouldStop();attempt++) {

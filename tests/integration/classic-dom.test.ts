@@ -178,7 +178,7 @@ describe('QuizService', () => {
     const quiz = new QuizService(page, silentLog, new FixedAnswerStrategy(0))
     const dialog = await quiz.findDialog()
     const closed = await quiz.handle(dialog!)
-    expect(closed).toBe(true)
+    expect(closed.state).toBe('handled')
     await page.waitForTimeout(300)
     expect(await page.locator('#quizDialog').count()).toBe(0)
   })
@@ -201,7 +201,7 @@ describe('QuizService', () => {
 
     const quiz = new QuizService(page, silentLog, countingStrategy)
     const dialog = await quiz.findDialog()
-    expect(await quiz.handle(dialog!)).toBe(true)
+    expect((await quiz.handle(dialog!)).state).toBe('handled')
 
     // 夹具两题；即使中间因为验证重试点击了多次，策略也只应被问两次
     expect(calls).toBe(2)

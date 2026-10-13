@@ -12,10 +12,11 @@
  *   立即判定为「本轮已跑完」并结束。终止条件不再依赖 DOM 的偶然变化。
  */
 
+import type { Locator } from 'playwright-core'
 import type { TaskMode, AppSettings, LoginMethod } from '@shared/types'
 import type { CourseRunner, RunOutcome, RunnerContext } from '../runner'
 import { ClassicCourseNavigator, type NextVideoResult } from './navigator'
-import { CourseOverlays } from './course-overlays'
+import { ClassicPageInteractions } from './page-interactions'
 import { VideoController } from './video-controller'
 import { CaptchaService } from '../captcha'
 import { QuizService } from '../quiz'
@@ -57,7 +58,8 @@ export class ClassicCourseRunner implements CourseRunner {
     })
     const quiz = new QuizService(page, log)
     const video = new VideoController(page, log)
-    const navigator = new ClassicCourseNavigator(page, log, captcha, quiz, settings.skipCompleted)
+    const interactions = new ClassicPageInteractions(page, log, quiz, ctx.shouldStop, ctx.diagnostics, () => ctx.media?.hasActiveRecording() ?? false)
+    const navigator = new ClassicCourseNavigator(page, log, captcha, quiz, settings.skipCompleted, interactions)
 
     // ------------------------------------------------------------ 1. 登录
     ctx.reportPhase?.('login')
@@ -78,9 +80,9 @@ export class ClassicCourseRunner implements CourseRunner {
     ctx.reportPhase?.('loading-course')
 
     // -------------------------------------------------------- 2. 进课程页
-    if (settings.videoUrl) {
-      await navigator.navigate(settings.videoUrl)
-    }
+    const initial = settings.videoUrl ? await navigator.navigate(settings.videoUrl) : await navigator.settle(undefined, ctx.shouldStop)
+    if (initial.state === 'stopped' || ctx.shouldStop()) return { completedCount, watchedSeconds, reason: 'user' }
+    if (initial.state === 'failed') return { completedCount, watchedSeconds, reason: 'error', error: { stage: 'loading-course', code: 'course', message: initial.message } }
 
     // ------------------------------------------------------ 3. 定位起点
     let next = settings.fromLastProgress && settings.courseNote
@@ -88,6 +90,10 @@ export class ClassicCourseRunner implements CourseRunner {
       : await navigator.firstPlayable()
 
     if (!next) {
+      if (initial.state === 'recover') {
+        const failure = await interactions.failure(`无法定位课程以恢复进度提交异常：${initial.message}`)
+        return {completedCount,watchedSeconds,reason:'error',error:{stage:'loading-course',code:'course',message:failure.message}}
+      }
       // 停在登录页说明"登录没成功"，比"没有待处理的视频"有用得多
       if (isLoginUrl(page.url())) {
         log.error(`没有待处理的视频：当前停在登录页（${page.url()}），登录可能没有成功`)
@@ -134,8 +140,10 @@ export class ClassicCourseRunner implements CourseRunner {
 
       // ---- 仅转录模式：下载音轨转写，不播放视频 ----
       if (ctx.media && this.isTranscribeOnly(settings)) {
-        await this.handleQuizAndCaptcha(ctx, quiz, captcha, video)
         const ok = await ctx.media.transcribeOnly(session, next.title)
+        const settled = await this.ready(ctx, navigator, next.locator, next.title)
+        if (settled.stopped) { reason='user'; break }
+        if (settled.error) return {completedCount,watchedSeconds,reason:'error',error:{stage:'executing',code:'course',message:settled.error}}
         completedCount += ok ? 1 : 0
         if (!ok) log.warn(`转录失败: ${next.title}`)
         processed.add(next.index)
@@ -145,7 +153,7 @@ export class ClassicCourseRunner implements CourseRunner {
           await ctx.media.onVideoBegin(session, next.title)
         }
 
-        const monitor = await this.monitorVideo(ctx, video, quiz, captcha, next.title)
+        const monitor = await this.monitorVideo(ctx, video, next.title, navigator, next.locator)
 
         if (monitor.stopped) {
           reason = 'user'
@@ -157,13 +165,13 @@ export class ClassicCourseRunner implements CourseRunner {
         watchedSeconds += monitor.elapsedSeconds
         ctx.reportVideoWatched(monitor.elapsedSeconds)
 
+        if (monitor.error) {
+          return { completedCount, watchedSeconds, reason: 'error', error: { stage: 'executing', code: 'course', message: monitor.error } }
+        }
+
         completedCount += 1
         ctx.reportVideoCompleted(next.title)
         processed.add(next.index)
-
-        if (!monitor.ended) {
-          log.warn(`视频监控未正常结束（超时），仍计入完成: ${next.title}`)
-        }
 
         if (ctx.media) {
           await ctx.media.onVideoEnd(next.title)
@@ -221,125 +229,61 @@ export class ClassicCourseRunner implements CourseRunner {
     return navigator.clickVideoWithRetry(locator, title, ctx.shouldStop)
   }
 
-  /** 进入视频后立刻处理一次弹题/验证码（点击课程后弹题常会自动弹出）。 */
-  private async handleQuizAndCaptcha(
-    ctx: RunnerContext,
-    quiz: QuizService,
-    captcha: CaptchaService,
-    _video: VideoController
-  ): Promise<void> {
-    const dialog = await quiz.findDialog()
-    if (dialog) {
-      ctx.log.info('检测到弹题测验')
-      await quiz.handle(dialog)
-      await ctx.session.playwrightPage.waitForTimeout(SLEEP.long)
+  private async ready(ctx:RunnerContext,navigator:ClassicCourseNavigator,target:Locator,title:string):Promise<{stopped?:boolean;error?:string;recovered?:boolean}>{
+    const result=await navigator.settle(target,ctx.shouldStop)
+    if(ctx.shouldStop()||result.state==='stopped')return {stopped:true}
+    if(result.state==='failed')return {error:result.message}
+    if(result.state==='recover'){
+      const restored=await navigator.clickVideoWithRetry(target,title,ctx.shouldStop)
+      if(ctx.shouldStop())return {stopped:true}
+      if(!restored)return {error:navigator.lastClickError??'课程页面恢复失败'}
+      return {recovered:true}
     }
-    await captcha.checkAndHandle('video', '播放过程中出现验证码，请完成验证')
+    return {}
   }
 
-  // ------------------------------------------------------------ 视频监控
-
-  /**
-   * 监控单个视频直到结束。
-   *
-   * 与 v1 `_monitor_single_video` 等价：同一循环里处理弹题、验证码、
-   * 暂停恢复与结束检测；elapsed 用真实耗时累加（不信任 DOM 时长，
-   * 用户拖进度条不会让时长虚增）。
-   */
   private async monitorVideo(
-    ctx: RunnerContext,
-    video: VideoController,
-    quiz: QuizService,
-    captcha: CaptchaService,
-    title: string
-  ): Promise<{ ended: boolean; stopped: boolean; elapsedSeconds: number }> {
-    const { log, session } = ctx
-    const page = session.playwrightPage
-
-    const overlays = new CourseOverlays(page, log)
-    log.info(`开始监控视频播放: ${title}`)
-
-    let elapsed = 0
-    let lastCaptchaCheck = -INTERVAL.captcha
-    let lastAutoplayGuard = 0
-    let lastProgressLog = 0
-
-    // 确保视频在播放
-    if (!(await video.isPlaying())) {
+    ctx:RunnerContext,video:VideoController,title:string,navigator:ClassicCourseNavigator,currentLesson:Locator
+  ):Promise<{ended:boolean;stopped:boolean;elapsedSeconds:number;error?:string}>{
+    const page=ctx.session.playwrightPage
+    let elapsed=0,lastProgressLog=0,lastAutoplayGuard=0
+    const outcome=(error?:string,stopped=false)=>({ended:false,stopped,elapsedSeconds:elapsed/1000,error})
+    const initial=await this.ready(ctx,navigator,currentLesson,title)
+    if(initial.stopped||initial.error)return outcome(initial.error,initial.stopped)
+    if(!await video.isPlaying()){
       await video.play()
       await page.waitForTimeout(SLEEP.long)
-      if (!(await video.isPlaying())) {
-        await video.play()
-        await page.waitForTimeout(SLEEP.extraLong)
-      }
     }
-
-    while (elapsed < TIMEOUT.videoMonitorMax) {
-      if (ctx.shouldStop()) {
-        log.info('收到停止信号，退出视频监控')
-        return { ended: false, stopped: true, elapsedSeconds: elapsed / 1000 }
-      }
-
-      await overlays.dismiss()
-
-      // ---- 弹题（高频）----
-      const dialog = await quiz.findDialog()
-      if (dialog) {
-        log.info('检测到弹题测验')
-        await quiz.handle(dialog)
-        await page.waitForTimeout(SLEEP.medium)
-        if (!(await video.isPlaying()) && !(await video.isEnded())) {
-          await video.play()
-        }
-        elapsed += SLEEP.medium
-        continue
-      }
-
-      // ---- 验证码（低频，避免误报）----
-      if (elapsed - lastCaptchaCheck >= INTERVAL.captcha) {
-        lastCaptchaCheck = elapsed
-        const handled = await captcha.checkAndHandle('video', '视频播放过程中出现验证码，请完成验证')
-        if (handled) {
-          await page.waitForTimeout(SLEEP.long)
-          if (!(await video.isPlaying()) && !(await video.isEnded())) {
-            await video.play()
-          }
-          continue
+    while(elapsed<TIMEOUT.videoMonitorMax){
+      if(ctx.shouldStop())return outcome(undefined,true)
+      const ready=await this.ready(ctx,navigator,currentLesson,title)
+      if(ready.stopped||ready.error)return outcome(ready.error,ready.stopped)
+      if(ready.recovered&&!await video.isPlaying())await video.play()
+      const state=await video.readState()
+      if(state.ended||(state.durationSeconds>0&&state.currentSeconds>=state.durationSeconds-1)){
+        // A popup arriving on the last frame must be resolved before continuation is persisted.
+        const final=await this.ready(ctx,navigator,currentLesson,title)
+        if(final.stopped||final.error)return outcome(final.error,final.stopped)
+        if(final.recovered)continue
+        const verified=await video.readState()
+        if(verified.ended||(verified.durationSeconds>0&&verified.currentSeconds>=verified.durationSeconds-1)){
+          ctx.log.info(`视频播放完毕: ${title}`)
+          return {ended:true,stopped:false,elapsedSeconds:elapsed/1000}
         }
       }
-
-      const state = await video.readState()
-
-      // ---- 结束检测 ----
-      if (state.ended || (state.durationSeconds > 0 && state.currentSeconds >= state.durationSeconds - 1)) {
-        log.info(
-          `视频播放完毕: ${title} (${state.currentSeconds.toFixed(0)}/${state.durationSeconds.toFixed(0)}s)`
-        )
-        return { ended: true, stopped: false, elapsedSeconds: elapsed / 1000 }
+      if(elapsed-lastAutoplayGuard>=INTERVAL.autoplayGuard){
+        lastAutoplayGuard=elapsed
+        if(state.exists&&state.paused&&!state.ended)await video.play()
       }
-
-      // ---- 防止自动暂停 ----
-      if (elapsed - lastAutoplayGuard >= INTERVAL.autoplayGuard) {
-        lastAutoplayGuard = elapsed
-        if (state.exists && state.paused && !state.ended) {
-          log.debug('视频已暂停，尝试恢复播放')
-          await video.play()
-        }
+      if(elapsed-lastProgressLog>=INTERVAL.progressLog){
+        lastProgressLog=elapsed
+        ctx.log.info(`进度: ${state.currentSeconds.toFixed(0)}/${state.durationSeconds.toFixed(0)}s`)
       }
-
-      // ---- 定期进度日志 ----
-      if (elapsed - lastProgressLog >= INTERVAL.progressLog) {
-        lastProgressLog = elapsed
-        log.info(
-          `进度: ${state.currentSeconds.toFixed(0)}/${state.durationSeconds.toFixed(0)}s (已监控 ${elapsed / 1000}s)`
-        )
-      }
-
       await page.waitForTimeout(INTERVAL.videoMonitor)
-      elapsed += INTERVAL.videoMonitor
+      elapsed+=INTERVAL.videoMonitor
     }
-
-    log.warn(`视频监控超时: ${title}`)
-    return { ended: false, stopped: false, elapsedSeconds: elapsed / 1000 }
+    if(ctx.shouldStop())return outcome(undefined,true)
+    const failure=await navigator.interactions.failure(`视频监控超时，当前视频不计入完成：${title}`)
+    return outcome(failure.message)
   }
 }

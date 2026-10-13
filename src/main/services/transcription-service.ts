@@ -268,6 +268,8 @@ export class TranscriptionService implements MediaPort {
 
   // ============================================================ MediaPort
 
+  hasActiveRecording(): boolean { return !!this.activeWebm && this.getStatus().phase === 'recording' }
+
   /** 刷课 + 转录：视频开始播放时开录。 */
   async onVideoBegin(session: BrowserSession, title: string): Promise<void> {
     if (!this.enabled) return

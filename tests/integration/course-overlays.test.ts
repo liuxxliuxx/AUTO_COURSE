@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { CourseOverlays } from '../../src/main/automation/classic/course-overlays'
 import { ClassicCourseNavigator } from '../../src/main/automation/classic/navigator'
 import { ClassicCourseRunner } from '../../src/main/automation/classic/classic-course-runner'
+import { VideoController } from '../../src/main/automation/classic/video-controller'
 import { BrowserSession } from '../../src/main/automation/browser-session'
 import { DEFAULT_SETTINGS } from '../../src/main/services/settings-service'
 import { EventBus } from '../../src/main/services/event-bus'
@@ -38,6 +39,7 @@ beforeAll(async () => { browser = await chromium.launch({ headless: true }) })
 beforeEach(async () => {
   page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
   await page.setContent(markup)
+  await page.locator('#assistant i').evaluate(el=>el.addEventListener('click',()=>document.querySelector('#assistant')?.remove()))
   overlays = new CourseOverlays(page, log)
 })
 afterEach(async () => { vi.restoreAllMocks(); await page.close() })
@@ -48,7 +50,7 @@ describe('passive course overlays', () => {
     await page.evaluate(() => {
       document.querySelector('#assistant i')!.addEventListener('click', event => {
         document.body.dataset.trusted = String(event.isTrusted)
-        document.querySelector('#assistant')!.remove()
+        document.querySelector('#assistant')?.remove()
       })
     })
     expect(await overlays.obstruction(page.locator('li.video'))).not.toBeNull()
@@ -64,7 +66,7 @@ describe('passive course overlays', () => {
       const control = document.createElement('div')
       control.style.cssText = 'position:absolute;right:10px;top:10px;width:25px;height:25px;cursor:pointer'
       control.innerHTML = '<svg width="20" height="20"><path d="M0 0L20 20M0 20L20 0"/></svg>'
-      control.addEventListener('click', event => { document.body.dataset.trusted = String(event.isTrusted); document.querySelector('#assistant')!.remove() })
+      control.addEventListener('click', event => { document.body.dataset.trusted = String(event.isTrusted); document.querySelector('#assistant')?.remove() })
       old.replaceWith(control)
     })
     expect(await overlays.dismiss()).toBe(1)
@@ -77,26 +79,27 @@ describe('passive course overlays', () => {
     expect(await overlays.dismiss()).toBe(1)
     expect(await page.locator('#assistant').count()).toBe(0)
   })
-  it('verifies dismissal and removes only the passive card if its close control is broken', async () => {
-    expect(await overlays.dismiss()).toBe(1)
-    expect(await page.locator('#assistant').count()).toBe(0)
+  it('preserves the card if its close control is broken', async () => {
+    await page.locator('#assistant i').evaluate(el=>el.replaceWith(el.cloneNode(true)))
+    expect(await overlays.dismiss()).toBe(0)
+    expect(await page.locator('#assistant').count()).toBe(1)
     expect(await page.locator('li.video').count()).toBe(1)
     expect(await overlays.dismiss()).toBe(0)
   })
-  it('handles cards without controls and ignores matching text in regular page content', async () => {
+  it('preserves cards without controls and ignores matching text in regular page content', async () => {
     await page.evaluate(() => {
       document.querySelector('#assistant i')!.remove()
       const content = document.createElement('section'); content.id = 'normal'
       content.innerHTML = '<p>课程学习时间</p><p>考试时间</p>'
       document.body.append(content)
     })
-    expect(await overlays.dismiss()).toBe(1)
+    expect(await overlays.dismiss()).toBe(0)
     expect(await page.locator('#normal').count()).toBe(1)
     expect(await page.locator('li.video').count()).toBe(1)
   })
   it('preserves normal course copy within an absolute page layout', async () => {
     await page.evaluate(() => {
-      document.querySelector('#assistant')!.remove()
+      document.querySelector('#assistant')?.remove()
       const layout = document.createElement('main')
       layout.style.cssText = 'position:absolute;inset:0'
       layout.innerHTML = '<section id="normal"><p>欢迎你加入课程</p><p>课程学习时间</p><p>考试时间</p></section><ul><li class="video">课程目录</li></ul>'
@@ -124,14 +127,14 @@ describe('passive course overlays', () => {
       const progress = document.createElement('div')
       progress.className = 'ss2077-msg-custom'
       progress.style.cssText = 'position:fixed;left:10px;top:10px;width:300px;height:100px;z-index:200;background:white'
-      progress.innerHTML = '<p>学习进度：班级平均学习进度</p>'
+      progress.innerHTML = '<p>学习进度：班级平均学习进度</p><button onclick="this.parentElement.remove()">关闭</button>'
       document.body.append(progress)
     })
     expect(await overlays.dismiss()).toBe(2)
     expect(await page.locator('.ss2077-msg-custom, #assistant').count()).toBe(0)
   })
   it('clears a late card before clicking a lesson', async () => {
-    await page.evaluate(() => document.querySelector('#assistant i')!.addEventListener('click', () => document.querySelector('#assistant')!.remove()))
+    await page.evaluate(() => document.querySelector('#assistant i')!.addEventListener('click', () => document.querySelector('#assistant')?.remove()))
     const nav = navigator()
     vi.spyOn(page, 'waitForTimeout').mockResolvedValue(undefined)
     expect(await nav.clickVideo(page.locator('li.video'), '网络起源')).toBe(true)
@@ -139,7 +142,7 @@ describe('passive course overlays', () => {
   })
   it('reports an unknown blocker quickly instead of forcing a click through it', async () => {
     await page.evaluate(() => {
-      document.querySelector('#assistant')!.remove()
+      document.querySelector('#assistant')?.remove()
       const blocker = document.createElement('div'); blocker.id = 'unknown'
       blocker.style.cssText = 'position:fixed;inset:0;z-index:999;background:white'
       blocker.textContent = '未知遮挡'
@@ -156,7 +159,7 @@ describe('passive course overlays', () => {
     await page.locator('#assistant').evaluate(el => el.remove())
     const nav = navigator()
     const click = vi.spyOn(nav, 'clickVideo').mockResolvedValue(false)
-    vi.spyOn(nav, 'handleInitialDialogs').mockResolvedValue(undefined)
+    vi.spyOn(nav, 'handleInitialDialogs').mockResolvedValue({state:'clear'})
     vi.spyOn(page, 'waitForTimeout').mockResolvedValue(undefined)
     expect(await nav.clickVideoWithRetry(page.locator('li.video'), '网络起源', () => false)).toBe(false)
     expect(click).toHaveBeenCalledTimes(CLICK_VIDEO_MAX_RETRIES + 1)
@@ -237,7 +240,7 @@ describe('blocker classification and page recovery', () => {
       settings: { ...DEFAULT_SETTINGS, videoUrl: page.url(), skipCompleted: false, brushEnabled: false, mapMode: false },
       credentials: { username: '', password: '' },
       session: new BrowserSession(page, () => {}), bus: new EventBus(), log,
-      media: { transcribeOnly } as unknown as RunnerContext['media'],
+      media: { transcribeOnly, hasActiveRecording: () => false } as unknown as RunnerContext['media'],
       lastVideoTitle: '', shouldStop: () => false, sessionWatchedSeconds: () => 0,
       reportVideoWatched: vi.fn(), reportVideoCompleted: vi.fn(), reportCurrentTitle: vi.fn(), requestCaptcha: async () => true,
     }
@@ -294,7 +297,7 @@ describe('blocker classification and page recovery', () => {
     const click = vi.spyOn(nav, 'clickVideo')
     vi.spyOn(page, 'waitForTimeout').mockResolvedValue(undefined)
     expect(await nav.clickVideoWithRetry(page.locator('li.video').last(), '定义与分类', () => false)).toBe(false)
-    expect(click).toHaveBeenCalledTimes(2)
+    expect(click).not.toHaveBeenCalled()
     expect(nav.lastClickError).toContain('未知操作')
     expect(await page.locator('#unknown').count()).toBe(1)
     expect(await page.locator('body').getAttribute('data-wrong')).toBeNull()
@@ -313,5 +316,75 @@ describe('blocker classification and page recovery', () => {
     expect(await nav.clickVideoWithRetry(page.locator('li.video').last(), '定义与分类', () => false)).toBe(false)
     expect(await page.locator('#broken').count()).toBe(1)
     expect(await page.locator('body').getAttribute('data-clicked')).toBeNull()
+  })
+})
+
+
+describe('proactive progress error detection', () => {
+  const centeredFailure = `<div id="failure" role="dialog" style="position:fixed;left:400px;top:300px;width:500px;height:250px;background:white;z-index:999">
+    <i style="position:absolute;right:15px;top:15px;cursor:pointer" onclick="document.body.dataset.trusted=event.isTrusted;this.parentElement.remove()">×</i>
+    <h3>温馨提示</h3><p><span>学习</span><span>进度</span><span>提交</span><span>失败</span></p>
+    <button onclick="document.body.dataset.returned='true'">返回学堂</button></div>`
+
+  it('detects split error text without catalogue obstruction and closes with a trusted X click', async () => {
+    await page.setContent(catalogue + centeredFailure)
+    expect(await overlays.obstruction(page.locator('li.video').last())).toBeNull()
+    const blocker = await overlays.inspect()
+    expect(blocker?.reloadRequired).toBe(true)
+    expect(blocker?.closeId).toBeTruthy()
+    expect(await overlays.closeBlocker(blocker!.closeId!)).toBe(true)
+    expect(await page.locator('#failure').count()).toBe(0)
+    expect(await page.locator('body').getAttribute('data-trusted')).toBe('true')
+    expect(await page.locator('body').getAttribute('data-returned')).toBeNull()
+  })
+  it('does not classify normal page copy, hidden dialogs or protected question descendants as errors', async () => {
+    await page.setContent(catalogue + `<p>学习进度提交失败</p>` + centeredFailure)
+    await page.locator('#failure').evaluate(el => { (el as HTMLElement).style.display = 'none' })
+    expect(await overlays.inspect()).toBeNull()
+    await page.locator('#failure').evaluate(el => { (el as HTMLElement).style.display = ''; el.setAttribute('class', 'topic-option-item') })
+    expect(await overlays.inspect()).toBeNull()
+  })
+  it('recovers even when the error does not cover the pending lesson', async () => {
+    let loads = 0
+    await page.route('http://centered.test/**', async route => {
+      loads++
+      await route.fulfill({ contentType: 'text/html; charset=utf-8', body: catalogue + (loads === 1 ? centeredFailure : '') })
+    })
+    await page.goto('http://centered.test/course')
+    vi.spyOn(page, 'waitForTimeout').mockResolvedValue(undefined)
+    const nav = navigator()
+    expect(await nav.clickVideoWithRetry(page.locator('li.video').last(), '定义与分类', () => false)).toBe(true)
+    expect(loads).toBe(2)
+    expect(await page.locator('body').getAttribute('data-clicked')).toBe('second')
+  })
+  it.each([false, true])('handles an error arriving during playback (persistent=%s)', async persistent => {
+    let loads = 0
+    await page.route('http://playback.test/**', async route => {
+      loads++
+      await route.fulfill({ contentType: 'text/html; charset=utf-8', body: catalogue.split('\n')[0] + '</ul>' + (persistent && loads > 1 ? failure : '') })
+    })
+    await page.goto('http://playback.test/course')
+    vi.spyOn(page, 'waitForTimeout').mockResolvedValue(undefined)
+    vi.spyOn(VideoController.prototype, 'isPlaying').mockResolvedValue(true)
+    let reads = 0
+    vi.spyOn(VideoController.prototype, 'readState').mockImplementation(async () => {
+      reads++
+      if (reads === 1) await page.locator('body').evaluate((body, html) => body.insertAdjacentHTML('beforeend', html), centeredFailure)
+      return { exists: true, playing: true, paused: false, ended: reads > 1, currentSeconds: reads > 1 ? 60 : 1, durationSeconds: 60 }
+    })
+    const completed = vi.fn()
+    const ctx: RunnerContext = {
+      settings: { ...DEFAULT_SETTINGS, videoUrl: page.url(), skipCompleted: false, brushEnabled: true, mapMode: false },
+      credentials: { username: '', password: '' }, session: new BrowserSession(page, () => {}), bus: new EventBus(), log, media: null,
+      lastVideoTitle: '', shouldStop: () => false, sessionWatchedSeconds: () => 0,
+      reportVideoWatched: vi.fn(), reportVideoCompleted: completed, reportCurrentTitle: vi.fn(), requestCaptcha: async () => true,
+    }
+    const runner = new ClassicCourseRunner(() => ({ method: 'zhihuishu', login: async () => ({ ok: true, alreadyLoggedIn: true, message: 'fixture' }) }))
+    const result = await runner.run(ctx)
+    expect(result.reason).toBe(persistent ? 'error' : 'completed')
+    expect(result.completedCount).toBe(persistent ? 0 : 1)
+    expect(completed).toHaveBeenCalledTimes(persistent ? 0 : 1)
+    expect(loads).toBe(persistent ? 3 : 2)
+    if (persistent) expect(result.error?.message).toContain('学习进度提交失败')
   })
 })

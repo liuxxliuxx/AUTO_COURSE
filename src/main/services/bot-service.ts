@@ -32,6 +32,8 @@ import type { EventBus } from './event-bus'
 import type { BrowserService } from '../automation/browser-service'
 import type { BrowserSession } from '../automation/browser-session'
 import type { CourseRunner, MediaPort, RunOutcome, RunnerContext } from '../automation/runner'
+import { CourseDiagnostics } from './course-diagnostics'
+import { runLogContext } from './logger'
 import { randomUUID } from 'node:crypto'
 import { identifyCourse, settingsForCourse, validateRunOptions } from '@shared/courses'
 import type { CourseService } from './course-service'
@@ -51,6 +53,7 @@ function todayString(now = new Date()): string {
 }
 
 export class BotService {
+  private diagnostics: CourseDiagnostics | undefined
   private snapshot: RunSnapshot | null = null
   private phase: RunPhase = 'idle'
   private error: RunError | null = null
@@ -91,7 +94,8 @@ export class BotService {
       courseId: string
     ) => Promise<MediaPort | null>,
     private readonly courses: CourseService,
-    private readonly accounts?: AccountService
+    private readonly accounts?: AccountService,
+    private readonly diagnosticsDirectory?: string
   ) {}
 
   // ------------------------------------------------------------------ 状态
@@ -262,6 +266,8 @@ export class BotService {
       outcome = { ...outcome, reason: 'error' }
       this.setStatus('idle', '⚠ 运行出错，请查看日志', 'danger', 'error')
     } finally {
+      await this.diagnostics?.finish()
+      this.diagnostics = undefined
       this.flushPending()
       this.phase = 'finished'
       this.intervention = null
@@ -312,6 +318,8 @@ export class BotService {
     lastVideoTitle: string,
     media: MediaPort | null
   ): RunnerContext {
+    const context=runLogContext.getStore()
+    if(this.diagnosticsDirectory&&this.snapshot)this.diagnostics=new CourseDiagnostics(this.diagnosticsDirectory,{runId:context?.runId??this.snapshot.id,stepId:context?.stepId,accountId:this.snapshot.accountId,courseId:this.snapshot.course.id},logger)
     return {
       settings,
       credentials,
@@ -319,6 +327,7 @@ export class BotService {
       session,
       log: createLogger('runner'),
       media,
+      diagnostics: this.diagnostics,
       masteryQuestionBank: new MasteryQuestionBank(this.db, this.snapshot?.course.id),
       lastVideoTitle,
       shouldStop: () => this.stopRequested,

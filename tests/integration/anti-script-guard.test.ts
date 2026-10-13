@@ -17,7 +17,7 @@
  *
  * 夹具 `anti-script-guard.html` 复刻了这段守卫 + 播放器的点击捕获层。
  * 这里要钉死的是：**自动化代码不允许再派发合成点击**（`element.click()`），
- * 被遮罩挡住时必须换用 `locator.click({ force: true })`，事件仍然可信。
+ * 传统课程被遮挡时不强制点击，保留无需点击的原生播放恢复。共享定位助手的旧行为单独验证。
  */
 
 import { chromium, type Browser, type Page } from 'playwright-core'
@@ -83,7 +83,7 @@ describe('防脚本守卫夹具自身', () => {
 })
 
 describe('VideoController.play() 不使用合成点击', () => {
-  it('大播放按钮被捕获层挡住时，仍然用可信点击开始播放', async () => {
+  it('大播放按钮被捕获层挡住时，不点穿捕获层而使用原生播放', async () => {
     const video = new VideoController(page, silentLog)
     const started = await video.play()
 
@@ -93,11 +93,20 @@ describe('VideoController.play() 不使用合成点击', () => {
     const state = await guardState()
     // 关键断言：没有触发「检测到异常脚本」
     expect(state.scriptDetected).toBe(false)
-    expect(state.clicks.length).toBeGreaterThan(0)
-    expect(state.clicks.every((c) => c.trusted)).toBe(true)
+    expect(state.clicks).toEqual([])
   })
 
-  it('safeClick 在被遮挡时退回的是可信的坐标点击', async () => {
+  it('没有遮挡时通过可信播放按钮启动', async () => {
+    await page.locator('#clickLayer').evaluate(el=>el.remove())
+    const video = new VideoController(page, silentLog)
+    expect(await video.play()).toBe(true)
+    const state=await guardState()
+    expect(state.scriptDetected).toBe(false)
+    expect(state.clicks.length).toBeGreaterThan(0)
+    expect(state.clicks.every(click=>click.trusted)).toBe(true)
+  })
+
+  it('共享 safeClick 保留其他课程模式的可信坐标点击兼容行为', async () => {
     const covered = page.locator('#bigPlay').first()
     const startedAt = Date.now()
     expect(await safeClick(covered, 2_000)).toBe(true)

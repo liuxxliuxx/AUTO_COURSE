@@ -46,7 +46,7 @@ export function createWorkflowRuntime(run: WorkflowRun, report: (status?: BotSta
         const enabled=await media.configure(config,only,accounts.transcriptFolderName(step.account,step.course))
         if((config.transcribeEnabled||only)&&!enabled)throw new Error(media.getStatus().message)
         return enabled?media:null
-      },courses,accounts)
+      },courses,accounts,join(userData,'diagnostics'))
       bus.on('event:progress', progress=>report({...bot.getStatus(),watchedSeconds:progress.sessionSeconds}))
       current = {task:new CourseTaskExecutor(bot,accounts),browser,media,bus}
     },

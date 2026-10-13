@@ -9,6 +9,7 @@ import type { AppSettings, Credentials, StopReason, TaskMode, RunPhase, RunError
 import type { BrowserSession } from './browser-session'
 import type { EventBus } from '../services/event-bus'
 import type { Logger } from '../services/logger'
+import type { CourseDiagnosticPort } from '../services/course-diagnostics'
 import type { MasteryQuestionBank } from './mastery/question-bank'
 
 export interface RunOutcome {
@@ -30,6 +31,8 @@ export interface RunOutcome {
  * 未启用转录时 ctx.media 为 null。
  */
 export interface MediaPort {
+  /** True only while a page-bound real-time recorder is active. */
+  hasActiveRecording(): boolean
   /** 视频即将开始播放（实时录音模式在这里开始录制） */
   onVideoBegin(session: BrowserSession, title: string): Promise<void>
   /**
@@ -50,6 +53,7 @@ export interface RunnerContext {
   readonly log: Logger
   /** 未启用转录时为 null */
   readonly media: MediaPort | null
+  readonly diagnostics?: CourseDiagnosticPort
   /** 掌握度课持久题库；其他课程策略忽略。 */
   readonly masteryQuestionBank?: MasteryQuestionBank
 

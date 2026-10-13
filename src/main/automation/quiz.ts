@@ -1,29 +1,6 @@
-/**
- * 弹题处理。移植自 v1 `src/bot/quiz.py`，行为保持一致。
- *
- * handoff §13：本次**不增加** AI 答题 / OCR / 联网搜题 / 题库，
- * 只迁移现有能力。
- *
- * 相对 v1 的唯一行为修正（handoff §28「Quiz Random Strategy」）：
- *   v1 在"验证选中失败"时会再调一次 select_option()，等于**换了一个选项**，
- *   单题结果不确定。v2 把选择结果固定下来：整道题只选一次，
- *   后续重试只重复点击同一个目标。
- */
-
 import type { Locator, Page } from 'playwright-core'
-import {
-  QUIZ_CLOSE_BTN_XPATH,
-  QUIZ_CLOSE_CSS,
-  QUIZ_DIALOG_CSS,
-  QUIZ_DIALOG_FALLBACK_CSS,
-  QUIZ_FOOTER_BTN_XPATH,
-  QUIZ_NEXT_BTN_CSS,
-  QUIZ_OPTION_ACTIVE_CSS,
-  QUIZ_OPTION_CSS,
-  SLEEP
-} from './constants'
-import { isVisible, safeClick, textOf } from './locators'
 import type { Logger } from '../services/logger'
+import { CourseOverlays } from './classic/course-overlays'
 
 // ============================================================================
 // 答题策略
@@ -58,204 +35,102 @@ export class FixedAnswerStrategy implements AnswerStrategy {
   }
 }
 
-// ============================================================================
-// 弹题处理器
-// ============================================================================
+export type QuizResult = { state: 'handled' | 'stopped' | 'protected' } | { state: 'failed'; message: string }
+interface QuestionState { fingerprint: string; options: string[]; unsupported: boolean }
 
+/** One selection per question; every transition is verified, never inferred from a click. */
 export class QuizService {
-  constructor(
-    private readonly page: Page,
-    private readonly log: Logger,
-    private readonly strategy: AnswerStrategy = new RandomAnswerStrategy()
-  ) {}
+  private readonly choices = new Map<string, number>()
+  constructor(private readonly page: Page, private readonly log: Logger, private readonly strategy: AnswerStrategy = new RandomAnswerStrategy()) {}
 
-  /** 页面里是否有可见的弹题对话框。 */
-  async findDialog(): Promise<Locator | null> {
-    // 首选：带"弹题"字样的 el-dialog
-    const primary = this.page.locator(QUIZ_DIALOG_CSS)
-    const count = await primary.count().catch(() => 0)
-    for (let i = 0; i < count; i += 1) {
-      const candidate = primary.nth(i)
-      if (await isVisible(candidate)) return candidate
-    }
-
-    // 兜底：遍历所有可见 el-dialog，检查 aria-label
-    const fallback = this.page.locator(QUIZ_DIALOG_FALLBACK_CSS)
-    const fallbackCount = await fallback.count().catch(() => 0)
-    for (let i = 0; i < fallbackCount; i += 1) {
-      const candidate = fallback.nth(i)
-      if (!(await isVisible(candidate))) continue
-      const label = (await candidate.getAttribute('aria-label')) ?? ''
-      if (label.includes('弹题') || label.includes('测验') || label.includes('答题')) {
-        return candidate
-      }
-    }
-
-    return null
+  async findDialog(): Promise<Locator|null> {
+    const overlays=new CourseOverlays(this.page,this.log)
+    const layer=(await overlays.scan()).find(l=>l.kind==='quiz'&&l.actionable)
+    return layer?overlays.root(layer):null
   }
-
-  /**
-   * 处理一道或多道题，然后关闭对话框。
-   *
-   * 注意最后一题：站点上「下一题」按钮在最后一题会变成「提交」，
-   * 点下去对话框自己就消失了。v1 在这种情况下仍然去调 `_close()`，
-   * 找不到关闭按钮就返回 False —— 明明答完了却报失败。
-   * 这里把「对话框已经不在了」直接视为成功。
-   */
-  async handle(dialog: Locator): Promise<boolean> {
-    try {
-      let questionIndex = 0
-      // 上限只是防御性的：正常流程由"没有下一题"或对话框消失自然结束
-      while (questionIndex < 50) {
-        questionIndex += 1
-        this.log.info(`处理弹题第 ${questionIndex} 题`)
-
-        const answered = await this.answerCurrent(dialog)
-        await this.page.waitForTimeout(SLEEP.short)
-
-        if (await this.isGone(dialog)) {
-          this.log.info('弹题对话框已消失（最后一题提交后自动关闭）')
-          return true
+  private async question(dialog:Locator):Promise<QuestionState>{
+    return dialog.evaluate(root=>{
+      const options=Array.from(root.querySelectorAll('.topic-item')).map(el=>(el.textContent??'').replace(/\s+/g,' ').trim())
+      const question=(root.querySelector('#question,.topic-title,.topicTitle,.el-dialog__body p,p')?.textContent??'').replace(/\s+/g,' ').trim()
+      return {fingerprint:JSON.stringify([question,options]),options,unsupported:/多选|填空|简答|排序/.test(question)||!!root.querySelector('textarea,input[type="text"],input[type="checkbox"]')}
+    })
+  }
+  private async gone(dialog:Locator):Promise<boolean>{
+    // Navigation or evaluation failure is not proof that the quiz was completed.
+    return await dialog.count()===0 || !(await dialog.isVisible())
+  }
+  private async waitFor(check:()=>Promise<boolean>,shouldStop:()=>boolean,ms=1000):Promise<boolean>{
+    const end=Date.now()+ms
+    while(!shouldStop()){
+      if(await check())return true
+      if(Date.now()>=end)return false
+      await this.page.waitForTimeout(80)
+    }
+    return false
+  }
+  async handle(dialog:Locator,shouldStop:()=>boolean=()=>false):Promise<QuizResult>{
+    const fail=(message:string):QuizResult=>({state:'failed',message})
+    try{
+      const overlays=new CourseOverlays(this.page,this.log)
+      for(let n=0;n<50;n++){
+        if(shouldStop())return {state:'stopped'}
+        if(await this.gone(dialog))return {state:'handled'}
+        const visible=(await overlays.scan()).find(l=>l.actionable)
+        if(visible&&visible.kind!=='quiz')return {state:'protected'} // coordinator handles the upper layer first
+        const state=await this.question(dialog)
+        if(state.unsupported||!state.options.length)return fail('弹题题型或选项无法识别')
+        const id=await dialog.getAttribute('data-ac-layer')??'quiz'
+        const key=id+state.fingerprint
+        let index=this.choices.get(key)
+        if(index===undefined){index=this.strategy.selectIndex(state.options.length);this.choices.set(key,index)}
+        if(!Number.isInteger(index)||index<0||index>=state.options.length)return fail('答题策略返回了无效选项')
+        const choice=dialog.locator('.topic-item').nth(index)
+        const selected=async()=>choice.evaluate(el=>el.matches('.active,[aria-checked="true"]')||!!el.querySelector('.active,input:checked,[aria-checked="true"]'))
+        let answered=await selected()
+        for(let attempt=0;!answered&&attempt<2&&!shouldStop();attempt++){
+          // Regular Playwright input only: no force and no synthetic click.
+          await choice.click({timeout:700}).catch(()=>{})
+          answered=await this.waitFor(selected,shouldStop)
         }
-        if (!answered) {
-          this.log.warn('本题未能作答，停止继续作答')
-          break
-        }
-
-        const nextBtn = dialog.locator(QUIZ_NEXT_BTN_CSS).first()
-        if (await isVisible(nextBtn)) {
-          const enabled = await nextBtn.isEnabled().catch(() => false)
-          if (enabled) {
-            this.log.info('点击右箭头进入下一题')
-            await nextBtn.click().catch(() => undefined)
-            await this.page.waitForTimeout(SLEEP.medium)
-            if (await this.isGone(dialog)) {
-              this.log.info('点击后弹题对话框已关闭')
-              return true
-            }
-            continue
+        if(shouldStop())return {state:'stopped'}
+        if(!answered)return fail('弹题选项未能确认选中')
+        const top=(await overlays.scan()).find(l=>l.actionable)
+        if(top&&top.kind!=='quiz')return {state:'protected'}
+        this.log.info(`弹题第 ${n+1} 题已选中第 ${index+1} 项（策略: ${this.strategy.name}）`)
+        const next=dialog.locator('.btn-next').first()
+        if(await next.isVisible()&&await next.isEnabled()){
+          let advanced=false
+          for(let attempt=0;attempt<2&&!shouldStop();attempt++){
+            await next.click({timeout:700}).catch(()=>{})
+            advanced=await this.waitFor(async()=>await this.gone(dialog)||(await this.question(dialog)).fingerprint!==state.fingerprint,shouldStop)
+            if(advanced)break
           }
+          if(shouldStop())return {state:'stopped'}
+          if(!advanced)return fail('点击下一题后题目未推进')
+          if(await this.gone(dialog))return {state:'handled'}
+          continue
         }
-        break
+        if(await this.close(dialog,shouldStop))return {state:'handled'}
+        return shouldStop()?{state:'stopped'}:fail('弹题关闭后仍可见')
       }
-
-      if (await this.isGone(dialog)) return true
-      return await this.close(dialog)
-    } catch (error) {
-      this.log.error(`处理弹题时出错: ${String(error)}`)
-      return false
-    }
+      return fail('弹题超过 50 题处理上限')
+    }catch(error){return shouldStop()?{state:'stopped'}:fail(`弹题处理失败：${String(error)}`)}
   }
-
-  /** 对话框是否已经从页面上消失。 */
-  private async isGone(dialog: Locator): Promise<boolean> {
-    try {
-      if ((await dialog.count()) === 0) return true
-      return !(await dialog.isVisible())
-    } catch {
-      return true
-    }
-  }
-
-  /**
-   * 回答当前这道题。
-   *
-   * 关键点：选项下标只取一次。若第一次点击没能让选项进入 active 状态，
-   * 后续重试**重复点击同一项**，而不是重新随机 —— 否则同一道题的答案
-   * 会在重试之间来回跳（v1 的缺陷）。
-   */
-  private async answerCurrent(dialog: Locator): Promise<boolean> {
-    let options = dialog.locator(QUIZ_OPTION_CSS)
-    if ((await options.count().catch(() => 0)) === 0) {
-      options = dialog.locator("xpath=.//li[contains(@class,'topic-item')]")
-    }
-
-    const optionCount = await options.count().catch(() => 0)
-    if (optionCount === 0) {
-      this.log.info('未找到弹题选项')
-      return false
-    }
-
-    const index = this.strategy.selectIndex(optionCount)
-    const choice = options.nth(index)
-    this.log.info(`本题选择第 ${index + 1}/${optionCount} 项（策略: ${this.strategy.name}）`)
-
-    // 点击目标依次退化：选项本体 → 内部 .item-topic → span → div
-    const targets = [
-      choice,
-      choice.locator('.item-topic').first(),
-      choice.locator('span').first(),
-      choice.locator('div').first()
-    ]
-
-    // 只发可信点击：合成点击（element.click()）会被学习页的防脚本守卫抓到，
-    // 见 docs/MIGRATION.md 与 locators.ts::safeClick。
-    const clickChoice = async (): Promise<boolean> => {
-      for (const target of targets) {
-        if (await safeClick(target, 2_000)) return true
+  async close(dialog:Locator,shouldStop:()=>boolean=()=>false):Promise<boolean>{
+    for(let attempt=0;attempt<2&&!shouldStop();attempt++){
+      if(await this.gone(dialog))return true
+      const controls=dialog.locator('.el-dialog__headerbtn,.el-dialog__close,button[aria-label="Close"],button[aria-label="关闭"],.dialog-footer .btn').filter({visible:true})
+      let chosen:Locator|null=null
+      for(let i=0;i<await controls.count();i++){
+        const el=controls.nth(i)
+        const explicit=await el.evaluate(el=>/headerbtn|dialog__close/.test(el.className)||/^(?:Close|关闭)$/i.test(el.getAttribute('aria-label')??'')||(el.textContent??'').trim()==='关闭')
+        if(explicit){chosen=el;break}
       }
-      return false
-    }
-
-    if (!(await clickChoice())) {
-      this.log.warn('无法点击弹题选项')
-      return false
-    }
-
-    // 验证选中；失败时只重复点击**同一个**选项
-    await this.page.waitForTimeout(SLEEP.short)
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      if (await this.hasActiveOption(dialog)) {
-        this.log.info('确认选项已被选中')
-        return true
-      }
-      await clickChoice()
-      await this.page.waitForTimeout(SLEEP.short)
-    }
-
-    this.log.warn('未检测到选项被选中')
-    return false
-  }
-
-  private async hasActiveOption(dialog: Locator): Promise<boolean> {
-    for (const selector of QUIZ_OPTION_ACTIVE_CSS) {
-      const count = await dialog.locator(selector).count().catch(() => 0)
-      if (count > 0) return true
+      if(!chosen)return false
+      await chosen.click({timeout:700}).catch(()=>{})
+      if(await this.waitFor(()=>this.gone(dialog),shouldStop))return true
     }
     return false
   }
-
-  /** 关闭弹题对话框，依次尝试多条路径。 */
-  async close(dialog: Locator): Promise<boolean> {
-    for (const selector of QUIZ_CLOSE_CSS) {
-      const btn = dialog.locator(selector).first()
-      if (await isVisible(btn)) {
-        await btn.click().catch(() => undefined)
-        this.log.info('已关闭弹题对话框')
-        await this.page.waitForTimeout(SLEEP.medium)
-        return true
-      }
-    }
-
-    for (const [xpath, label] of [
-      [QUIZ_FOOTER_BTN_XPATH, "底部按钮"],
-      [QUIZ_CLOSE_BTN_XPATH, "底部'关闭'按钮"]
-    ] as const) {
-      const btn = dialog.locator(`xpath=${xpath}`).first()
-      if (await isVisible(btn)) {
-        await btn.click().catch(() => undefined)
-        this.log.info(`已通过${label}关闭弹题`)
-        await this.page.waitForTimeout(SLEEP.medium)
-        return true
-      }
-    }
-
-    this.log.warn('未能关闭弹题对话框')
-    return false
-  }
-
-  /** 读取题干（仅用于日志，不参与决策） */
-  async readQuestion(dialog: Locator): Promise<string> {
-    return textOf(dialog.locator('p').first())
-  }
+  async readQuestion(dialog:Locator):Promise<string>{return (await this.question(dialog)).fingerprint}
 }

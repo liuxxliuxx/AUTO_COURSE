@@ -15,8 +15,8 @@
  * （ActionChains / element.click），而学习页在 `#container` 上装了防脚本守卫，
  * 收到 `isTrusted === false` 的点击就弹「检测到异常脚本…」并在 3 秒后跳回学堂
  * 首页。v2 早期版本在这里兜底用了 `element.click()`，正是刷课跑几秒就跳首页的
- * 原因（详见 docs/MIGRATION.md）。现在兜底统一走 `safeClick`（`force: true`），
- * 依然不派发合成点击。
+ * 原因（详见 docs/MIGRATION.md）。现在只使用正常 Playwright 点击，
+ * 不强制穿透遮挡，也不派发合成点击。
  *
  * 等待策略：可见性探测与播放态判定都改成**预算内轮询**（`firstVisibleWithin` /
  * `waitForPlaying`），命中即返回。旧实现里"每个候选各等一个超时 + 每级策略后固定
@@ -31,7 +31,7 @@ import {
   VIDEO_ELEMENT_CSS,
   VIDEO_SRC_EXTRACTION_JS
 } from '../constants'
-import { firstVisibleWithin, isVisible, safeClick } from '../locators'
+import { firstVisibleWithin, isVisible } from '../locators'
 import type { Logger } from '../../services/logger'
 
 export interface VideoProgress {
@@ -100,9 +100,10 @@ export class VideoController {
 
   private async tryClick(locator: Locator | null): Promise<boolean> {
     if (!(await isVisible(locator))) return false
-    // 页面常有遮罩层（播放器自己的点击捕获层）；safeClick 会改点同一个坐标，
-    // 但事件仍然可信 —— 合成点击会触发学习页的防脚本守卫。
-    return safeClick(locator as Locator, PLAY_PROBE.click)
+    try {
+      await (locator as Locator).click({ timeout: PLAY_PROBE.click })
+      return true
+    } catch { return false }
   }
 
   /**

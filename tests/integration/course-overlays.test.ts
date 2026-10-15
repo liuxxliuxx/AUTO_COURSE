@@ -366,6 +366,7 @@ describe('proactive progress error detection', () => {
     await page.goto('http://playback.test/course')
     vi.spyOn(page, 'waitForTimeout').mockResolvedValue(undefined)
     vi.spyOn(VideoController.prototype, 'isPlaying').mockResolvedValue(true)
+    vi.spyOn(VideoController.prototype, 'restartFromBeginning').mockResolvedValue(true)
     let reads = 0
     vi.spyOn(VideoController.prototype, 'readState').mockImplementation(async () => {
       reads++

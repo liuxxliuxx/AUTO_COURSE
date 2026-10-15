@@ -114,6 +114,10 @@ export class ClassicCourseRunner implements CourseRunner {
         reason = 'user'
         break
       }
+      if (this.timeLimitReached(settings, ctx.sessionWatchedSeconds())) {
+        reason = 'time-limit'
+        break
+      }
 
       // —— 显式终止条件：本轮已经处理过这一项，说明绕回起点了 ——
       if (processed.has(next.index)) {
@@ -149,6 +153,15 @@ export class ClassicCourseRunner implements CourseRunner {
         processed.add(next.index)
       } else {
         // ---- 常规刷课：播放并监控 ----
+        const position = await video.readState()
+        log.info(`当前视频位置「${next.title}」: ${position.currentSeconds.toFixed(1)}/${position.durationSeconds.toFixed(1)}s`)
+        const atEnd = position.ended || position.durationSeconds > 0 && position.currentSeconds >= position.durationSeconds - 1
+        if (!settings.fromLastProgress || atEnd) {
+          if (!await video.restartFromBeginning()) {
+            const failed = await interactions.failure(`无法将视频重置到开头，当前视频不计入完成：${next.title}`)
+            return {completedCount,watchedSeconds,reason:'error',error:{stage:'executing',code:'course',message:failed.message}}
+          }
+        }
         if (ctx.media) {
           await ctx.media.onVideoBegin(session, next.title)
         }
@@ -167,6 +180,10 @@ export class ClassicCourseRunner implements CourseRunner {
 
         if (monitor.error) {
           return { completedCount, watchedSeconds, reason: 'error', error: { stage: 'executing', code: 'course', message: monitor.error } }
+        }
+        if (monitor.timeLimited) {
+          reason = 'time-limit'
+          break
         }
 
         completedCount += 1
@@ -244,9 +261,9 @@ export class ClassicCourseRunner implements CourseRunner {
 
   private async monitorVideo(
     ctx:RunnerContext,video:VideoController,title:string,navigator:ClassicCourseNavigator,currentLesson:Locator
-  ):Promise<{ended:boolean;stopped:boolean;elapsedSeconds:number;error?:string}>{
+  ):Promise<{ended:boolean;stopped:boolean;elapsedSeconds:number;error?:string;timeLimited?:boolean}>{
     const page=ctx.session.playwrightPage
-    let elapsed=0,lastProgressLog=0,lastAutoplayGuard=0
+    let elapsed=0,monitorElapsed=0,lastProgressLog=0,lastAutoplayGuard=0
     const outcome=(error?:string,stopped=false)=>({ended:false,stopped,elapsedSeconds:elapsed/1000,error})
     const initial=await this.ready(ctx,navigator,currentLesson,title)
     if(initial.stopped||initial.error)return outcome(initial.error,initial.stopped)
@@ -254,8 +271,16 @@ export class ClassicCourseRunner implements CourseRunner {
       await video.play()
       await page.waitForTimeout(SLEEP.long)
     }
-    while(elapsed<TIMEOUT.videoMonitorMax){
+    while(monitorElapsed<TIMEOUT.videoMonitorMax){
       if(ctx.shouldStop())return outcome(undefined,true)
+      if(this.timeLimitReached(ctx.settings,ctx.sessionWatchedSeconds()+elapsed/1000)){
+        await video.pause()
+        const saved=await navigator.waitForLearningReady(ctx.shouldStop)
+        if(saved.state==='stopped')return outcome(undefined,true)
+        if(saved.state==='failed'||saved.state==='recover')return outcome(saved.message)
+        ctx.log.info(`已达到本次 ${ctx.settings.timeLimitMinutes} 分钟时长上限，当前视频未计入完成`)
+        return {...outcome(),timeLimited:true}
+      }
       const ready=await this.ready(ctx,navigator,currentLesson,title)
       if(ready.stopped||ready.error)return outcome(ready.error,ready.stopped)
       if(ready.recovered&&!await video.isPlaying())await video.play()
@@ -271,16 +296,22 @@ export class ClassicCourseRunner implements CourseRunner {
           return {ended:true,stopped:false,elapsedSeconds:elapsed/1000}
         }
       }
-      if(elapsed-lastAutoplayGuard>=INTERVAL.autoplayGuard){
-        lastAutoplayGuard=elapsed
+      if(monitorElapsed-lastAutoplayGuard>=INTERVAL.autoplayGuard){
+        lastAutoplayGuard=monitorElapsed
         if(state.exists&&state.paused&&!state.ended)await video.play()
       }
-      if(elapsed-lastProgressLog>=INTERVAL.progressLog){
-        lastProgressLog=elapsed
+      if(monitorElapsed-lastProgressLog>=INTERVAL.progressLog){
+        lastProgressLog=monitorElapsed
         ctx.log.info(`进度: ${state.currentSeconds.toFixed(0)}/${state.durationSeconds.toFixed(0)}s`)
       }
-      await page.waitForTimeout(INTERVAL.videoMonitor)
-      elapsed+=INTERVAL.videoMonitor
+      const remaining=ctx.settings.timeLimitMinutes>0
+        ? Math.max(0,(ctx.settings.timeLimitMinutes*60-ctx.sessionWatchedSeconds())*1000-elapsed)
+        : INTERVAL.videoMonitor
+      const wait=Math.min(INTERVAL.videoMonitor,remaining)
+      const started=performance.now()
+      await page.waitForTimeout(wait)
+      monitorElapsed+=wait
+      if(state.playing)elapsed+=Math.min(wait,performance.now()-started)
     }
     if(ctx.shouldStop())return outcome(undefined,true)
     const failure=await navigator.interactions.failure(`视频监控超时，当前视频不计入完成：${title}`)

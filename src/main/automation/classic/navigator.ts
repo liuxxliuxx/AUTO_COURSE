@@ -24,7 +24,7 @@ import type { CaptchaService } from '../captcha'
 import type { QuizService } from '../quiz'
 import { ClassicPageInteractions, type InteractionResult } from './page-interactions'
 import type { Logger } from '../../services/logger'
-import { inspectLearningReadiness } from './learning-readiness'
+import { inspectLearningReadiness, type LearningTarget } from './learning-readiness'
 
 export interface VideoEntry {
   title: string
@@ -204,7 +204,7 @@ export class ClassicCourseNavigator {
 
   // ---------------------------------------------------------------- 点击
 
-  async waitForLearningReady(shouldStop:()=>boolean=()=>false, timeout:number=TIMEOUT.extraLong):Promise<InteractionResult>{
+  async waitForLearningReady(shouldStop:()=>boolean=()=>false, timeout:number=TIMEOUT.extraLong, target?:LearningTarget):Promise<InteractionResult>{
     const deadline=Date.now()+timeout
     let pending='课程运行状态尚未加载', announced=false
     while(Date.now()<deadline){
@@ -212,7 +212,7 @@ export class ClassicCourseNavigator {
       const settled=await this.settle(undefined,shouldStop)
       if(settled.state==='failed'||settled.state==='recover'||settled.state==='stopped')return settled
       try{
-        const state=await this.page.evaluate(inspectLearningReadiness)
+        const state=await this.page.evaluate(inspectLearningReadiness,target)
         if(state.ready){
           if(announced)this.log.info('课程播放器与学习记录已就绪')
           return {state:'clear'}
@@ -236,8 +236,14 @@ export class ClassicCourseNavigator {
       const ready=await this.waitForLearningReady(shouldStop)
       if(ready.state==='failed'){this.lastClickError=ready.message;return false}
       if(ready.state==='recover'||ready.state==='stopped'||shouldStop())return false
+      const before=await this.page.evaluate(inspectLearningReadiness,undefined)
       await video.click({timeout:COURSE_CLICK_PROBE_MS})
       await this.page.waitForTimeout(SLEEP.extraLong)
+      const switched=await this.waitForLearningReady(shouldStop,TIMEOUT.extraLong,{
+        title,previousSource:before.title&&before.title!==title?before.source:undefined
+      })
+      if(switched.state==='failed'){this.lastClickError=switched.message;return false}
+      if(switched.state==='recover'||switched.state==='stopped')return false
       return true
     }catch(error){this.log.warn(`点击课程失败「${title}」: ${String(error)}`);return false}
   }

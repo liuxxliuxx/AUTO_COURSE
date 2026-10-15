@@ -1,5 +1,6 @@
 /** Read-only probe: the catalogue renders before prelearningNote creates the study record. */
-export function inspectLearningReadiness(): { ready: boolean; reason: string } {
+export interface LearningTarget { title: string; previousSource?: string }
+export function inspectLearningReadiness(target?: LearningTarget): { ready: boolean; reason: string; source?: string; title?: string } {
   interface CourseVm {
     $data?: Record<string, unknown>
     $parent?: CourseVm
@@ -38,5 +39,9 @@ export function inspectLearningReadiness(): { ready: boolean; reason: string } {
   if (!video || video.readyState < 1 || !Number.isFinite(video.duration) || video.duration <= 0) {
     return { ready: false, reason: '播放器元数据尚未加载' }
   }
-  return { ready: true, reason: '' }
+  const title = (document.querySelector('li.video.current_play .catalogue_title') as HTMLElement | null)?.innerText.trim() ?? ''
+  const source = video.currentSrc || video.src
+  if (target && title !== target.title) return { ready: false, reason: `尚未切换到目标课程「${target.title}」` }
+  if (target?.previousSource && source === target.previousSource) return { ready: false, reason: '播放器仍在使用上一节视频' }
+  return { ready: true, reason: '', source, title }
 }

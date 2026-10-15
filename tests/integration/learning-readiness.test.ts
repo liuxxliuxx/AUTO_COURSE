@@ -37,11 +37,11 @@ afterAll(async () => { await browser?.close() })
 describe('classic course initialization barrier', () => {
   it('waits for both the study record and metadata before the first trusted course click', async () => {
     await page.setContent(fixture())
-    expect(await page.evaluate(inspectLearningReadiness)).toMatchObject({ ready: false, reason: '学习记录尚未初始化' })
+    expect(await page.evaluate(inspectLearningReadiness,undefined)).toMatchObject({ ready: false, reason: '学习记录尚未初始化' })
     expect(await navigator().clickVideo(page.locator('li.video'), '样本视频')).toBe(true)
     expect(await page.locator('body').getAttribute('data-error')).toBeNull()
     expect(await page.locator('body').getAttribute('data-clicked')).toBe('yes')
-    expect(await page.evaluate(inspectLearningReadiness)).toMatchObject({ ready: true })
+    expect(await page.evaluate(inspectLearningReadiness,undefined)).toMatchObject({ ready: true })
   })
   it('also waits after reloading a failed course rather than clicking the freshly rendered catalogue', async () => {
     let loads = 0
@@ -63,7 +63,7 @@ describe('classic course initialization barrier', () => {
       vm.$data.isSaving = true
       setTimeout(() => { vm.$data.isSaving = false }, 450)
     })
-    expect(await page.evaluate(inspectLearningReadiness)).toMatchObject({ ready: false, reason: '上一节进度仍在保存或切换中' })
+    expect(await page.evaluate(inspectLearningReadiness,undefined)).toMatchObject({ ready: false, reason: '上一节进度仍在保存或切换中' })
     expect((await navigator().waitForLearningReady()).state).toBe('clear')
     expect(await page.locator('body').getAttribute('data-clicked')).toBeNull()
   })
@@ -84,6 +84,29 @@ describe('classic course initialization barrier', () => {
   it('requires the course runtime on the real platform even if a video shell exists', async () => {
     await page.route('https://studyvideoh5.zhihuishu.com/**', route => route.fulfill({ contentType: 'text/html', body: '<video></video><li class="video">课程</li>' }))
     await page.goto('https://studyvideoh5.zhihuishu.com/stuStudy')
-    expect(await page.evaluate(inspectLearningReadiness)).toMatchObject({ ready: false, reason: '课程运行状态尚未加载' })
+    expect(await page.evaluate(inspectLearningReadiness,undefined)).toMatchObject({ ready: false, reason: '课程运行状态尚未加载' })
+  })
+  it('does not accept a ready old player merely because the new catalogue title is selected', async () => {
+    await page.setContent(fixture(0))
+    await navigator().waitForLearningReady()
+    await page.evaluate(() => {
+      Object.defineProperty(document.querySelector('video'), 'currentSrc', {get:()=> 'old-video', configurable:true})
+      document.querySelector('.catalogue_title')!.textContent = '下一节'
+    })
+    const result = await navigator().waitForLearningReady(() => false, 300, {title:'下一节',previousSource:'old-video'})
+    expect(result.state).toBe('failed')
+    if(result.state==='failed') expect(result.message).toContain('播放器仍在使用上一节视频')
+  })
+  it('accepts the target only after its actual media source changes', async () => {
+    await page.setContent(fixture(0))
+    await navigator().waitForLearningReady()
+    await page.evaluate(() => {
+      const video = document.querySelector('video')!
+      let source = 'old-video'
+      Object.defineProperty(video, 'currentSrc', {get:()=>source})
+      document.querySelector('.catalogue_title')!.textContent = '下一节'
+      setTimeout(()=>{source='new-video'},450)
+    })
+    expect((await navigator().waitForLearningReady(() => false, 2000, {title:'下一节',previousSource:'old-video'})).state).toBe('clear')
   })
 })

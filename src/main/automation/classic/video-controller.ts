@@ -161,6 +161,31 @@ export class VideoController {
     return this.readFlag('paused')
   }
 
+  async pause(): Promise<void> {
+    await this.video.evaluate(el => (el as HTMLVideoElement).pause())
+  }
+
+  /** Replaying completed content must not inherit the server's position at the last frame. */
+  async restartFromBeginning(): Promise<boolean> {
+    try {
+      await this.pause()
+      await this.page.evaluate(() => {
+        const player = (window as unknown as { ablePlayerX?: (id:string) => { seek(seconds:number):void } }).ablePlayerX?.('container')
+        if (player) player.seek(0)
+        else {
+          const video = document.querySelector('video')
+          if (video) video.currentTime = 0
+        }
+      })
+      await this.page.waitForFunction(() => {
+        const v = document.querySelector('video')
+        return !!v && !v.seeking && v.currentTime < .5 && !v.ended
+      }, undefined, {timeout:3000})
+      this.log.info('已将当前视频重置到开头')
+      return true
+    } catch { return false }
+  }
+
   /** 一次性读回播放状态——监控循环每 2 秒就要读一遍，减少往返次数。 */
   async readState(): Promise<{
     exists: boolean

@@ -168,6 +168,8 @@ describe('completion and recording boundaries',()=>{
       Object.assign(TIMEOUT,{videoMonitorMax:0})
       vi.spyOn(ClassicCourseNavigator.prototype,'clickVideoWithRetry').mockResolvedValue(true)
       vi.spyOn(VideoController.prototype,'isPlaying').mockResolvedValue(true)
+      vi.spyOn(VideoController.prototype,'restartFromBeginning').mockResolvedValue(true)
+      vi.spyOn(VideoController.prototype,'readState').mockResolvedValue({exists:true,playing:true,paused:false,ended:false,currentSeconds:0,durationSeconds:10})
       const ctx=runnerContext(),result=await runner().run(ctx)
       expect(result.reason).toBe('error');expect(result.completedCount).toBe(0)
       expect(ctx.reportVideoCompleted).not.toHaveBeenCalled()
@@ -177,6 +179,7 @@ describe('completion and recording boundaries',()=>{
   it('does not report completion when an error arrives on the last frame during recording',async()=>{
     vi.spyOn(ClassicCourseNavigator.prototype,'clickVideoWithRetry').mockResolvedValue(true)
     vi.spyOn(VideoController.prototype,'isPlaying').mockResolvedValue(true)
+    vi.spyOn(VideoController.prototype,'restartFromBeginning').mockResolvedValue(true)
     vi.spyOn(VideoController.prototype,'readState').mockImplementation(async()=>{
       await page.locator('body').evaluate((body,html)=>body.insertAdjacentHTML('beforeend',html),errorPanel)
       return {exists:true,playing:false,paused:true,ended:true,currentSeconds:10,durationSeconds:10}

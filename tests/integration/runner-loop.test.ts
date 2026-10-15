@@ -163,6 +163,23 @@ async function setCurrentPlay(page: Page, title: string): Promise<void> {
 const run = (harness: Harness): Promise<RunOutcome> =>
   new ClassicCourseRunner(() => stubLogin).run(harness.context)
 
+async function restorePositionOnClick(page: Page, position: number | 'end'): Promise<void> {
+  await page.evaluate(position => {
+    const video = document.querySelector('video')!
+    // The fixture HTTP server has no range support. Offset its real media clock
+    // to model a restored position without relying on unsupported HTTP seeking.
+    const clock = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime')!
+    let offset = 0
+    Object.defineProperty(video, 'currentTime', {
+      get: () => clock.get!.call(video) + offset,
+      set: (value:number) => { offset = value - clock.get!.call(video) }
+    })
+    document.querySelector('#video-list')!.addEventListener('click', () => {
+      video.currentTime = position === 'end' ? video.duration - .1 : position
+    })
+  }, position)
+}
+
 describe('ClassicCourseRunner 主循环', () => {
   it('skip_completed=true：只处理未完成项，跳过已完成与小节标题', async () => {
     const harness = await makeHarness({ skipCompleted: true })
@@ -195,7 +212,7 @@ describe('ClassicCourseRunner 主循环', () => {
     await harness.page.close()
   }, 300_000)
 
-  it('时长上限触发时以 time-limit 结束，且只处理一节', async () => {
+  it('启动时已达时长上限，不再点击或完成下一节', async () => {
     const harness = await makeHarness({ skipCompleted: true, timeLimitMinutes: 1 })
     // 先垫 300 秒已看时长：处理完第一节后累计必然超过 1 分钟上限
     const base = harness.context.sessionWatchedSeconds
@@ -205,10 +222,37 @@ describe('ClassicCourseRunner 主循环', () => {
     const outcome = await run(harness)
 
     expect(outcome.reason).toBe('time-limit')
-    expect(harness.completed).toHaveLength(1)
+    expect(harness.completed).toHaveLength(0)
 
     await harness.page.close()
   }, 300_000)
+
+  it('从头处理已完成视频时重置片尾，时长用尽停在当前节且不记完成', async () => {
+    const harness = await makeHarness({ skipCompleted: false, fromLastProgress: false, timeLimitMinutes: 1 }, page => restorePositionOnClick(page, 'end'))
+    harness.context.sessionWatchedSeconds = () => 57 + harness.watched.reduce((a,b) => a+b,0)
+    const outcome = await run(harness)
+    expect(outcome.reason).toBe('time-limit')
+    expect(harness.completed).toEqual([])
+    expect(outcome.watchedSeconds).toBeGreaterThanOrEqual(2.9)
+    expect(outcome.watchedSeconds).toBeLessThan(3.1)
+    expect(harness.logs.filter(m => m.includes('正在处理:'))).toHaveLength(1)
+    expect(harness.logs).toContain('已将当前视频重置到开头')
+    const state = await harness.page.locator('video').evaluate(el => ({current:(el as HTMLVideoElement).currentTime,paused:(el as HTMLVideoElement).paused}))
+    expect(state.current).toBeLessThan(10)
+    expect(state.paused).toBe(true)
+    await harness.page.close()
+  }, 30_000)
+
+  it('续学保留未完成视频的位置，同样在时长用尽时中断且不更新完成位置', async () => {
+    const harness = await makeHarness({ skipCompleted: true, fromLastProgress: true, timeLimitMinutes: 1 }, page => restorePositionOnClick(page, 7))
+    harness.context.sessionWatchedSeconds = () => 58 + harness.watched.reduce((a,b) => a+b,0)
+    const outcome = await run(harness)
+    expect(outcome.reason).toBe('time-limit')
+    expect(harness.completed).toEqual([])
+    expect(harness.logs).not.toContain('已将当前视频重置到开头')
+    expect(await harness.page.locator('video').evaluate(el => (el as HTMLVideoElement).currentTime),harness.logs.join('\n')).toBeGreaterThan(7)
+    await harness.page.close()
+  }, 30_000)
 
   it('外部停止会结束循环并保留已看时长', async () => {
     const harness = await makeHarness({ skipCompleted: true })

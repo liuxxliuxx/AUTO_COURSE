@@ -24,6 +24,7 @@ import type { CaptchaService } from '../captcha'
 import type { QuizService } from '../quiz'
 import { ClassicPageInteractions, type InteractionResult } from './page-interactions'
 import type { Logger } from '../../services/logger'
+import { inspectLearningReadiness } from './learning-readiness'
 
 export interface VideoEntry {
   title: string
@@ -203,13 +204,38 @@ export class ClassicCourseNavigator {
 
   // ---------------------------------------------------------------- 点击
 
-  async clickVideo(video: Locator, title: string): Promise<boolean> {
+  async waitForLearningReady(shouldStop:()=>boolean=()=>false, timeout:number=TIMEOUT.extraLong):Promise<InteractionResult>{
+    const deadline=Date.now()+timeout
+    let pending='课程运行状态尚未加载', announced=false
+    while(Date.now()<deadline){
+      if(shouldStop())return {state:'stopped'}
+      const settled=await this.settle(undefined,shouldStop)
+      if(settled.state==='failed'||settled.state==='recover'||settled.state==='stopped')return settled
+      try{
+        const state=await this.page.evaluate(inspectLearningReadiness)
+        if(state.ready){
+          if(announced)this.log.info('课程播放器与学习记录已就绪')
+          return {state:'clear'}
+        }
+        pending=state.reason
+      }catch{ /* Navigation can replace the execution context while initialization is pending. */ }
+      if(!announced){this.log.info('等待课程播放器与学习记录初始化');announced=true}
+      await this.page.waitForTimeout(200)
+    }
+    if(shouldStop())return {state:'stopped'}
+    return this.interactions.failure(`课程初始化超时：${pending}，未继续点击课程`)
+  }
+
+  async clickVideo(video: Locator, title: string, shouldStop:()=>boolean=()=>false): Promise<boolean> {
     this.log.info(`点击课程: ${title}`)
     try {
       await video.scrollIntoViewIfNeeded({timeout:TIMEOUT.short})
-      const result=await this.settle(video)
+      const result=await this.settle(video,shouldStop)
       if(result.state==='failed') {this.lastClickError=result.message;return false}
       if(result.state==='recover'||result.state==='stopped')return false
+      const ready=await this.waitForLearningReady(shouldStop)
+      if(ready.state==='failed'){this.lastClickError=ready.message;return false}
+      if(ready.state==='recover'||ready.state==='stopped'||shouldStop())return false
       await video.click({timeout:COURSE_CLICK_PROBE_MS})
       await this.page.waitForTimeout(SLEEP.extraLong)
       return true
@@ -251,12 +277,16 @@ export class ClassicCourseNavigator {
         }catch(error){if(shouldStop())return false;return fail(`恢复课程页面失败「${title}」：${String(error)}`)}
       }
       if(shouldStop())return false
-      if(await this.clickVideo(video,title)){
+      if(await this.clickVideo(video,title,shouldStop)){
         if(shouldStop())return false
         const after=await this.settle(video,shouldStop)
         if(after.state==='failed'){this.lastClickError=after.message;return false}
         if(after.state==='stopped')return false
         if(after.state==='recover')continue
+        const ready=await this.waitForLearningReady(shouldStop)
+        if(ready.state==='failed'){this.lastClickError=ready.message;return false}
+        if(ready.state==='stopped')return false
+        if(ready.state==='recover')continue
         return true
       }
       if(this.lastClickError)return false

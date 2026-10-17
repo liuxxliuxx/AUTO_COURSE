@@ -5,6 +5,10 @@ import { inspectLearningReadiness } from '../../src/main/automation/classic/lear
 import { QuizService } from '../../src/main/automation/quiz'
 import type { CaptchaService } from '../../src/main/automation/captcha'
 import type { Logger } from '../../src/main/services/logger'
+import { ClassicCourseRunner } from '../../src/main/automation/classic/classic-course-runner'
+import { BrowserSession } from '../../src/main/automation/browser-session'
+import { DEFAULT_SETTINGS } from '../../src/main/services/settings-service'
+import { EventBus } from '../../src/main/services/event-bus'
 
 let browser: Browser, page: Page
 const log: Logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), exception: vi.fn() }
@@ -35,6 +39,19 @@ afterEach(async () => { vi.restoreAllMocks(); await page.close() })
 afterAll(async () => { await browser?.close() })
 
 describe('classic course initialization barrier', () => {
+  it('chooses the first unfinished lesson after asynchronous account completion marks load',async()=>{
+    await page.setContent(fixture(650).replace('<div id="runtime">','<li class="video"><span class="catalogue_title">未完成视频</span></li><div id="runtime">')+`<script>setTimeout(()=>document.querySelector('li.video').insertAdjacentHTML('beforeend','<i class="time_icofinish"></i>'),450)</script>`)
+    const click=vi.spyOn(ClassicCourseNavigator.prototype,'clickVideoWithRetry').mockResolvedValue(false)
+    const runner=new ClassicCourseRunner(()=>({method:'zhihuishu',login:async()=>({ok:true,alreadyLoggedIn:true,message:'fixture'})}))
+    await runner.run({settings:{...DEFAULT_SETTINGS,videoUrl:'',skipCompleted:true,fromLastProgress:false},credentials:{username:'',password:''},session:new BrowserSession(page,()=>{}),bus:new EventBus(),log,media:null,lastVideoTitle:'',shouldStop:()=>false,sessionWatchedSeconds:()=>0,reportVideoWatched:vi.fn(),reportVideoCompleted:vi.fn(),reportCurrentTitle:vi.fn(),requestCaptcha:async()=>true})
+    expect(click).toHaveBeenCalledOnce()
+    expect(click.mock.calls[0][1]).toBe('未完成视频')
+  })
+  it('clicks the visible title when a wide catalogue row is clipped by its scroll container',async()=>{
+    await page.setContent(`<div style="width:200px;height:90px;overflow:hidden"><li class="video" style="width:1000px;height:40px" onclick="document.body.dataset.clicked=String(event.isTrusted)"><span class="catalogue_title">裁剪目录</span></li></div>`)
+    expect(await navigator().clickVideo(page.locator('li.video'),'裁剪目录')).toBe(true)
+    expect(await page.locator('body').getAttribute('data-clicked')).toBe('true')
+  })
   it('waits for both the study record and metadata before the first trusted course click', async () => {
     await page.setContent(fixture())
     expect(await page.evaluate(inspectLearningReadiness,undefined)).toMatchObject({ ready: false, reason: '学习记录尚未初始化' })

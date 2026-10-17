@@ -71,6 +71,10 @@ export class ClassicCourseNavigator {
   }
 
   async settle(target?:Locator,shouldStop:()=>boolean=()=>false):Promise<InteractionResult>{
+    if(target){
+      const title=target.locator(VIDEO_TITLE_CSS).first()
+      if(await title.count())target=title
+    }
     for(let round=0;round<10;round++){
       if(shouldStop())return {state:'stopped'}
       const result=await this.interactions.checkpoint(target)
@@ -97,7 +101,7 @@ export class ClassicCourseNavigator {
             index,
             title:
               (node.querySelector(titleSel) as HTMLElement | null)?.innerText.trim() ?? '',
-            finished: !!node.querySelector(finishedMark),
+            finished: node.matches(finishedMark) || !!node.querySelector(finishedMark),
             current: node.matches(currentPlay),
             // 小章节标题的 class 常常就在 li 自身上，而不是子元素。
             // v1 用的 find_elements(By.CSS_SELECTOR, ...) 只搜后代，
@@ -229,7 +233,9 @@ export class ClassicCourseNavigator {
   async clickVideo(video: Locator, title: string, shouldStop:()=>boolean=()=>false): Promise<boolean> {
     this.log.info(`点击课程: ${title}`)
     try {
-      await video.scrollIntoViewIfNeeded({timeout:TIMEOUT.short})
+      const titleControl = video.locator(VIDEO_TITLE_CSS).first()
+      const clickTarget = await titleControl.count() ? titleControl : video
+      await clickTarget.scrollIntoViewIfNeeded({timeout:TIMEOUT.short})
       const result=await this.settle(video,shouldStop)
       if(result.state==='failed') {this.lastClickError=result.message;return false}
       if(result.state==='recover'||result.state==='stopped')return false
@@ -237,7 +243,10 @@ export class ClassicCourseNavigator {
       if(ready.state==='failed'){this.lastClickError=ready.message;return false}
       if(ready.state==='recover'||ready.state==='stopped'||shouldStop())return false
       const before=await this.page.evaluate(inspectLearningReadiness,undefined)
-      await video.click({timeout:COURSE_CLICK_PROBE_MS})
+      // Target the visible title rather than the centre of a possibly clipped full row.
+      await clickTarget.scrollIntoViewIfNeeded({timeout:TIMEOUT.short})
+      if (shouldStop()) return false
+      await clickTarget.click({timeout:COURSE_CLICK_PROBE_MS})
       await this.page.waitForTimeout(SLEEP.extraLong)
       const switched=await this.waitForLearningReady(shouldStop,TIMEOUT.extraLong,{
         title,previousSource:before.title&&before.title!==title?before.source:undefined
@@ -274,6 +283,10 @@ export class ClassicCourseNavigator {
           await this.page.goto(courseUrl,{waitUntil:'domcontentloaded',timeout:TIMEOUT.extraLong})
           await this.page.locator(VIDEO_LIST_ITEM_CSS).first().waitFor({state:'visible',timeout:TIMEOUT.extraLong})
           if(shouldStop())return false
+          const loaded=await this.waitForLearningReady(shouldStop)
+          if(loaded.state==='stopped')return false
+          if(loaded.state==='failed'){this.lastClickError=loaded.message;return false}
+          if(loaded.state==='recover')continue
           const entries=await this.listVideos()
           if(entries.length!==originalEntries.length||entries.some((entry,i)=>entry.title!==originalEntries[i].title))return fail(`课程目录在恢复后发生变化，停止以避免重复或跳过课程「${title}」`)
           const matches=entries.filter(entry=>entry.title===title)

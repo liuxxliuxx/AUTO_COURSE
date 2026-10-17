@@ -60,6 +60,7 @@ export class ClassicCourseRunner implements CourseRunner {
     const video = new VideoController(page, log)
     const interactions = new ClassicPageInteractions(page, log, quiz, ctx.shouldStop, ctx.diagnostics, () => ctx.media?.hasActiveRecording() ?? false)
     const navigator = new ClassicCourseNavigator(page, log, captcha, quiz, settings.skipCompleted, interactions)
+    log.info(`本次步骤配置：跳过已完成=${settings.skipCompleted ? '开启' : '关闭'}，起始位置=${settings.fromLastProgress ? '上次完成之后' : '第一个待处理视频'}`)
 
     // ------------------------------------------------------------ 1. 登录
     ctx.reportPhase?.('login')
@@ -83,6 +84,14 @@ export class ClassicCourseRunner implements CourseRunner {
     const initial = settings.videoUrl ? await navigator.navigate(settings.videoUrl) : await navigator.settle(undefined, ctx.shouldStop)
     if (initial.state === 'stopped' || ctx.shouldStop()) return { completedCount, watchedSeconds, reason: 'user' }
     if (initial.state === 'failed') return { completedCount, watchedSeconds, reason: 'error', error: { stage: 'loading-course', code: 'course', message: initial.message } }
+
+    // The catalogue shell appears before the account's completion marks are hydrated.
+    // Choose the starting lesson only after the initial study record has loaded.
+    if (initial.state !== 'recover') {
+      const ready = await navigator.waitForLearningReady(ctx.shouldStop)
+      if (ready.state === 'stopped' || ctx.shouldStop()) return { completedCount, watchedSeconds, reason: 'user' }
+      if (ready.state === 'failed') return { completedCount, watchedSeconds, reason: 'error', error: { stage: 'loading-course', code: 'course', message: ready.message } }
+    }
 
     // ------------------------------------------------------ 3. 定位起点
     let next = settings.fromLastProgress && settings.courseNote

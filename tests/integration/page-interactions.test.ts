@@ -124,6 +124,16 @@ describe('unified course interaction checkpoints',()=>{
 })
 
 describe('diagnostic evidence',()=>{
+  it('keeps sanitized DOM and state when screenshot rendering times out',async()=>{
+    vi.spyOn(page,'screenshot').mockRejectedValue(new Error('screenshot timeout'))
+    const diagnostics=new CourseDiagnostics(dir,{runId:'run',courseId:'course'},log)
+    const path=await diagnostics.capture(page,{reason:'弹题选项未能确认选中'})
+    expect(path).toMatch(/^diagnostics\//)
+    const folder=join(dir,(await readdir(dir))[0])
+    expect(await readFile(join(folder,'dom.html'),'utf8')).toContain('样本视频')
+    expect(JSON.parse(await readFile(join(folder,'state.json'),'utf8'))).toMatchObject({reason:'弹题选项未能确认选中',screenshotError:'Error: screenshot timeout'})
+    await diagnostics.finish()
+  })
   it('redacts forms, embedded state, secrets, query values and the excluded subtree',async()=>{
     await page.route('http://evidence.test/**',route=>route.fulfill({contentType:'text/html',body:`${catalogue}<input type="password" value="private-password"><textarea>private-draft</textarea><script type="application/json">{"token":"private-token"}</script><div data-token="private-token" onclick="alert('secret')">private-password</div><div class="video-topic">excluded-text</div><a href="https://example.test/?token=private-token">link</a>`}))
     await page.goto('http://evidence.test/course?token=private-token')
@@ -195,6 +205,18 @@ describe('completion and recording boundaries',()=>{
 
 const quizPanel=(optionAction:string,nextAction:string)=>`<div role="dialog" aria-label="弹题测验" class="el-dialog" style="position:fixed;inset:100px;background:white"><p id="question">【单选题】样本问题</p><div class="topic-item" onclick="${optionAction}">A. 选项</div><button class="btn-next" onclick="${nextAction}">下一题</button><div class="dialog-footer"><div class="btn" onclick="document.body.dataset.unknown='clicked'">确认提交</div><div class="btn" onclick="this.closest('.el-dialog').remove()">关闭</div></div></div>`
 describe('verified quiz transitions',()=>{
+  it('clicks the real text control when blank option-row space has no click handler',async()=>{
+    await page.setContent(quizPanel('','').replace('<div class="topic-item" onclick="">A. 选项</div>',`<div class="topic-item" style="width:500px;height:80px"><span class="item-topic" onclick="this.classList.add('active');document.body.dataset.trusted=String(event.isTrusted)">A. 选项</span></div>`).replace('<button class="btn-next" onclick="">下一题</button>',''))
+    const quiz=new QuizService(page,log,new FixedAnswerStrategy(0))
+    expect((await quiz.handle((await quiz.findDialog())!)).state).toBe('handled')
+    expect(await page.locator('body').getAttribute('data-trusted')).toBe('true')
+  })
+  it('allows delayed selection confirmation without toggling the selected option again',async()=>{
+    await page.setContent(quizPanel("document.body.dataset.clicks=String(+(document.body.dataset.clicks||0)+1);setTimeout(()=>this.classList.add('active'),1400)",'').replace('<button class="btn-next" onclick="">下一题</button>',''))
+    const quiz=new QuizService(page,log,new FixedAnswerStrategy(0))
+    expect((await quiz.handle((await quiz.findDialog())!)).state).toBe('handled')
+    expect(await page.locator('body').getAttribute('data-clicks')).toBe('1')
+  })
   it('keeps one strategy selection when answering fails and does not hide the failure by closing',async()=>{
     await page.setContent(quizPanel('',''))
     const selectIndex=vi.fn(()=>0),quiz=new QuizService(page,log,{name:'counted',selectIndex})

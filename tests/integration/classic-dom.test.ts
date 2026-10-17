@@ -444,6 +444,13 @@ describe('ClassicCourseNavigator', () => {
     const start = await nav.firstPlayable()
     expect(start?.title).toBe('1.2 艺术的起源')
   })
+  it('完成标记直接在视频项上时也跳过该项', async () => {
+    await page.locator('li.video').first().evaluate(el=>{
+      el.querySelector('.time_icofinish')?.remove()
+      el.classList.add('time_icofinish')
+    })
+    expect((await makeNavigator(true).firstPlayable())?.title).toBe('1.2 艺术的起源')
+  })
 
   it('firstPlayable 在 skipCompleted=false 时从列表第一项开始', async () => {
     await setCurrentPlay('1.2 艺术的起源')

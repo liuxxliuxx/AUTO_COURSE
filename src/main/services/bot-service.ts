@@ -235,11 +235,14 @@ export class BotService {
 
   private async runLoop(mode: TaskMode, snapshot: RunSnapshot, credentials: Credentials): Promise<void> {
     let outcome: RunOutcome = { completedCount: 0, watchedSeconds: 0, reason: 'user' }
+    let session: BrowserSession | null = null
 
     try {
+      const context=runLogContext.getStore()
+      if(this.diagnosticsDirectory)this.diagnostics=new CourseDiagnostics(this.diagnosticsDirectory,{runId:context?.runId??snapshot.id,stepId:context?.stepId,accountId:snapshot.accountId,courseId:snapshot.course.id},logger)
       const settings = snapshot.settings
 
-      const session = await this.browser.openSession()
+      session = await this.browser.openSession()
       if (this.stopRequested) return
 
       // 仅转录：不播放视频，直接下载音轨。与 v1 bridge.py:274 的推导一致。
@@ -266,6 +269,18 @@ export class BotService {
       outcome = { ...outcome, reason: 'error' }
       this.setStatus('idle', '⚠ 运行出错，请查看日志', 'danger', 'error')
     } finally {
+      // Every terminal execution failure is covered, including login failure,
+      // media initialization and exceptions outside the classic popup coordinator.
+      // Capture while the step still owns the browser, before cleanup closes it.
+      if(outcome.reason==='error'&&!this.stopRequested&&this.diagnostics){
+        const reason=this.error?.message??'任务执行失败'
+        if(!this.diagnostics.hasEvidenceIn(reason)){
+          try{
+            const path=await this.diagnostics.capture(session?.playwrightPage??null,{reason,phase:this.error?.stage??this.phase})
+            if(path&&this.error)this.error={...this.error,message:`${reason}（现场：${path}）`}
+          }catch(error){logger.warn(`任务失败兜底诊断异常：${redactSecrets(String(error))}`)}
+        }
+      }
       await this.diagnostics?.finish()
       this.diagnostics = undefined
       this.flushPending()
@@ -318,8 +333,6 @@ export class BotService {
     lastVideoTitle: string,
     media: MediaPort | null
   ): RunnerContext {
-    const context=runLogContext.getStore()
-    if(this.diagnosticsDirectory&&this.snapshot)this.diagnostics=new CourseDiagnostics(this.diagnosticsDirectory,{runId:context?.runId??this.snapshot.id,stepId:context?.stepId,accountId:this.snapshot.accountId,courseId:this.snapshot.course.id},logger)
     return {
       settings,
       credentials,

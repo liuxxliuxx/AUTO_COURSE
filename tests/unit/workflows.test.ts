@@ -45,6 +45,16 @@ function harness(work: (ctx: RunnerContext) => Promise<RunOutcome> = async () =>
   return { db, accounts, accountFor, settings, courses, flows, repo, manager, add, input, done, cleanup, contexts, opened }
 }
 describe('workflow persistence and lifecycle', () => {
+  it('uses each saved step skip-completed option instead of the global or course default', async () => {
+    const h=harness(),a=h.add('A'),input=h.input([a,a])
+    input.steps[0].options.skipCompleted=false
+    input.steps[1].options.skipCompleted=true
+    const flow=h.flows.create(input)
+    expect(h.courses.get(a)?.options.skipCompleted).toBe(true)
+    expect(h.manager.start(flow.id).ok).toBe(true)
+    await h.done()
+    expect(h.contexts.map(ctx=>ctx.settings.skipCompleted)).toEqual([false,true])
+  })
   it('disabled schedules persist and never fire, including overdue one-time schedules', () => {
     const h = harness(), a = h.add('A')
     const now = Date.now()

@@ -144,7 +144,7 @@ export const COURSE_INFO_PROTECTED_CSS = [
   'iframe', '[aria-label*="弹题"]', '.topic-item', '.topic-option-item',
   'input', 'textarea', 'select'
 ]
-export const COURSE_CLICK_PROBE_MS = 800
+export const COURSE_CLICK_PROBE_MS = 3_000
 
 // ============================================================================
 // 课程视频列表

@@ -85,15 +85,23 @@ export class QuizService {
         if(index===undefined){index=this.strategy.selectIndex(state.options.length);this.choices.set(key,index)}
         if(!Number.isInteger(index)||index<0||index>=state.options.length)return fail('答题策略返回了无效选项')
         const choice=dialog.locator('.topic-item').nth(index)
+        const content=choice.locator('.item-topic').first()
+        // The real site's option text may own the click handler; the row centre
+        // can lie in blank space or outside the inner scrollbar's visible area.
+        const control=await content.count()&&await content.isVisible()?content:choice
         const selected=async()=>choice.evaluate(el=>el.matches('.active,[aria-checked="true"]')||!!el.querySelector('.active,input:checked,[aria-checked="true"]'))
         let answered=await selected()
+        let clickError=''
         for(let attempt=0;!answered&&attempt<2&&!shouldStop();attempt++){
           // Regular Playwright input only: no force and no synthetic click.
-          await choice.click({timeout:700}).catch(()=>{})
-          answered=await this.waitFor(selected,shouldStop)
+          try { await control.click({timeout:3000}) } catch(error) { clickError=String(error) }
+          answered=await this.waitFor(async()=>await this.gone(dialog)||await selected(),shouldStop,2000)
+          if(await this.gone(dialog))return {state:'handled'}
+          const upper=(await overlays.scan()).find(l=>l.actionable)
+          if(upper&&upper.kind!=='quiz')return {state:'protected'}
         }
         if(shouldStop())return {state:'stopped'}
-        if(!answered)return fail('弹题选项未能确认选中')
+        if(!answered)return fail('弹题选项未能确认选中'+(clickError?`：${clickError}`:''))
         const top=(await overlays.scan()).find(l=>l.actionable)
         if(top&&top.kind!=='quiz')return {state:'protected'}
         this.log.info(`弹题第 ${n+1} 题已选中第 ${index+1} 项（策略: ${this.strategy.name}）`)

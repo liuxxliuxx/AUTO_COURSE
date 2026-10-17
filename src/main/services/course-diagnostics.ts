@@ -5,7 +5,7 @@ import type { Page } from 'playwright-core'
 import type { Logger } from './logger'
 import { redactSecrets } from './logger'
 
-export interface DiagnosticDetails { reason: string; phase?: string; layer?: { kind: string; description: string }; attempts?: number }
+export interface DiagnosticDetails { reason: string; phase?: string; layer?: { kind: string; description: string; closeAttempts?: Array<{attempt:number;clicked:boolean;hidden:boolean;error?:string}> }; attempts?: number }
 export interface CourseDiagnosticPort {
   capture(page: Page, details: DiagnosticDetails): Promise<string|null>
   finish(): Promise<void>
@@ -29,7 +29,7 @@ export class CourseDiagnostics implements CourseDiagnosticPort {
     const folder=join(this.directory,`${this.prefix}-${randomUUID()}`)
     try{await mkdir(folder,{recursive:true,mode:0o700})}
     catch(error){this.log.warn(`无法创建异常现场目录 ${folder}：${redactSecrets(String(error))}`);return null}
-    const state={time:new Date().toISOString(),...this.context,...details,url:null as string|null,video:null as unknown,
+    const state={time:new Date().toISOString(),...this.context,...details,url:null as string|null,video:null as unknown,renderer:undefined as unknown,
       captureStatus:'capturing',artifacts:{dom:'pending',screenshot:'pending'},domError:undefined as string|undefined,screenshotError:undefined as string|undefined}
     let saved=false
     const saveState=async():Promise<void>=>{
@@ -55,7 +55,15 @@ export class CourseDiagnostics implements CourseDiagnosticPort {
         }
         const video=document.querySelector('video')
         const cleanUrl=new URL(location.href);cleanUrl.search='';cleanUrl.hash='';cleanUrl.username='';cleanUrl.password=''
-        return {html:'<!doctype html>\n'+copy.outerHTML,url:cleanUrl.toString(),video:video?{current:video.currentTime,duration:Number.isFinite(video.duration)?video.duration:null,paused:video.paused,ended:video.ended}:null}
+        const renderer={visibility:document.visibilityState,focused:document.hasFocus(),viewport:{width:innerWidth,height:innerHeight,dpr:devicePixelRatio},fonts:document.fonts.status,
+          closeControls:Array.from(document.querySelectorAll('[data-ac-layer-close]')).slice(0,20).map(el=>{
+            const r=el.getBoundingClientRect(),style=getComputedStyle(el)
+            const x=r.left+r.width/2,y=r.top+r.height/2,hit=document.elementFromPoint(x,y)
+            const label=(node:Element|null)=>node?{tag:node.tagName.toLowerCase(),className:node.getAttribute('class')??''}:null
+            return {element:label(el),rect:{x:r.x,y:r.y,width:r.width,height:r.height},display:style.display,visibility:style.visibility,opacity:style.opacity,pointerEvents:style.pointerEvents,
+              inViewport:r.width>0&&r.height>0&&x>=0&&y>=0&&x<innerWidth&&y<innerHeight,hit:label(hit),receivesPointer:!!hit&&(hit===el||el.contains(hit))}
+          })}
+        return {html:'<!doctype html>\n'+copy.outerHTML,url:cleanUrl.toString(),renderer,video:video?{current:video.currentTime,duration:Number.isFinite(video.duration)?video.duration:null,paused:video.paused,ended:video.ended}:null}
         },undefined,{timeout:Math.min(3000,domTimeout)})
       },domTimeout),
       bounded(async()=>{
@@ -68,7 +76,7 @@ export class CourseDiagnostics implements CourseDiagnosticPort {
     const [dom,screenshot]=results
     try{
       if(dom.status==='rejected')throw dom.reason
-      state.url=dom.value.url;state.video=dom.value.video
+      state.url=dom.value.url;state.video=dom.value.video;state.renderer=dom.value.renderer
       await writeFile(join(folder,'dom.html'),redactSecrets(dom.value.html),{mode:0o600})
       state.artifacts.dom='saved';saved=true
     }catch(error){state.artifacts.dom='failed';state.domError=redactSecrets(String(error));this.log.warn(`异常 DOM 采集失败，保留已有文件：${state.domError}`)}

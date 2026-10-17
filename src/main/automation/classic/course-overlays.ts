@@ -10,6 +10,7 @@ export interface CourseLayer {
   actionable: boolean
   blocking: boolean
   exiting?: boolean
+  closeAttempts?: Array<{ attempt: number; clicked: boolean; hidden: boolean; error?: string }>
 }
 
 /** Browser-side inspection. All control discovery is scoped to one semantic panel. */
@@ -149,11 +150,22 @@ export class CourseOverlays {
   }
   async close(layer: CourseLayer, shouldStop: ()=>boolean = ()=>false): Promise<boolean> {
     if (!layer.closeId) return false
+    layer.closeAttempts=[]
     for(let attempt=0;attempt<2&&!shouldStop();attempt++) {
       if (!await this.root(layer).isVisible()) return true
-      try { await this.page.locator(`[data-ac-layer-close="${layer.closeId}"]`).click({timeout:700}) } catch { /* verify, then retry */ }
-      await this.root(layer).waitFor({state:'hidden',timeout:1000}).catch(()=>{})
-      if (!await this.root(layer).isVisible()) { this.log.info(`已关闭课程浮层（${layer.kind}）`);return true }
+      const record:{attempt:number;clicked:boolean;hidden:boolean;error?:string}={attempt:attempt+1,clicked:false,hidden:false}
+      layer.closeAttempts.push(record)
+      try {
+        await this.page.locator(`[data-ac-layer-close="${layer.closeId}"]`).click({timeout:3000})
+        record.clicked=true
+      } catch(error) {
+        record.error=String(error)
+        this.log.warn(`课程浮层关闭点击失败（${layer.kind}，${attempt+1}/2）：${record.error}`)
+      }
+      await this.root(layer).waitFor({state:'hidden',timeout:1500}).catch(()=>{})
+      record.hidden=!await this.root(layer).isVisible()
+      if(record.hidden){this.log.info(`已关闭课程浮层（${layer.kind}）`);return true}
+      if(record.clicked)this.log.warn(`课程浮层关闭点击已完成，但浮层仍可见（${layer.kind}，${attempt+1}/2）`)
     }
     return false
   }

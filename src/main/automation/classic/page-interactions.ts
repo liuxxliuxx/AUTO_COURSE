@@ -19,7 +19,7 @@ export class ClassicPageInteractions {
   }
   async failure(reason:string,layer?:CourseLayer,attempts?:number):Promise<{state:'failed';message:string}>{
     if(this.shouldStop())return {state:'failed',message:'运行已停止'}
-    const path=await this.diagnostics?.capture(this.page,{reason,layer:layer?{kind:layer.kind,description:layer.description}:undefined,attempts})
+    const path=await this.diagnostics?.capture(this.page,{reason,layer:layer?{kind:layer.kind,description:layer.description,closeAttempts:layer.closeAttempts}:undefined,attempts})
     const message=reason+(path?`（现场：${path}）`:'')
     this.log.error(message)
     return {state:'failed',message}

@@ -29,6 +29,27 @@ afterEach(async()=>{vi.restoreAllMocks();await page.close();await rm(dir,{recurs
 afterAll(async()=>{await browser?.close()})
 
 describe('unified course interaction checkpoints',()=>{
+  it('closes the report-shaped preschool header icon after a slow layout settles',async()=>{
+    await page.setContent(`<style>@keyframes moving{from{transform:translateX(0)}to{transform:translateX(15px)}}.dialog-read{position:fixed;left:100px;top:100px;width:500px;height:300px;background:white;animation:moving .3s infinite alternate}.iconguanbi{position:absolute;right:10px;top:10px;width:24px;height:24px;cursor:pointer}</style><div class="dialog"><div class="dialog-read"><div class="el-dialog__header"><h4>学前必读</h4><i class="iconfont iconguanbi" onclick="document.body.dataset.trusted=String(event.isTrusted);this.closest('.dialog').remove()"></i></div></div></div><script>setTimeout(()=>document.querySelector('.dialog-read').style.animation='none',2600)</script>`)
+    const overlays=new CourseOverlays(page,log),layer=(await overlays.scan()).find(l=>l.kind==='preschool')!
+    expect(layer.closeId).not.toBeNull()
+    expect(await overlays.close(layer)).toBe(true)
+    expect(layer.closeAttempts?.length).toBeLessThanOrEqual(2)
+    expect(layer.closeAttempts?.at(-1)).toMatchObject({clicked:true,hidden:true})
+    for(const attempt of layer.closeAttempts??[])if(!attempt.clicked)expect(attempt.error).toContain('Timeout')
+    expect(await page.locator('body').getAttribute('data-trusted')).toBe('true')
+  })
+  it('preserves the actual click exception when a preschool close icon stays covered',async()=>{
+    await page.setContent(`<div class="dialog-read" style="position:fixed;left:100px;top:100px;width:400px;height:300px;background:white"><h4>学前必读</h4><i class="iconguanbi" style="position:absolute;left:10px;top:10px;width:25px;height:25px"></i></div><div style="position:fixed;left:110px;top:110px;width:25px;height:25px;z-index:999;background:red"></div>`)
+    const diagnostics=new CourseDiagnostics(dir,{runId:'run',courseId:'course'},log)
+    expect((await checkpoint(diagnostics).checkpoint()).state).toBe('failed')
+    const state=JSON.parse(await readFile(join(dir,(await readdir(dir))[0],'state.json'),'utf8'))
+    expect(state.layer.closeAttempts).toHaveLength(2)
+    for(const attempt of state.layer.closeAttempts){expect(attempt.clicked).toBe(false);expect(attempt.error).toContain('intercepts pointer events')}
+    expect(state.renderer.closeControls[0]).toMatchObject({receivesPointer:false,inViewport:true,element:{tag:'i',className:'iconguanbi'}})
+    expect(await page.locator('.dialog-read').count()).toBe(1)
+    await diagnostics.finish()
+  })
   it('temporarily closes course reminders without changing the permanent setting',async()=>{
     await page.locator('body').evaluate(body=>body.insertAdjacentHTML('beforeend',`<div class="el-dialog__wrapper dialog-warn"><div role="dialog" style="position:fixed;inset:100px;z-index:100;background:white">课程提醒<div class="rlready-bound-btn" onclick="document.body.dataset.permanent='true'">已绑定，不再提示</div><div class="talk-later-btn" onclick="document.body.dataset.trusted=event.isTrusted;this.parentElement.parentElement.remove()">下次再说</div></div></div>`))
     expect((await checkpoint().checkpoint(page.locator('li.video'))).state).toBe('handled')
@@ -88,6 +109,9 @@ describe('unified course interaction checkpoints',()=>{
     expect(result.state).toBe('failed')
     expect(await page.getByRole('dialog').count()).toBe(1)
     expect((await readdir(dir)).length).toBe(1)
+    const state=JSON.parse(await readFile(join(dir,(await readdir(dir))[0],'state.json'),'utf8'))
+    expect(state.layer.closeAttempts).toEqual([{attempt:1,clicked:true,hidden:false},{attempt:2,clicked:true,hidden:false}])
+    expect(state.renderer.closeControls[0].receivesPointer).toBe(true)
     await diagnostics.finish()
   })
   it('preserves challenges and does not reload or click through their mask',async()=>{

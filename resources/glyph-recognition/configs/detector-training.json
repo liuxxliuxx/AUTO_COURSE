@@ -1,0 +1,48 @@
+{
+  "version": "glyph-detector-v1",
+  "base_weights": "/Users/wangyafei/Projects/captcha_solver/.dist/weights/yolo11n.pt",
+  "base_weights_sha256": "0ebbc80d4a7680d14987a577cd21342b65ecfd94632bd9a8da63ae6417644ee1",
+  "dataset": "/Users/wangyafei/Projects/captcha_solver/runs/glyph-pipeline-20261016/detector-dataset",
+  "train_args": {
+    "epochs": 30,
+    "imgsz": 480,
+    "batch": 8,
+    "device": "mps",
+    "workers": 0,
+    "seed": 42,
+    "deterministic": true,
+    "amp": false,
+    "optimizer": "AdamW",
+    "lr0": 0.001,
+    "weight_decay": 0.0005,
+    "patience": 8,
+    "fliplr": 0.0,
+    "flipud": 0.0,
+    "degrees": 0.0,
+    "shear": 0.0,
+    "perspective": 0.0,
+    "translate": 0.02,
+    "scale": 0.1,
+    "mosaic": 0.0,
+    "mixup": 0.0,
+    "copy_paste": 0.0,
+    "hsv_h": 0.0,
+    "hsv_s": 0.0,
+    "hsv_v": 0.0
+  },
+  "export": {
+    "format": "onnx",
+    "imgsz": 480,
+    "batch": 1,
+    "dynamic": false,
+    "half": false,
+    "opset": 17,
+    "nms": false,
+    "simplify": false
+  },
+  "decode": {
+    "confidence": 0.25,
+    "iou": 0.7,
+    "max_detections": 300
+  }
+}

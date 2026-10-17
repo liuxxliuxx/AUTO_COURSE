@@ -13,11 +13,14 @@ directories:
 files:
   - out/**/*
   - package.json
+  - resources/glyph-recognition/js/src/**/*.mjs
   - '!**/*.map'
   - '!**/{.eslintrc,.editorconfig,.npmrc}'
 
 # 打包后仍然需要以真实文件形式存在的东西
 extraResources:
+  - from: resources/glyph-worker.cjs
+    to: glyph-worker.cjs
   - from: LICENSE
     to: LICENSE
   - from: THIRD_PARTY_NOTICES.txt
@@ -26,12 +29,20 @@ extraResources:
     to: stt
     filter:
       - '*.cjs'
+  - from: resources/glyph-recognition
+    to: glyph-recognition
+    filter:
+      - 'models/**/*'
+      - 'configs/**/*'
+      - 'IMPORT-MANIFEST.json'
+      - 'THIRD_PARTY_NOTICES.md'
 
 # 原生模块必须解开 asar 才能被 dlopen
 asarUnpack:
   - '**/node_modules/better-sqlite3/**'
   - '**/*.node'
   - '**/node_modules/sherpa-onnx/**'
+  - '**/node_modules/onnxruntime-node/**'
 
 # 不做代码签名（本仓库没有发布证书）
 mac:

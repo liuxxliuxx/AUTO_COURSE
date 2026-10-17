@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "语义查询",
+  "description": "规则解析器输出的固定结构；大小写与数字直接体现在 identity 里。",
+  "type": "object",
+  "required": ["target", "reference", "match_attributes"],
+  "additionalProperties": true,
+  "properties": {
+    "instruction": { "type": "string", "description": "题目原文，便于追溯" },
+    "target": { "$ref": "#/$defs/slot" },
+    "reference": {
+      "oneOf": [{ "$ref": "#/$defs/slot" }, { "type": "null" }],
+      "description": "参考对象；单条件题式为 null"
+    },
+    "match_attributes": {
+      "type": "array",
+      "items": { "enum": ["color", "orientation"] },
+      "description": "需要与参考对象一致的属性；单条件题式为空数组"
+    }
+  },
+  "$defs": {
+    "slot": {
+      "type": "object",
+      "required": ["identity"],
+      "additionalProperties": false,
+      "properties": {
+        "identity": {
+          "type": "string",
+          "description": "A-Za-z0-9 的单个字符，或 shape:cube / shape:cylinder / shape:cone / shape:sphere"
+        },
+        "color": {
+          "oneOf": [{ "enum": ["red", "yellow", "green", "blue", "gray"] }, { "type": "null" }]
+        },
+        "orientation": {
+          "oneOf": [{ "enum": ["front", "side"] }, { "type": "null" }]
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "instruction": "请点击与蓝色小写 h 朝向一样的大写 Q",
+      "target": { "identity": "Q", "color": null, "orientation": null },
+      "reference": { "identity": "h", "color": "blue", "orientation": null },
+      "match_attributes": ["orientation"]
+    },
+    {
+      "instruction": "请点击灰色数字 8",
+      "target": { "identity": "8", "color": "gray", "orientation": null },
+      "reference": null,
+      "match_attributes": []
+    },
+    {
+      "instruction": "请点击圆柱朝向一样的大写 A",
+      "target": { "identity": "A", "color": null, "orientation": null },
+      "reference": { "identity": "shape:cylinder", "color": null, "orientation": null },
+      "match_attributes": ["orientation"]
+    }
+  ]
+}

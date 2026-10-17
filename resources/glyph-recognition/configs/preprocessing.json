@@ -1,0 +1,21 @@
+{
+  "grayscale_channels": 1,
+  "percentile_stretch": [
+    1,
+    99
+  ],
+  "minimum_range": 10,
+  "input_size": 96,
+  "crop_margin": 0.1,
+  "keep_aspect": true,
+  "padding": "median normalized grayscale crop border",
+  "mean": [
+    0.5
+  ],
+  "std": [
+    0.5
+  ],
+  "mode": "percentile",
+  "clahe": null,
+  "local_normalize": null
+}

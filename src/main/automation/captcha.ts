@@ -1,7 +1,5 @@
 /**
- * 验证码检测与人工介入（handoff §12）。
- *
- * 保持 v1 的「自动检测 + 用户人工处理 + 程序继续」，**不增加自动破解**。
+ * 验证码检测：易盾单点题优先离线处理，连续失败五次后沿用人工介入。
  *
  * 检测逻辑与 v1 `src/bot/captcha.py` 等价，三条路径按可靠性降序：
  *   1. 验证码 iframe（src 命中关键字）—— 最可靠
@@ -11,6 +9,7 @@
  */
 
 import type { BrowserSession } from './browser-session'
+import { GlyphCaptchaSolver, type GlyphCaptchaOptions } from './glyph-captcha'
 import {
   CAPTCHA_IFRAME_KEYWORDS,
   CAPTCHA_IMAGE_INPUT_ID,
@@ -31,10 +30,16 @@ export interface CaptchaServiceDeps {
   requestCaptcha: (scene: CaptchaScene, message: string, kind?: 'captcha' | 'manual-login') => Promise<boolean>
   shouldStop: () => boolean
   log: Logger
+  /** Model factory/timeouts can be injected by local browser regressions. */
+  glyph?: GlyphCaptchaOptions
 }
 
 export class CaptchaService {
-  constructor(private readonly deps: CaptchaServiceDeps) {}
+  private readonly automatic: GlyphCaptchaSolver
+  private manualOnly = false
+  constructor(private readonly deps: CaptchaServiceDeps) {
+    this.automatic = new GlyphCaptchaSolver(deps.session.playwrightPage, deps.log, deps.glyph)
+  }
 
   /**
    * 在页面里跑一次检测，返回命中项或 null。
@@ -196,14 +201,23 @@ export class CaptchaService {
 
   /**
    * 检测并在需要时阻塞等待用户处理。
-   * 返回 true 表示"出现过验证码且用户已确认"；false 表示没有验证码。
+   * 返回 true 表示站点确认自动通过或用户人工确认；false 表示未检测到或已停止。
    */
   async checkAndHandle(scene: CaptchaScene, message: string): Promise<boolean> {
     const hit = await this.detect()
-    if (!hit) return false
+    if (!hit) { this.manualOnly = false; return false }
 
     this.deps.log.warn(`检测到验证码（${hit.kind}: ${hit.detail}）`)
-    return this.requestManualHelp(scene, message, 'captcha')
+    if (!this.manualOnly) {
+      const result = await this.automatic.solve(this.deps.shouldStop)
+      if (result === 'solved') return true
+      if (result === 'stopped') return false
+      this.manualOnly = true
+    }
+    const confirmed = await this.requestManualHelp(scene, message, 'captcha')
+    // A resolved challenge releases the circuit breaker for the next independent one.
+    if (confirmed && !await this.detect()) this.manualOnly = false
+    return confirmed
   }
 
   /**

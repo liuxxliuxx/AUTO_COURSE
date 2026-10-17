@@ -1,0 +1,27 @@
+{
+  "canonical_sha256": "5b816156c747c12ce5a6934a6078ec3681943a2f46e19ceba02edde560c44c90",
+  "split_sha256": "fb05b9ab5936129836f24d6c393d6bb8f4f7b6e3d864432abec895d23cae86d1",
+  "counts": {
+    "train": {
+      "images": 400,
+      "objects": 2417
+    },
+    "val": {
+      "images": 100,
+      "objects": 608
+    },
+    "test": {
+      "images": 50,
+      "objects": 300
+    }
+  },
+  "i_j_objects": {
+    "train": 66,
+    "val": 34,
+    "test": 14
+  },
+  "class_names": {
+    "0": "symbol"
+  },
+  "note": "Single class 'symbol'; identity and orientation come from the ROI classifier."
+}

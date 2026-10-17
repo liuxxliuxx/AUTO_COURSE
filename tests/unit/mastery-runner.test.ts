@@ -11,7 +11,7 @@ function setup() {
   vi.spyOn(Date, 'now').mockImplementation(() => now)
   vi.spyOn(CaptchaService.prototype, 'checkAndHandle').mockResolvedValue(false)
   const ctx = { settings: { ...DEFAULT_SETTINGS, timeLimitMinutes: 1, skipCompleted: false }, credentials: {}, masteryQuestionBank: {},
-    session: { navigate: vi.fn(), playwrightPage: { waitForTimeout: vi.fn() } }, log: { info: vi.fn() }, shouldStop: () => false,
+    session: { navigate: vi.fn(), playwrightPage: { waitForTimeout: vi.fn(), on: vi.fn(), once: vi.fn() } }, log: { info: vi.fn() }, shouldStop: () => false,
     reportPhase: vi.fn(), reportCurrentTitle: vi.fn(), reportVideoCompleted: vi.fn(), reportVideoWatched: vi.fn(), sessionWatchedSeconds: () => 0,
     requestCaptcha: vi.fn()
   } as unknown as RunnerContext

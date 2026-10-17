@@ -62,6 +62,8 @@ export async function startBrowserHost(): Promise<void> {
   app.setPath('userData', profileDir())
 
   app.commandLine.appendSwitch('disable-features', 'MediaRouter')
+  // Apply before Chromium/SDK initialization so challenge images are requested at DPR 2.
+  app.commandLine.appendSwitch('force-device-scale-factor', '2')
 
   await app.whenReady()
 

@@ -38,8 +38,12 @@ for (const path of [...selected].sort()) {
     texts.push(readFileSync('assets/licenses/sherpa-onnx.txt', 'utf8'))
     texts.push(readFileSync('assets/licenses/onnxruntime.txt', 'utf8'))
   }
+  // ONNX Runtime's npm archives also omit the repository's Microsoft MIT license.
+  if (!texts.length && ['onnxruntime-node', 'onnxruntime-common'].includes(pkg.name) && pkg.version === '1.23.2') {
+    texts.push(readFileSync('assets/licenses/onnxruntime.txt', 'utf8'))
+  }
   if (!texts.length) throw new Error(`Missing license text: ${pkg.name}`)
   notices.push(`\n${'='.repeat(72)}\n${pkg.name}@${pkg.version} — ${pkg.license ?? item.license ?? 'see below'}\n${texts.join('\n')}`)
 }
-writeFileSync('THIRD_PARTY_NOTICES.txt', notices.join('\n') + '\n')
+writeFileSync('THIRD_PARTY_NOTICES.txt', notices.join('\n').replace(/[ \t]+$/gm, '') + '\n')
 console.log(`Collected notices for ${notices.length - 4} runtime and bundled renderer dependencies`)

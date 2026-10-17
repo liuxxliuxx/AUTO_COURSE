@@ -1,0 +1,11 @@
+{
+  "canonical_sha256": "0d87342b79aafb5bfaddc72635a859ec0819d3aa4abf0d0a25e9da10992c690e",
+  "label_schema_sha256": "b8b99f589f52a569e24c339b81ece3e830039cbfb4e49c4dcf685c522455bd03",
+  "frozen_split_sha256": "fb05b9ab5936129836f24d6c393d6bb8f4f7b6e3d864432abec895d23cae86d1",
+  "detector_onnx_sha256": "d2b0a4080447f216f6acfc64d9aab2039432b011991d1c5c2ee2409ef7fdf9ea",
+  "detector_weights_sha256": "15e81c22335f145c323862f52a76ece8308345f26b3c7adf443f2e1beec01ef1",
+  "roi_classifier_onnx_sha256": "c83fb69a67d45d5d2efb8b5029e7f735fe58fb785f0af0f1f8e3b5cb4d3df89b",
+  "packaged_at": "2026-10-17T02:18:31.978369Z",
+  "source_commit": null,
+  "python": "3.12.13"
+}

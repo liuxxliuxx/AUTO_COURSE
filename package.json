@@ -18,6 +18,8 @@
     "build:mac": "npm run build && electron-builder --mac --publish never --config electron-builder.yml",
     "postinstall": "node scripts/check-native.mjs",
     "check:native": "node scripts/check-native.mjs",
+    "glyph:prepare": "node scripts/prepare-glyph-runtime.mjs",
+    "glyph:check": "node scripts/check-glyph-runtime.mjs",
     "release:check": "node scripts/release-check.mjs",
     "release:notes": "node scripts/release-notes.mjs",
     "licenses": "node scripts/collect-licenses.mjs"
@@ -30,7 +32,10 @@
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
+    "jpeg-js": "0.4.4",
+    "onnxruntime-node": "1.23.2",
     "playwright-core": "^1.63.0",
+    "pngjs": "7.0.0",
     "sherpa-onnx": "1.13.8"
   },
   "devDependencies": {

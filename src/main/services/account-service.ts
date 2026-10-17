@@ -37,7 +37,7 @@ export class AccountService {
   create(input: AccountInput): Account { return this.save(randomUUID(), input, false) }
   update(id: string, input: AccountInput): Account { return this.save(id,input,true) }
   private save(id: string, input: AccountInput, update: boolean): Account {
-    if (this.occupied().includes(id)) throw new Error('账号正在运行，请先停止相关工作流')
+    if (this.occupied().includes(id)) throw new Error('账号正在运行，请先停止相关任务')
     const previous = this.get(id)
     if (update && !previous) throw new Error('账号不存在')
     if (!input || typeof input.name !== 'string' || !input.name.trim()) throw new Error('请输入账号名称')
@@ -46,8 +46,8 @@ export class AccountService {
     if (typeof input.loggedUrl !== 'string') throw new Error('登录跳转地址无效')
     if (input.loginMethod === 'upc') {
       let url: URL
-      try { url = new URL(input.loggedUrl) } catch { throw new Error('请输入完整的登录跳转 URL') }
-      if (!['http:','https:'].includes(url.protocol) || url.username || url.password) throw new Error('登录跳转 URL 无效')
+      try { url = new URL(input.loggedUrl) } catch { throw new Error('请输入完整的登录跳转地址') }
+      if (!['http:','https:'].includes(url.protocol) || url.username || url.password) throw new Error('登录跳转地址无效')
     }
     if (input.password !== undefined && typeof input.password !== 'string') throw new Error('密码无效')
     const username = input.username.trim()
@@ -70,8 +70,8 @@ export class AccountService {
   }
   remove(id: string): void {
     if (!this.get(id)) throw new Error('账号不存在')
-    if (this.occupied().includes(id)) throw new Error('账号正在运行，请先停止相关工作流')
-    if (this.db.raw().prepare('SELECT 1 FROM workflow_steps WHERE account_id=? LIMIT 1').get(id)) throw new Error('账号被工作流引用，请先移除对应步骤')
+    if (this.occupied().includes(id)) throw new Error('账号正在运行，请先停止相关任务')
+    if (this.db.raw().prepare('SELECT 1 FROM workflow_steps WHERE account_id=? LIMIT 1').get(id)) throw new Error('账号被任务引用，请先移除对应步骤')
     rmSync(this.profileDir(id), {recursive:true,force:true})
     this.store(id).clear()
     this.db.raw().prepare('DELETE FROM accounts WHERE id=?').run(id)

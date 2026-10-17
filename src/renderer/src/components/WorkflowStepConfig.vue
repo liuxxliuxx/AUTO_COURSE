@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '../lib/ui-copy'
 import { computed, ref, watch } from 'vue'
 import type { Account, AccountCourseProgress } from '@shared/accounts'
 import type { Course } from '@shared/types'
@@ -16,7 +17,7 @@ watch(() => [props.step?.accountId, props.step?.courseId], async () => {
   try {
     const records = await window.appApi.accounts.progress(props.step.courseId)
     if (request === progressRequest) progress.value = records.find(p=>p.accountId===props.step?.accountId)??null
-  } catch(e) { if (request === progressRequest) progressError.value = String(e) }
+  } catch(e) { if (request === progressRequest) progressError.value = errorMessage(e) }
 }, {immediate:true})
 const customized=computed(()=>!!props.step && !!props.course && JSON.stringify(props.step.options)!==JSON.stringify(props.course.options))
 const emit = defineEmits<{ restore: [] }>()
@@ -32,12 +33,12 @@ defineExpose({
   <section ref="panel" class="step-config" aria-label="步骤配置">
     <header><strong>第 {{position}} 步配置 <span v-if="step" class="muted small">{{customized?'已自定义':'与课程配置一致'}}</span></strong><small v-if="step">{{ course?.name ?? '课程已不可用' }}</small></header>
     <div v-if="step" class="config-content">
-      <div class="field"><label :for="`step-account-${step.id}`">执行账号</label><select :id="`step-account-${step.id}`" v-model="step.accountId" :disabled="disabled" required><option value="" disabled>请选择账号</option><option v-for="account in accounts" :key="account.id" :value="account.id">{{account.name}}（{{account.username}}）</option></select><small v-if="!accounts.length">请先在<RouterLink to="/accounts">账号页</RouterLink>添加账号。</small></div>
+      <div class="field"><label :for="`step-account-${step.id}`">运行账号</label><select :id="`step-account-${step.id}`" v-model="step.accountId" :disabled="disabled" required><option value="" disabled>请选择账号</option><option v-for="account in accounts" :key="account.id" :value="account.id">{{account.name}}（{{account.username}}）</option></select><small v-if="!accounts.length">请先在<RouterLink to="/accounts">账号页</RouterLink>添加账号。</small></div>
       <p v-if="progressError" class="notice error">进度加载失败：{{progressError}}</p><p v-else class="muted small">此账号上次完成的位置：{{progress?.lastVideoTitle || '暂无记录'}}</p>
       <div v-if="unavailableCourse(course)" class="notice error">{{ unavailableCourse(course) }}，请移除此步骤。</div>
       <CourseOptionsForm :key="step.id" ref="form" v-model="step.options" :kind="course?.kind" :disabled="disabled || !!unavailableCourse(course)" />
       <button type="button" :disabled="disabled || !!unavailableCourse(course) || !customized" title="将课程目前保存的配置复制到当前步骤，保存前可撤销" @click="emit('restore')">恢复课程配置</button>
-      <small>只影响当前步骤；编辑运行中的工作流，对下一次运行生效。</small>
+      <small>只影响当前步骤；编辑运行中的任务，对下一次运行生效。</small>
     </div>
     <p v-else class="empty">选择步骤查看配置</p>
   </section>

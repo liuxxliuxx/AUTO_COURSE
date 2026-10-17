@@ -78,7 +78,7 @@ export class CourseService {
   remove(id: string): CourseMutationResult {
     return this.mutate(() => {
       this.assertEditable(id)
-      if (this.db.raw().prepare('SELECT 1 FROM workflow_steps WHERE course_id=? LIMIT 1').get(id)) throw new Error('课程被工作流引用，请先移除对应步骤')
+      if (this.db.raw().prepare('SELECT 1 FROM workflow_steps WHERE course_id=? LIMIT 1').get(id)) throw new Error('课程被任务引用，请先移除对应步骤')
       this.db.raw().prepare('UPDATE courses SET deleted_at=? WHERE id=?').run(new Date().toISOString(), id)
       if (this.db.getSetting('selectedCourseId') === id) this.db.setSetting('selectedCourseId', '')
       if (this.db.getSetting('schedulerCourseId') === id) {

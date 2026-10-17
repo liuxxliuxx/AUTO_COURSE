@@ -6,7 +6,7 @@ import About from './pages/About.vue'
 import Accounts from './pages/Accounts.vue'
 import Courses from './pages/Courses.vue'
 export const router = createRouter({ history: createWebHashHistory(), routes: [
-  { path: '/', redirect: '/courses' },
+  { path: '/', redirect: '/accounts' },
   { path: '/accounts', name: 'accounts', component: Accounts },
   { path: '/courses', name: 'courses', component: Courses },
   { path: '/workflows', name: 'workflows', component: Workflows },

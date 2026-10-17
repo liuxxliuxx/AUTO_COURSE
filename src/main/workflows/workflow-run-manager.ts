@@ -33,7 +33,7 @@ export class WorkflowRunManager {
     if (this.closing) return { ok: false, message: '应用正在退出' }
     if (this.isMaintaining) return { ok: false, message: '正在清理缓存，请稍候再启动任务' }
     const flow = this.flows.get(workflowId)
-    if (!flow) return { ok: false, message: '工作流不存在' }
+    if (!flow) return { ok: false, message: '任务不存在' }
     let run: WorkflowRun
     try {
       const steps = flow.steps.map(s => {
@@ -44,15 +44,15 @@ export class WorkflowRunManager {
         identifyCourse(course.url); validateRunOptions(s.options, course.kind)
         return { ...s, course: structuredClone(course), account: structuredClone(account) }
       })
-      if (!steps.length) throw new Error('工作流没有步骤')
+      if (!steps.length) throw new Error('任务没有步骤')
       const settings = { ...this.settings.getAll(), autoMode: false }
       run = { id: randomUUID(), workflowId, source, state: 'running', snapshot: { workflow: structuredClone(flow), steps, settings }, startedAt: new Date().toISOString(), finishedAt: null, message: '', steps: steps.map(s => ({ stepId: s.id, state: 'pending', startedAt: null, finishedAt: null, status: null, transcription: null, error: null })) }
     } catch (e) { return { ok: false, message: String(e) } }
     const reject = (message: string): WorkflowStartResult => { run.state = 'rejected'; run.message = message; run.finishedAt = new Date().toISOString(); run.steps.forEach(s => s.state = 'cancelled'); this.repository.save(run); return { ok: false, message, runId: run.id } }
     for (const { executor } of this.active.values()) {
-      if (executor.run.workflowId === workflowId) return reject('该工作流已在运行')
+      if (executor.run.workflowId === workflowId) return reject('该任务已在运行')
       const overlap = run.snapshot.steps.find(s => executor.run.snapshot.steps.some(other => other.accountId === s.accountId))
-      if (overlap) return reject(`账号“${overlap.account.name}”已被工作流“${executor.run.snapshot.workflow.name}”占用`)
+      if (overlap) return reject(`账号“${overlap.account.name}”已被任务“${executor.run.snapshot.workflow.name}”占用`)
     }
     const creds = new Map<string, Credentials>()
     for (const step of run.snapshot.steps) {
@@ -66,7 +66,7 @@ export class WorkflowRunManager {
       const errors = this.settings.validate(settingsForCourse({ ...run.snapshot.settings, loginMethod: step.account.loginMethod, loggedUrl: step.account.loggedUrl }, { ...step.course, options: step.options }))
       if (errors.length) return reject(errors.map(e => e.message).join('；'))
     }
-    if (run.snapshot.steps.some(s => this.occupiedAccounts().includes(s.accountId))) return reject('账号已被其他工作流占用')
+    if (run.snapshot.steps.some(s => this.occupiedAccounts().includes(s.accountId))) return reject('账号已被其他任务占用')
     this.repository.save(run)
     this.reservations.set(run.id, [...new Set(run.snapshot.steps.map(s => s.accountId))])
     const changed = (): void => { this.repository.save(run); this.publish(structuredClone(run)) }

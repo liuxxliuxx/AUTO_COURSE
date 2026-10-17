@@ -54,7 +54,7 @@ defineExpose({ focusInvalid: (field: 'time' | 'zone') => (field === 'time' ? tim
     </template>
     <datalist :id="`${uid}-zones`"><option v-for="item in [...new Set([zone,'Asia/Shanghai','Asia/Tokyo','Europe/London','America/New_York','UTC'])]" :key="item" :value="item" /></datalist>
     <small v-if="schedule">{{kind==='once' ? '日期输入按电脑时区 '+zone+' 解释；修改显示时区不会移动触发时刻。' : ''}}<span v-if="triggerPreview">{{schedule.enabled?'预定触发：':'规则已停用：'}}{{triggerPreview}}</span></small>
-    <small>应用运行时检查定时；错过后补跑最近一次；课程冲突则拒绝本次启动。</small>
+    <small>应用运行时检查定时；错过后补跑最近一次；账号被占用时，本次运行不会启动。</small>
   </section>
 </template>
 

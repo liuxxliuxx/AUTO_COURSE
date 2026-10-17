@@ -57,7 +57,7 @@ describe('account storage and isolation',()=>{
     occupied=[a.id];expect(()=>accounts.update(a.id,input)).toThrow('正在运行');expect(()=>accounts.remove(a.id)).toThrow('正在运行');occupied=[]
     const flows=new WorkflowService(db,courses,()=>false,accounts)
     const flow=flows.create({name:'工作流',steps:[{id:'step',accountId:a.id,courseId,options:DEFAULT_COURSE_OPTIONS}],schedule:null})
-    expect(()=>accounts.remove(a.id)).toThrow('工作流引用')
+    expect(()=>accounts.remove(a.id)).toThrow('任务引用')
     flows.remove(flow.id);accounts.remove(a.id);expect(accounts.list()).toEqual([])
     expect(existsSync(join(dir,'account-credentials',`${a.id}.bin`))).toBe(false)
   })
@@ -88,7 +88,7 @@ describe('account storage and isolation',()=>{
   it('rejects invalid IDs and account inputs without writing records',()=>{
     expect(()=>accounts.profileDir('../outside')).toThrow('ID')
     expect(()=>accounts.create({...input,name:''})).toThrow('名称')
-    expect(()=>accounts.create({...input,loginMethod:'upc',loggedUrl:'file:///tmp'})).toThrow('URL')
+    expect(()=>accounts.create({...input,loginMethod:'upc',loggedUrl:'file:///tmp'})).toThrow('跳转地址')
     expect(()=>accounts.create({...input,password:''})).toThrow('密码')
     expect(accounts.list()).toEqual([])
   })

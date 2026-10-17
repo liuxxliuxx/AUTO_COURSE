@@ -1,3 +1,4 @@
+import { errorMessage } from '../lib/ui-copy'
 import { defineStore } from 'pinia'
 import type { Workflow, WorkflowRun } from '@shared/workflows'
 import { activeRun } from '@shared/workflows'
@@ -18,17 +19,17 @@ export const useWorkflowsStore = defineStore('workflows', {
         const [flows,runs]=await Promise.all([window.appApi.workflows.list(),window.appApi.workflows.runs()])
         if(flowRequest===this.flowRequest){this.flows=flows;this.flowError=''}
         if(runRequest===this.runRequest){this.runs=runs;this.error=''}
-      }catch(e){if(flowRequest===this.flowRequest)this.flowError=String(e);if(runRequest===this.runRequest)this.error=String(e);throw e}
+      }catch(e){if(flowRequest===this.flowRequest)this.flowError=errorMessage(e);if(runRequest===this.runRequest)this.error=errorMessage(e);throw e}
     },
     async refreshFlows() {
       const request=++this.flowRequest
       try { const flows=await window.appApi.workflows.list();if(request===this.flowRequest){this.flows=flows;this.flowError=''} }
-      catch(e){if(request===this.flowRequest)this.flowError=String(e)}
+      catch(e){if(request===this.flowRequest)this.flowError=errorMessage(e)}
     },
     async refreshRuns() {
       const request=++this.runRequest
       try { const runs=await window.appApi.workflows.runs();if(request===this.runRequest){this.runs=runs;this.error=''} }
-      catch(e){if(request===this.runRequest)this.error=String(e)}
+      catch(e){if(request===this.runRequest)this.error=errorMessage(e)}
     },
     async start(id: string) { const result = await window.appApi.workflows.start(id); await this.refreshRuns(); if (!result.ok) throw new Error(result.message); return result.runId }
   }

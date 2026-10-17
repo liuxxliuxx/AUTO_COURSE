@@ -17,7 +17,7 @@ export class WorkflowService {
     return { id: r.id, name: r.name, version: r.version, createdAt: r.created_at, updatedAt: r.updated_at, notice: r.notice, steps, schedule: schedule ? JSON.parse(schedule.config) : null }
   }
   private validate(input: WorkflowInput): WorkflowInput {
-    if (!input.name?.trim()) throw new Error('请输入工作流名称')
+    if (!input.name?.trim()) throw new Error('请输入任务名称')
     if (!Array.isArray(input.steps) || !input.steps.length) throw new Error('至少添加一个课程步骤')
     const ids = new Set<string>()
     const steps: WorkflowStep[] = input.steps.map(s => {
@@ -36,7 +36,7 @@ export class WorkflowService {
   private save(id: string, version: number | null, input: WorkflowInput): Workflow {
     return this.db.transaction(() => {
       const existing = this.get(id)
-      if (version !== null && (!existing || existing.version !== version)) throw new Error('工作流已被修改，请重新加载后编辑')
+      if (version !== null && (!existing || existing.version !== version)) throw new Error('任务已被修改，请重新加载后编辑')
       // Preserve an unchanged schedule, including overdue occurrences awaiting catch-up.
       const sameSchedule = existing && JSON.stringify(existing.schedule) === JSON.stringify(input.schedule)
       const value = this.validate({ ...input, schedule: sameSchedule ? null : input.schedule })
@@ -55,7 +55,7 @@ export class WorkflowService {
     else this.db.raw().prepare('DELETE FROM workflow_schedules WHERE workflow_id=?').run(id)
   }
   remove(id: string): void {
-    if (this.isActive(id)) throw new Error('工作流正在运行，请先停止')
+    if (this.isActive(id)) throw new Error('任务正在运行，请先停止')
     this.db.raw().prepare('DELETE FROM workflows WHERE id=?').run(id)
   }
 }

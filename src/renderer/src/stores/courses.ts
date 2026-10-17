@@ -1,3 +1,4 @@
+import { errorMessage } from '../lib/ui-copy'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { CourseLibrary, CourseMutationResult } from '@shared/types'
@@ -11,7 +12,7 @@ export const useCoursesStore = defineStore('courses', () => {
   async function load(): Promise<void> {
     loading.value = true; error.value = ''
     try { library.value = await window.appApi.courses.list() }
-    catch (e) { error.value = String(e) }
+    catch (e) { error.value = errorMessage(e) }
     finally { loading.value = false }
   }
   function accept(result: CourseMutationResult): CourseMutationResult {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { UNSAVED_CONFIRM, START_LABELS, completedLabel, durationLabel, errorMessage, errorText } from '../lib/ui-copy'
 import { courseOccupancy } from '../lib/run-presentation'
 import WorkspaceToolbar from '../components/WorkspaceToolbar.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
@@ -29,7 +30,7 @@ watch([focusedId, () => run.runs], async () => {
   progress.value = []; progressError.value = ''
   if (!focusedId.value) return
   try { const records = await window.appApi.accounts.progress(focusedId.value); if(request===progressRequest)progress.value=records }
-  catch(e) { if(request===progressRequest)progressError.value=String(e) }
+  catch(e) { if(request===progressRequest)progressError.value=errorMessage(e) }
 }, {immediate:true})
 const filterKinds = computed(() => Object.fromEntries(Object.entries(KIND_LABELS).filter(([kind]) => kind !== 'unknown' || store.library.courses.some(c => c.kind === 'unknown'))))
 const filtered = computed(() => store.library.courses.filter(c => c.name.toLowerCase().includes(search.value.toLowerCase()) && (!kindFilter.value || c.kind === kindFilter.value)))
@@ -43,7 +44,7 @@ const baseline = ref(''), urlInput = ref<HTMLInputElement | null>(null), dialog 
 let previousFocus: HTMLElement | null = null
 const dirty = computed(() => modal.value && JSON.stringify(draft.value) !== baseline.value)
 const parsed = computed(() => { try { return identifyCourse(draft.value.url) } catch { return null } })
-const parseError = computed(() => { if (!draft.value.url) return ''; try { identifyCourse(draft.value.url); return '' } catch(e) { return String(e).replace(/^Error: /, '') } })
+const parseError = computed(() => { if (!draft.value.url) return ''; try { identifyCourse(draft.value.url); return '' } catch(e) { return errorMessage(e) } })
 const occupation = computed(()=>focused.value ? courseOccupancy(run.runs,focused.value.id) : undefined)
 const occupied = (id:string)=>courseOccupancy(run.runs,id)
 const locked = computed(() => run.occupied.includes(focusedId.value))
@@ -51,7 +52,7 @@ watch(() => parsed.value?.kind, kind => {
   if ((kind === 'map' || kind === 'mastery') && draft.value.options.action === 'transcribe') draft.value.options.action = 'learn'
   if (kind === 'mastery' && draft.value.options.action === 'learn-transcribe') draft.value.options.action = 'learn'
 })
-function mayLeave(): boolean { return !dirty.value || window.confirm('还有未保存的修改，确定放弃吗？') }
+function mayLeave(): boolean { return !dirty.value || window.confirm(UNSAVED_CONFIRM) }
 onBeforeRouteLeave(() => mayLeave())
 function beforeUnload(event: BeforeUnloadEvent): void { if (dirty.value) { event.preventDefault(); event.returnValue = '' } }
 onMounted(() => window.addEventListener('beforeunload', beforeUnload))
@@ -80,10 +81,10 @@ async function save(): Promise<void> {
   try {
     const input = JSON.parse(JSON.stringify(draft.value)) as CourseInput
     const result = store.accept(editingId.value ? await window.appApi.courses.update(editingId.value, input) : await window.appApi.courses.create(input))
-    if (!result.ok) { error.value = result.message; duplicateId.value = result.existingCourseId ?? ''; return }
+    if (!result.ok) { error.value = errorText('保存课程', result.message); duplicateId.value = result.existingCourseId ?? ''; return }
     search.value = ''; kindFilter.value = ''
     focusedId.value = result.courseId ?? focusedId.value; modal.value = false; message.value = '课程已保存'
-  } catch(e) { error.value = `保存失败，输入已保留：${String(e)}` }
+  } catch(e) { error.value = errorText('保存课程', e) + '；输入已保留' }
   finally {
     busy.value = false
     await nextTick()
@@ -92,7 +93,7 @@ async function save(): Promise<void> {
   }
 }
 async function selectCurrent(): Promise<void> {
-  try { await store.select(focusedId.value); message.value = '已设为默认课程' } catch(e) { error.value = String(e) }
+  try { await store.select(focusedId.value); message.value = '已设为默认课程' } catch(e) { error.value = errorText('设置默认课程', e) }
 }
 async function start(): Promise<void> {
   if (!focused.value) return
@@ -100,17 +101,17 @@ async function start(): Promise<void> {
 }
 async function remove(): Promise<void> {
   const course = focused.value; if (!course || busy.value) return
-  if (!window.confirm(`移除“${course.name}”？学习进度和转录文件会保留。`)) return
+  if (!window.confirm(`移除课程“${course.name}”？学习进度和转录文件会保留。`)) return
   busy.value = true; error.value = ''
   try {
     const result = store.accept(await window.appApi.courses.remove(course.id))
-    if (!result.ok) { error.value = result.message; return }
+    if (!result.ok) { error.value = errorText('移除课程', result.message); return }
     focusedId.value = filtered.value.find(item => item.id === store.library.selectedCourseId)?.id ?? filtered.value[0]?.id ?? ''
     message.value = '课程已移除，进度已保留'
-  } catch(e) { error.value = String(e) }
+  } catch(e) { error.value = errorText('移除课程', e) }
   finally { busy.value = false }
 }
-async function copyUrl(): Promise<void> { try { await navigator.clipboard.writeText(focused.value?.url ?? ''); message.value = '地址已复制' } catch { error.value = '复制失败，请在课程详情中选中地址复制' } }
+async function copyUrl(): Promise<void> { try { await navigator.clipboard.writeText(focused.value?.url ?? ''); message.value = '地址已复制' } catch { error.value = '复制地址失败：请在课程详情中选中地址复制' } }
 async function exportQuestionBank(): Promise<void> {
   const course = focused.value
   if (!course || busy.value) return
@@ -118,7 +119,7 @@ async function exportQuestionBank(): Promise<void> {
   try {
     const result = await window.appApi.courses.exportQuestionBank(course.id)
     if (!result.canceled) message.value = `“${course.name}”题库已导出，共 ${result.count} 道题：${result.path}`
-  } catch (e) { error.value = `题库导出失败：${String(e).replace(/^Error: /, '')}` }
+  } catch (e) { error.value = errorText('导出题库', e) }
   finally { busy.value = false }
 }
 function openExisting(): void { search.value = ''; kindFilter.value = ''; focusedId.value = duplicateId.value; modal.value = false; error.value = '' }
@@ -126,26 +127,26 @@ const lastRun = (date: string | null): string => date ? new Date(date).toLocaleS
 </script>
 <template>
   <div class="page courses-page">
-    <WorkspaceToolbar title="我的课程"><button :disabled="busy" class="primary" @click="openForm()"><UiIcon name="add"/>添加课程</button></WorkspaceToolbar>
+    <WorkspaceToolbar title="课程"><button :disabled="busy" class="primary" @click="openForm()"><UiIcon name="add"/>添加课程</button></WorkspaceToolbar>
     <div v-if="!modal && (error || run.error || store.error)" class="notice error" role="alert">{{ error || run.error || store.error }} <button v-if="store.error" @click="store.load">重新加载</button></div>
     <div v-if="message" class="notice success" role="status">{{ message }}</div>
     <div v-if="store.loading" class="empty" role="status">正在加载课程…</div>
-    <div v-else-if="!store.library.courses.length" class="panel empty"><h2>从第一门课程开始</h2><p>粘贴课程学习页地址，为它取一个容易找到的名字。</p><p class="small">支持智慧树传统课、图谱课和掌握度课，添加后可组合为工作流。</p><button class="primary" @click="openForm()">添加第一门课程</button></div>
+    <div v-else-if="!store.library.courses.length" class="panel empty"><h2>从第一门课程开始</h2><p>粘贴课程学习页地址，为它取一个容易找到的名字。</p><p class="small">支持智慧树传统课、图谱课和掌握度课，添加后可组合为任务。</p><button class="primary" @click="openForm()">添加第一门课程</button></div>
     <div v-else class="course-layout">
       <section class="course-list" aria-label="课程列表"><div class="list-header"><strong>全部课程 <span class="muted">{{ store.library.courses.length }}</span></strong><input v-model="search" type="search" aria-label="搜索课程" placeholder="搜索课程名称" /><div class="type-filters" role="group" aria-label="课程类型筛选"><button :aria-pressed="!kindFilter" @click="kindFilter=''">全部</button><button v-for="(label,kind) in filterKinds" :key="kind" :aria-pressed="kindFilter===kind" @click="kindFilter=kind">{{label}}</button></div></div>
         <div class="course-rows"><div v-if="!filtered.length" class="empty">没有匹配的课程</div>
         <ToolRow v-for="course in filtered" :key="course.id" class="course-row" :selected="course.id === focusedId" :title="course.name" @click="focusedId = course.id; message = ''; error = ''">
           <div class="course-row-content"><strong :title="course.name">{{ course.name }}</strong><div><span>{{ KIND_LABELS[course.kind] }}</span> · {{ ACTION_LABELS[course.options.action] }}</div></div>
-          <span v-if="occupied(course.id)" class="badge" :class="occupied(course.id)?.label==='需处理'?'attention':occupied(course.id)?.label==='正在执行'?'green':''" :title="'由工作流“'+occupied(course.id)?.run.snapshot.workflow.name+'”占用，结束后可编辑'">{{occupied(course.id)?.label}}</span><span v-else-if="course.id === store.library.selectedCourseId" class="selected-dot" title="默认课程" aria-label="默认课程"></span>
+          <span v-if="occupied(course.id)" class="badge" :class="occupied(course.id)?.label==='待处理'?'attention':occupied(course.id)?.label==='运行中'?'green':''" :title="'由任务“'+occupied(course.id)?.run.snapshot.workflow.name+'”占用，结束后可编辑'">{{occupied(course.id)?.label}}</span><span v-else-if="course.id === store.library.selectedCourseId" class="selected-dot" title="默认课程" aria-label="默认课程"></span>
         </ToolRow></div>
       </section>
       <section v-if="focused" ref="detailPanel" class="course-detail" aria-label="课程详情">
-        <div class="detail-top"><div class="actions"><button class="primary" :disabled="busy || focused.kind === 'unknown'" title="以当前课程预填工作流，保存后可手动或定时启动" @click="start"><UiIcon name="workflows"/>构建工作流</button><button class="quiet" :disabled="locked || busy" :title="locked ? '课程被进行中的工作流占用，结束后可编辑' : '修改课程默认配置，已有工作流步骤保持原配置'" @click="openForm(true)">编辑</button><button class="quiet danger" :disabled="locked || busy" :title="locked ? '课程被进行中的工作流占用，结束后可移除' : '移除课程，保留学习进度和转录文件'" @click="remove">移除</button></div></div>
+        <div class="detail-top"><div class="actions"><button class="primary" :disabled="busy || focused.kind === 'unknown'" title="以当前课程预填任务，保存后可手动或定时启动" @click="start"><UiIcon name="workflows"/>创建任务</button><button class="quiet" :disabled="locked || busy" :title="locked ? '课程被运行中的任务占用，结束后可编辑' : '修改课程默认配置，已有任务步骤保持原配置'" @click="openForm(true)">编辑</button><button class="quiet danger" :disabled="locked || busy" :title="locked ? '课程被运行中的任务占用，结束后可移除' : '移除课程，保留学习进度和转录文件'" @click="remove">移除</button></div></div>
         <h2 class="course-name">{{ focused.name }}</h2><p class="muted small">{{ KIND_LABELS[focused.kind] }} · 最近运行 · {{ lastRun(focused.lastRunAt) }}</p>
-        <div v-if="locked && occupation" class="notice">{{occupation.label}} · 工作流“{{occupation.run.snapshot.workflow.name}}”占用了这门课程，结束后可编辑或移除。 <RouterLink :to="{path:'/run',query:{id:occupation.run.id}}">查看运行</RouterLink></div>
+        <div v-if="locked && occupation" class="notice">{{occupation.label}} · 任务“{{occupation.run.snapshot.workflow.name}}”占用了这门课程，结束后可编辑或移除。 <RouterLink :to="{path:'/run',query:{id:occupation.run.id}}">查看运行</RouterLink></div>
         <div v-if="focused.progressWarning" class="notice warning">{{ focused.progressWarning }}</div>
         <div class="divider"></div><h3>运行配置</h3>
-        <dl class="detail-grid"><div><dt>运行方式</dt><dd>{{ ACTION_LABELS[focused.options.action] }}</dd></div><div><dt>起始位置</dt><dd>{{ focused.options.startPosition === 'resume' ? '从上次位置继续' : '从课程开头' }}</dd></div><div><dt>已完成内容</dt><dd>{{ focused.options.skipCompleted ? '自动跳过' : '仍然处理' }}</dd></div><div><dt>单次时长</dt><dd>{{ focused.options.timeLimitMinutes ? `${focused.options.timeLimitMinutes} 分钟` : '不限时长' }}</dd></div></dl>
+        <dl class="detail-grid"><div><dt>运行方式</dt><dd>{{ ACTION_LABELS[focused.options.action] }}</dd></div><div><dt>起始位置</dt><dd>{{ START_LABELS[focused.options.startPosition] }}</dd></div><div><dt>已完成内容</dt><dd>{{ completedLabel(focused.options.skipCompleted) }}</dd></div><div><dt>单次时长</dt><dd>{{ durationLabel(focused.options.timeLimitMinutes) }}</dd></div></dl>
         <div class="last-position"><span class="muted small">各账号学习进度</span><p v-if="progressError" role="alert">{{progressError}}</p><p v-else-if="!progress.length">暂无记录，完成内容后会自动保存</p><dl v-else><div v-for="record in progress" :key="record.accountId"><dt>{{accounts.accounts.find(a=>a.id===record.accountId)?.name || '账号已移除'}}</dt><dd>{{record.lastVideoTitle || '尚未完成内容'}} · {{lastRun(record.lastRunAt)}}</dd></div></dl></div>
         <div class="divider"></div><div class="address-header"><h3>课程地址</h3><button class="quiet" title="复制完整课程地址" @click="copyUrl">复制</button></div><p class="course-url">{{ focused.url }}</p>
         <div v-if="focused.kind === 'mastery'" class="notice">题库按课程记录。导出包含题目、选项及已确认答案；未确认答案会明确标记。旧题目在再次练习时自动关联。</div>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorText } from './lib/ui-copy'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { needsAttention } from './lib/run-presentation'
 import UiIcon from './components/UiIcon.vue'
@@ -23,7 +24,7 @@ const productName = ref(''), version = ref(''), platform = ref(''), error = ref(
 const ready = ref(false), welcome = ref(false)
 
 async function dismissWelcome(): Promise<void> { await window.appApi.app.dismissWelcome(); welcome.value = false }
-async function openLegacy(): Promise<void> { try { await window.appApi.app.openLegacyData() } catch(e) { window.alert(String(e).replace(/^Error: /,'')) } }
+async function openLegacy(): Promise<void> { try { await window.appApi.app.openLegacyData() } catch(e) { window.alert(errorText('打开旧数据目录', e)) } }
 
 let unsubscribers: Array<() => void> = []
 
@@ -88,7 +89,7 @@ async function initialize(): Promise<void> {
     if (run.running.length > 0 && router.currentRoute.value.path !== '/run') await router.replace('/run')
     welcome.value = await window.appApi.app.welcome()
     ready.value = true
-  } catch (e) { error.value = `初始化失败：${String(e)}` }
+  } catch (e) { error.value = errorText('初始化', e) }
 }
 
 let poll: ReturnType<typeof setInterval> | undefined, flowPoll: ReturnType<typeof setInterval> | undefined
@@ -121,7 +122,7 @@ onUnmounted(() => {
         <RouterLink to="/accounts"><UiIcon name="accounts"/>账号</RouterLink>
         <RouterLink to="/courses"><UiIcon name="courses"/>课程</RouterLink>
         <RouterLink to="/workflows"><UiIcon name="workflows"/>任务列表</RouterLink>
-        <RouterLink to="/run" aria-label="运行" :title="attentionCount ? attentionCount+' 个任务需要登录或验证码处理' : run.running.length+' 个任务进行中'">
+        <RouterLink to="/run" aria-label="运行" :title="attentionCount ? attentionCount+' 个任务需要登录或验证码处理' : run.running.length+' 个任务运行中'">
           <UiIcon name="run"/>运行
           <span v-if="attentionCount" class="attention-count">{{attentionCount}}</span>
           <span v-else-if="run.running.length > 0" class="live-dot"></span>
@@ -131,7 +132,7 @@ onUnmounted(() => {
       </nav>
       <div class="sidebar-bottom">
         <span class="badge" :class="run.running.length > 0 ? 'green' : ''">
-          {{ attentionCount ? attentionCount+' 个需处理' : run.running.length > 0 ? run.running.length+' 个任务进行中' : '空闲' }}
+          {{ attentionCount ? attentionCount+' 个待处理' : run.running.length > 0 ? run.running.length+' 个任务运行中' : '空闲' }}
         </span>
         <p>{{ productName }} <span v-if="version">v{{ version }}</span></p>
       </div>
@@ -148,7 +149,7 @@ onUnmounted(() => {
           </Transition>
         </RouterView>
       </template>
-      <div v-else class="empty" role="status">正在加载课程与设置…</div>
+      <div v-else class="empty" role="status">正在加载…</div>
     </main>
   </div>
 </template>

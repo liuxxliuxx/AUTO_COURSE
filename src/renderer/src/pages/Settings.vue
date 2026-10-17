@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { UNSAVED_CONFIRM, errorText } from '../lib/ui-copy'
 import WorkspaceToolbar from '../components/WorkspaceToolbar.vue'
 import ChoiceButtons from '../components/ChoiceButtons.vue'
 import { onBeforeUnmount, onMounted, ref, computed, useId } from 'vue'
@@ -33,7 +34,7 @@ function serialize(id: Section): string {
 }
 const dirtySections = computed(()=>!loaded.value ? [] : sections.filter(item=>serialize(item.id)!==baseline.value[item.id]))
 const dirty = computed(()=>dirtySections.value.some(item=>item.id===section.value))
-function mayLeave(): boolean { if (clearingCache.value) return false; return !dirtySections.value.length || window.confirm(`“${dirtySections.value.map(item=>item.label).join('、')}”有未保存的设置，确定放弃修改吗？`) }
+function mayLeave(): boolean { if (clearingCache.value) return false; return !dirtySections.value.length || window.confirm(UNSAVED_CONFIRM) }
 function cancelSection(): void {
   if (saving.value || !dirty.value) return
   const saved = JSON.parse(baseline.value[section.value])
@@ -54,7 +55,7 @@ async function load(): Promise<void> {
     defaults.value = { ...courses.library.defaults }
     for (const item of sections) baseline.value[item.id] = serialize(item.id)
     loaded.value=true
-  } catch(e) { error.value = String(e) }
+  } catch(e) { error.value = errorText('加载设置', e) }
   finally { loading.value = false }
 }
 onMounted(() => { void load(); window.addEventListener('beforeunload', beforeUnload) })
@@ -75,7 +76,7 @@ async function save(): Promise<void> {
       case 'appearance': await settings.save({ uiScale: globalDraft.value.uiScale, accentColor: globalDraft.value.accentColor }); break
     }
     baseline.value[section.value] = serialize(section.value); success.value = '当前分类设置已保存'
-  } catch(e) { error.value = String(e).replace(/^Error: /, '') }
+  } catch(e) { error.value = errorText('保存设置', e) }
   finally { saving.value = false }
 }
 async function clearCache(): Promise<void> {
@@ -85,16 +86,16 @@ async function clearCache(): Promise<void> {
     const { bytes } = await window.appApi.settings.clearCache()
     const amount = bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MiB` : `${(bytes / 1024).toFixed(1)} KiB`
     success.value = bytes ? `缓存清理完成，已清理临时文件和课程网页缓存 ${amount}` : '缓存清理完成'
-  } catch (e) { error.value = String(e).replace(/^Error: /, '') }
+  } catch (e) { error.value = errorText('清理缓存', e) }
   finally { clearingCache.value = false }
 }
-async function pickDirectory(): Promise<void> { if (saving.value) return; try { const dir = await window.appApi.dialog.pickDirectory(); if (dir) globalDraft.value.transcribeBaseDir = dir } catch(e) { error.value = String(e) } }
+async function pickDirectory(): Promise<void> { if (saving.value) return; try { const dir = await window.appApi.dialog.pickDirectory(); if (dir) globalDraft.value.transcribeBaseDir = dir } catch(e) { error.value = errorText('选择文件夹', e) } }
 </script>
 <template>
   <div class="page">
     <WorkspaceToolbar title="设置"></WorkspaceToolbar>
     <div class="settings-layout">
-      <nav class="settings-nav" aria-label="设置分类"><button v-for="item in sections" :key="item.id" :aria-label="item.label" :class="{ active: section === item.id }" :disabled="saving || clearingCache || !loaded" :title="dirtySections.some(s=>s.id===item.id) ? item.label+'：有未保存的修改' : item.description" :aria-current="section === item.id ? 'page' : undefined" @click="changeSection(item.id)">{{ item.label }}<span v-if="dirtySections.some(s=>s.id===item.id)" class="dirty-mark" aria-label="未保存">•</span></button><RouterLink to="/accounts" class="course-link">管理账号</RouterLink><RouterLink to="/courses" class="course-link">管理我的课程</RouterLink></nav>
+      <nav class="settings-nav" aria-label="设置分类"><button v-for="item in sections" :key="item.id" :aria-label="item.label" :class="{ active: section === item.id }" :disabled="saving || clearingCache || !loaded" :title="dirtySections.some(s=>s.id===item.id) ? item.label+'：有未保存的修改' : item.description" :aria-current="section === item.id ? 'page' : undefined" @click="changeSection(item.id)">{{ item.label }}<span v-if="dirtySections.some(s=>s.id===item.id)" class="dirty-mark" aria-label="未保存">•</span></button><RouterLink to="/accounts" class="course-link">管理账号</RouterLink><RouterLink to="/courses" class="course-link">管理课程</RouterLink></nav>
       <section class="settings-panel">
         <div v-if="loading" class="empty" role="status">正在加载设置…</div>
         <div v-else-if="!loaded" class="notice error" role="alert">{{error}} <button @click="load">重新加载</button></div>

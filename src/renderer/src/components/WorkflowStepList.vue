@@ -3,6 +3,7 @@ import { nextTick, ref } from 'vue'
 import type { Account } from '@shared/accounts'
 import type { Course } from '@shared/types'
 import type { WorkflowStep } from '@shared/workflows'
+import { durationLabel } from '../lib/ui-copy'
 import { ACTION_LABELS } from '@shared/courses'
 import { unavailableCourse } from '../lib/workflow-editor'
 
@@ -45,14 +46,14 @@ function navigate(event: KeyboardEvent, index: number): void {
 </script>
 
 <template>
-  <section class="step-list" aria-label="工作流步骤">
+  <section class="step-list" aria-label="任务步骤">
     <header><strong>执行顺序</strong><small>配置按步骤独立保存，可重复添加课程</small></header>
     <div ref="list" class="step-rows">
       <article v-for="(step, index) in steps" :key="step.id" :data-step-id="step.id" class="editor-step" :class="{ selected:step.id===selected }" :draggable="!disabled"
         @dragstart="dragged=step.id; $event.dataTransfer?.setData('text/plain',step.id)" @dragend="dragged=''" @dragover.prevent @drop.prevent="emit('move',dragged,index)">
         <button type="button" class="step-select" :aria-pressed="step.id===selected" :title="name(step)" @click="emit('select',step.id)" @keydown="navigate($event,index)">
           <span class="step-number">{{ index+1 }}</span>
-          <span class="step-text"><strong>{{ name(step) }}</strong><small>{{ accounts.find(a=>a.id===step.accountId)?.name || '未选择账号' }}</small><small>{{ unavailableCourse(course(step.courseId)) || `${ACTION_LABELS[step.options.action]} · ${step.options.timeLimitMinutes ? step.options.timeLimitMinutes+' 分钟' : '不限时长'}` }}</small></span>
+          <span class="step-text"><strong>{{ name(step) }}</strong><small>{{ accounts.find(a=>a.id===step.accountId)?.name || '未选择账号' }}</small><small>{{ unavailableCourse(course(step.courseId)) || `${ACTION_LABELS[step.options.action]} · ${durationLabel(step.options.timeLimitMinutes)}` }}</small></span>
         </button>
         <div class="step-tools">
           <button type="button" :disabled="disabled||index===0" :title="index===0?'已是第一步':'将此步骤提前，配置随步骤一起移动'" :aria-label="`上移步骤 ${index+1}`" @click="reorder(step.id,index-1)">↑</button>

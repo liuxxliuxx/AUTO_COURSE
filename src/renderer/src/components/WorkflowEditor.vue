@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorMessage } from '../lib/ui-copy'
 import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import type { WorkflowInput, WorkflowStep } from '@shared/workflows'
 import type { Account } from '@shared/accounts'
@@ -21,7 +22,7 @@ const undoButton=ref<HTMLButtonElement|null>(null)
 const validation = ref('')
 const undoState=ref<{kind:'remove'|'restore';step:WorkflowStep;index:number;restored?:CourseRunOptions}|null>(null)
 watch(()=>JSON.stringify(draft.value),()=>{validation.value='';const undo=undoState.value;if(undo?.kind==='restore' && JSON.stringify(draft.value.steps.find(s=>s.id===undo.step.id)?.options)!==JSON.stringify(undo.restored))undoState.value=null})
-const saveHint=computed(()=>!draft.value.name.trim()?'请填写工作流名称':!draft.value.steps.length?'请添加至少一个课程步骤':draft.value.steps.some(s=>!!unavailable(course(s.courseId)))?'有不可用课程，请移除对应步骤后保存':draft.value.steps.some(s=>!props.accounts.some(a=>a.id===s.accountId))?'请选择每一步使用的账号':'')
+const saveHint=computed(()=>!draft.value.name.trim()?'请填写任务名称':!draft.value.steps.length?'请添加至少一个课程步骤':draft.value.steps.some(s=>!!unavailable(course(s.courseId)))?'有不可用课程，请移除对应步骤后保存':draft.value.steps.some(s=>!props.accounts.some(a=>a.id===s.accountId))?'请选择每一步使用的账号':'')
 async function undo():Promise<void> {
   const value=undoState.value;if(!value||props.busy)return
   if(value.kind==='remove')draft.value.steps.splice(Math.min(value.index,draft.value.steps.length),0,JSON.parse(JSON.stringify(value.step)))
@@ -78,7 +79,7 @@ function add(value: Course): void {
   const step = { id: crypto.randomUUID(), accountId: props.accounts.length === 1 ? props.accounts[0].id : '', courseId: value.id, options: { ...value.options } }
   draft.value.steps.push(step)
   selected.value = step.id
-  if (!draft.value.name) draft.value.name = value.name + ' 工作流'
+  if (!draft.value.name) draft.value.name = value.name + ' 任务'
 }
 function move(id: string, to: number): void {
   if (props.busy) return
@@ -121,7 +122,7 @@ async function save(): Promise<void> {
       validateRunOptions(step.options, value!.kind)
     } catch (error) {
       selected.value = step.id
-      validation.value = `${name(step)}：${String(error).replace(/^Error: /, '')}`
+      validation.value = `${name(step)}：${errorMessage(error)}`
       await nextTick()
       configPanel.value?.focusInvalid()
       return
@@ -144,7 +145,7 @@ async function save(): Promise<void> {
 </script>
 <template>
 <form @keydown="shortcuts" class="workflow-editor" novalidate @submit.prevent="save" @keydown.esc="picker=false">
-<header class="editor-header"><button type="button" :disabled="busy" @click="emit('cancel')"><UiIcon name="back"/>返回</button><input :disabled="busy" v-model="draft.name" aria-label="工作流名称" placeholder="工作流名称"/><span class="muted">{{draft.steps.length}} 步</span><button type="button" :aria-expanded="scheduleOpen" @click="scheduleOpen=!scheduleOpen" title="展开定时配置；定时修改随工作流一起保存">{{scheduleSummary}}</button></header>
+<header class="editor-header"><button type="button" :disabled="busy" @click="emit('cancel')"><UiIcon name="back"/>返回</button><input :disabled="busy" v-model="draft.name" aria-label="任务名称" placeholder="任务名称"/><span class="muted">{{draft.steps.length}} 步</span><button type="button" :aria-expanded="scheduleOpen" @click="scheduleOpen=!scheduleOpen" title="展开定时配置；定时修改随任务一起保存">{{scheduleSummary}}</button></header>
 <WorkflowScheduleForm v-show="scheduleOpen" ref="scheduleForm" v-model="draft.schedule" :disabled="busy" />
 <div v-if="error||validation" class="notice error" role="alert">{{validation||error}}<span v-if="error">；草稿已保留</span></div>
 <div class="editor-mobile-tools"><button ref="pickerTrigger" type="button" :aria-expanded="picker" @click="picker=!picker"><UiIcon name="add"/>添加课程</button><span class="muted editor-context">选中步骤即可编辑配置</span></div>
@@ -153,7 +154,7 @@ async function save(): Promise<void> {
 <WorkflowStepList :accounts="accounts" ref="stepList" :steps="draft.steps" :courses="courses" :selected="selected" :disabled="busy" @select="selectStep" @move="move" @remove="remove" />
 <WorkflowStepConfig :accounts="accounts" ref="configPanel" :step="current" :position="draft.steps.findIndex(s=>s.id===selected)+1" :course="current && course(current.courseId)" :disabled="busy" @restore="restore" />
 </div>
-<footer class="editor-footer"><div class="footer-feedback"><span v-if="undoState" role="status">{{undoState.kind==='remove'?'已移除步骤':'已恢复课程配置'}} <button type="button" ref="undoButton" class="quiet" :disabled="busy" @click="undo">撤销</button></span><span class="muted">{{saveHint || (dirty?'有未保存的修改':'草稿未修改')}}</span></div><div class="actions"><button type="button" :disabled="busy" @click="emit('cancel')">取消</button><button type="submit" class="primary" :title="saveHint || '保存工作流，不会自动启动；⌘/Ctrl+S'" :disabled="busy||!draft.name.trim()||!draft.steps.length||draft.steps.some(s=>!!unavailable(course(s.courseId)))"><UiIcon name="save"/>{{busy?'正在保存…':'保存工作流'}}</button></div></footer>
+<footer class="editor-footer"><div class="footer-feedback"><span v-if="undoState" role="status">{{undoState.kind==='remove'?'已移除步骤':'已恢复课程配置'}} <button type="button" ref="undoButton" class="quiet" :disabled="busy" @click="undo">撤销</button></span><span class="muted">{{saveHint || (dirty?'有未保存的修改':'暂无修改')}}</span></div><div class="actions"><button type="button" :disabled="busy" @click="emit('cancel')">取消</button><button type="submit" class="primary" :title="saveHint || '保存任务，不会自动启动；⌘/Ctrl+S'" :disabled="busy||!draft.name.trim()||!draft.steps.length||draft.steps.some(s=>!!unavailable(course(s.courseId)))"><UiIcon name="save"/>{{busy?'正在保存…':'保存任务'}}</button></div></footer>
 </form>
 </template>
 <style scoped>

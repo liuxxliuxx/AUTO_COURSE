@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { errorText } from '../lib/ui-copy'
 import { nextTick, onMounted, ref, watch } from 'vue'
 import type { AppInfo, SupportResource } from '@shared/app-info'
 import UiIcon from '../components/UiIcon.vue'
@@ -17,21 +18,21 @@ watch(diagnostics, () => {
   void nextTick(adjustTextareaHeight)
 })
 
-async function action(fn: () => Promise<unknown>): Promise<void> {
-  error.value = ''; try { await fn() } catch (e) { error.value = String(e) }
+async function action(operation: string, fn: () => Promise<unknown>): Promise<void> {
+  error.value = ''; try { await fn() } catch (e) { error.value = errorText(operation, e) }
 }
 
-onMounted(() => void action(async () => {
+onMounted(() => void action('加载应用信息', async () => {
   info.value = await window.appApi.app.version()
   diagnostics.value = await window.appApi.app.diagnostics()
   void nextTick(adjustTextareaHeight)
 }))
 
-function open(resource: SupportResource): void { void action(() => window.appApi.app.openSupport(resource)) }
-function link(resource: 'homepage' | 'issues' | 'releases'): void { void action(() => window.appApi.app.openLink(resource)) }
+function open(resource: SupportResource): void { void action('打开帮助资源', () => window.appApi.app.openSupport(resource)) }
+function link(resource: 'homepage' | 'issues' | 'releases'): void { void action('打开链接', () => window.appApi.app.openLink(resource)) }
 async function copy(): Promise<void> {
   copied.value = false
-  await action(async () => {
+  await action('复制诊断信息', async () => {
     await navigator.clipboard.writeText(diagnostics.value)
     copied.value = true
     setTimeout(() => { copied.value = false }, 2000)
@@ -84,7 +85,7 @@ async function copy(): Promise<void> {
               <p class="section-desc">包含当前应用版本与软硬件环境，提交反馈时请附上。</p>
             </div>
             <button :disabled="!diagnostics" class="copy-btn" @click="copy">
-              {{ copied ? '✓ 已复制到剪贴板' : '复制诊断信息' }}
+              {{ copied ? '诊断信息已复制' : '复制诊断信息' }}
             </button>
           </div>
           <div class="diag-box">

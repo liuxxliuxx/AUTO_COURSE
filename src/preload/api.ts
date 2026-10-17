@@ -43,6 +43,7 @@ export function createApi(ipcRenderer: IpcRenderer): AppApi {
       create:(input)=>invoke(ipcRenderer,'workflows:create',input),update:(id,version,input)=>invoke(ipcRenderer,'workflows:update',{id,version,input}),remove:(id)=>invoke(ipcRenderer,'workflows:remove',{id}),
       runs:()=>invoke(ipcRenderer,'workflows:runs'),run:(id)=>invoke(ipcRenderer,'workflows:run',{id}),
       start:(workflowId)=>invoke(ipcRenderer,'workflows:start',{workflowId}),stop:(runId)=>invoke(ipcRenderer,'workflows:stop',{runId}),openWindow:(runId)=>invoke(ipcRenderer,'workflows:window',{runId}),
+      windowVisibility:(runId,visible)=>invoke(ipcRenderer,'workflows:window-visibility',{runId,visible}),
       confirm:(runId,stepId,requestId)=>invoke(ipcRenderer,'workflows:confirm',{runId,stepId,requestId}),logs:(runId)=>invoke(ipcRenderer,'workflows:logs',{runId})
     },
     bot: {

@@ -30,6 +30,8 @@ describe('SettingsService', () => {
     expect(DEFAULT_SETTINGS.skipCompleted).toBe(true)
     expect(DEFAULT_SETTINGS.brushEnabled).toBe(true)
     expect(DEFAULT_SETTINGS.mapMode).toBe(false)
+    expect(settings.getAll().mutePlayback).toBe(true)
+    expect(settings.getAll().backgroundRun).toBe(false)
   })
 
   it('布尔按 1/0 往返', () => {

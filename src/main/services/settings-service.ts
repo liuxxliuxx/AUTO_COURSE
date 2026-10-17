@@ -13,6 +13,8 @@ import { createLogger } from './logger'
 const logger = createLogger('settings')
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  mutePlayback: true,
+  backgroundRun: false,
   loginMethod: 'zhihuishu',
   videoUrl: '',
   courseNote: '',
@@ -37,6 +39,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
 type Kind = 'string' | 'boolean' | 'number' | 'loginMethod' | 'accentColor'
 
 const KINDS: Record<keyof AppSettings, Kind> = {
+  mutePlayback: 'boolean',
+  backgroundRun: 'boolean',
   loginMethod: 'loginMethod',
   videoUrl: 'string',
   courseNote: 'string',

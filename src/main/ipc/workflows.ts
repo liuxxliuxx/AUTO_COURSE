@@ -11,6 +11,7 @@ export function registerWorkflowIpc(c: ServiceContainer): void {
   handle('workflows:start', r => c.workflowRuns.start(r.workflowId))
   handle('workflows:stop', r => c.workflowRuns.stop(r.runId))
   handle('workflows:window', r => c.workflowRuns.openWindow(r.runId))
+  handle('workflows:window-visibility', r => c.workflowRuns.windowVisibility(r.runId, r.visible))
   handle('workflows:confirm', r => c.workflowRuns.confirm(r.runId, r.stepId, r.requestId))
   handle('workflows:logs', r => c.workflowRuns.repository.logs(r.runId))
 }

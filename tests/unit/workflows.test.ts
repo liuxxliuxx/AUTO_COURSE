@@ -35,7 +35,7 @@ function harness(work: (ctx: RunnerContext) => Promise<RunOutcome> = async () =>
     const bus = new EventBus(); bus.on('event:bot-status', s => report(s))
     const browser = { openSession: async () => ({}) } as unknown as BrowserService
     const bot = new BotService(db, { get: () => credentials } as CredentialStore, settings, bus, browser, () => ({ mode: 'classic', run: async (ctx) => { contexts.push(ctx); return work(ctx) } }), async () => null, courses, accounts)
-    return { task: new CourseTaskExecutor(bot, accounts), openWindow: async () => { opened.push(run.id) }, cleanupStep: cleanup, stop:()=>bot.stop('user'), dispose: async () => { await bot.dispose(); bus.clear() } }
+    return { task: new CourseTaskExecutor(bot, accounts), windowVisibility: async () => false, openWindow: async () => { opened.push(run.id) }, cleanupStep: cleanup, stop:()=>bot.stop('user'), dispose: async () => { await bot.dispose(); bus.clear() } }
   })
   const add = (name: string) => { const result = courses.create({ name, url: `https://studyvideoh5.zhihuishu.com/stuStudy?recruitAndCourseId=${name}`, options: { ...DEFAULT_COURSE_OPTIONS } }); if (!result.ok) throw Error(result.message); return result.courseId! }
   const byCourse = new Map<string,string>()

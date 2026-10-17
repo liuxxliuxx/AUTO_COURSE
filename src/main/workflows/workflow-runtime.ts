@@ -34,7 +34,7 @@ export function createWorkflowRuntime(run: WorkflowRun, report: (status?: BotSta
     prepareStep: async step => {
       await cleanup()
       const bus = new EventBus()
-      const browser = new BrowserService({downloadDir:join(userData,'workflow-downloads',run.id,step.id),profileDir:accounts.profileDir(step.accountId),migrateLegacyProfile:false})
+      const browser = new BrowserService({downloadDir:join(userData,'workflow-downloads',run.id,step.id),profileDir:accounts.profileDir(step.accountId),migrateLegacyProfile:false,mutePlayback:run.snapshot.settings.mutePlayback,backgroundRun:run.snapshot.settings.backgroundRun})
       const settings = {...run.snapshot.settings, loginMethod:step.account.loginMethod, loggedUrl:step.account.loggedUrl}
       const media = new TranscriptionService({bus,tempNamespace:`${run.id}-${step.id}`,getSettings:()=>settings,worker})
       bus.on('event:bot-status', status=>report(status))
@@ -51,6 +51,12 @@ export function createWorkflowRuntime(run: WorkflowRun, report: (status?: BotSta
       current = {task:new CourseTaskExecutor(bot,accounts),browser,media,bus}
     },
     openWindow:async()=>{if(!current)throw new Error('课程窗口尚未就绪');await current.browser.ensureSession();await current.browser.focusCourseWindow()},
+    windowVisibility:async visible=>{
+      const browser = current?.browser
+      if (!browser) return null
+      if (visible === true) await browser.focusCourseWindow()
+      return browser.windowVisibility(visible)
+    },
     stop:async()=>{await current?.task.bot.stop('user')},
     cleanupStep:cleanup,
     dispose:cleanup

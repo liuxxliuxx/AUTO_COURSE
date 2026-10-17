@@ -126,10 +126,13 @@ function createCourseWindow(): BrowserWindow {
       backgroundThrottling: false
     }
   })
+  window.webContents.setAudioMuted(process.argv.includes('--mute-playback'))
 
   // showInactive：窗口照常出现，但不激活本进程、不抢键盘焦点。
   // 需要用户动手时（点「打开课程窗口 / 验证窗口 / 登录窗口」）由主应用显式 focus。
-  window.on('ready-to-show', () => window.showInactive())
+  window.on('ready-to-show', () => {
+    if (!process.argv.includes('--background-run')) window.showInactive()
+  })
 
   // 远程页面自己发起的 window.open 一律拒绝：多窗口由 BrowserService 显式管理，
   // 不能让网页凭空多开一个无受控的窗口。

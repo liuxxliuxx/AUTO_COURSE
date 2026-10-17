@@ -11,8 +11,9 @@ import CourseOptionsForm from '../components/CourseOptionsForm.vue'
 import type { CourseRunOptions } from '@shared/types'
 const settings = useSettingsStore(), courses = useCoursesStore()
 const uid = useId()
-type Section = 'defaults' | 'transcription' | 'appearance' | 'cache'
+type Section = 'playback' | 'defaults' | 'transcription' | 'appearance' | 'cache'
 const sections: Array<{ id: Section; label: string; description: string }> = [
+  { id: 'playback', label: '播放与窗口', description: '设置课程声音与后台运行' },
   { id: 'defaults', label: '课程默认配置', description: '仅用于之后添加的新课程' },
   { id: 'transcription', label: '转录', description: '设置转录文件的保存位置' },
   { id: 'appearance', label: '外观', description: '调整适合自己的界面大小' },
@@ -20,10 +21,11 @@ const sections: Array<{ id: Section; label: string; description: string }> = [
 ]
 const section = ref<Section>('defaults'), loading = ref(true), loaded=ref(false), saving = ref(false), error = ref(''), success = ref('')
 const clearingCache = ref(false)
-const globalDraft = ref({ transcribeBaseDir: '', uiScale: 1, accentColor: DEFAULT_ACCENT })
+const globalDraft = ref({ mutePlayback: true, backgroundRun: false, transcribeBaseDir: '', uiScale: 1, accentColor: DEFAULT_ACCENT })
 const defaults = ref<CourseRunOptions>({ ...courses.library.defaults })
-const baseline = ref<Record<Section,string>>({ defaults:'', transcription:'', appearance:'', cache:'' })
+const baseline = ref<Record<Section,string>>({ playback:'', defaults:'', transcription:'', appearance:'', cache:'' })
 function serialize(id: Section): string {
+  if (id==='playback') return JSON.stringify({mutePlayback:globalDraft.value.mutePlayback,backgroundRun:globalDraft.value.backgroundRun})
   if (id==='cache') return ''
   if (id==='defaults') return JSON.stringify(defaults.value)
   if (id==='transcription') return JSON.stringify({transcribeBaseDir:globalDraft.value.transcribeBaseDir})
@@ -48,7 +50,7 @@ async function load(): Promise<void> {
     if(settings.error || courses.error)throw Error(settings.error || courses.error)
     if (!settings.settings) throw new Error(settings.error || '设置加载失败')
     const s = settings.settings
-    globalDraft.value = { transcribeBaseDir: s.transcribeBaseDir, uiScale: s.uiScale, accentColor: s.accentColor }
+    globalDraft.value = { mutePlayback: s.mutePlayback, backgroundRun: s.backgroundRun, transcribeBaseDir: s.transcribeBaseDir, uiScale: s.uiScale, accentColor: s.accentColor }
     defaults.value = { ...courses.library.defaults }
     for (const item of sections) baseline.value[item.id] = serialize(item.id)
     loaded.value=true
@@ -68,6 +70,7 @@ async function save(): Promise<void> {
         if (!result.ok) throw new Error(result.message)
         break
       }
+      case 'playback': await settings.save({ mutePlayback: globalDraft.value.mutePlayback, backgroundRun: globalDraft.value.backgroundRun }); break
       case 'transcription': await settings.save({ transcribeBaseDir: globalDraft.value.transcribeBaseDir }); break
       case 'appearance': await settings.save({ uiScale: globalDraft.value.uiScale, accentColor: globalDraft.value.accentColor }); break
     }
@@ -99,7 +102,14 @@ async function pickDirectory(): Promise<void> { if (saving.value) return; try { 
           <header><h2>{{ sections.find(s => s.id === section)?.label }}</h2></header>
           <div v-if="error" class="notice error" role="alert">{{ error }}</div><div v-if="success" class="notice success" role="status">{{ success }}</div>
           <fieldset class="stack" :disabled="saving">
-          <template v-if="section === 'defaults'"><div class="notice">这些配置只会复制给新课程。已有课程请在课程详情中编辑。</div><CourseOptionsForm v-model="defaults" /><p class="muted small">图谱课不支持仅转录，添加图谱课时会改用“学习”。</p></template>
+          <template v-if="section === 'playback'">
+            <label class="check-row"><input v-model="globalDraft.mutePlayback" type="checkbox" />静音播放</label>
+            <p class="muted small">关闭课程窗口的声音，默认开启。</p>
+            <label class="check-row"><input v-model="globalDraft.backgroundRun" type="checkbox" />后台运行</label>
+            <p class="muted small">运行时隐藏课程窗口，默认关闭。需要登录或验证码处理时，可在运行页打开课程窗口。</p>
+            <div class="notice">保存后对下一次运行生效。</div>
+          </template>
+          <template v-else-if="section === 'defaults'"><div class="notice">这些配置只会复制给新课程。已有课程请在课程详情中编辑。</div><CourseOptionsForm v-model="defaults" /><p class="muted small">图谱课不支持仅转录，添加图谱课时会改用“学习”。</p></template>
           <template v-else-if="section === 'transcription'"><div class="field"><label :for="`${uid}-dir`">输出目录</label><div class="directory-row"><input :id="`${uid}-dir`" v-model="globalDraft.transcribeBaseDir" placeholder="请选择文件夹" /><button type="button" @click="pickDirectory">选择文件夹</button></div><small>是否转录由每门课程的运行方式决定。</small></div><div class="notice">修改目录对下一次运行生效，不会移动已有文件。</div></template>
           <template v-else-if="section === 'cache'">
             <p class="muted">清除课程网页缓存和临时下载文件。下次打开课程时会重新加载网页资源。</p>

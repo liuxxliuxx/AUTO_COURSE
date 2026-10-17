@@ -25,6 +25,8 @@ const logger = createLogger('browser')
 const FIRST_WINDOW_TIMEOUT_MS = 40_000
 
 export interface BrowserServiceOptions {
+  mutePlayback?: boolean
+  backgroundRun?: boolean
   /** 宿主把页面下载落到哪里 */
   downloadDir: string
   /**
@@ -68,6 +70,8 @@ export class BrowserService {
       `--download-dir=${this.options.downloadDir}`,
       `--profile-dir=${this.options.profileDir}`
     ]
+    if (this.options.mutePlayback !== false) args.push('--mute-playback')
+    if (this.options.backgroundRun) args.push('--background-run')
     if (!app.isPackaged) {
       // 未打包时 process.execPath 是 Electron 本体，必须显式告诉它 app 在哪
       args.unshift(app.getAppPath())
@@ -210,6 +214,18 @@ export class BrowserService {
       logger.warn(`聚焦课程窗口失败: ${String(error)}`)
       return false
     }
+  }
+
+  /** Read or change visibility without closing the browser or interrupting playback. */
+  async windowVisibility(visible?: boolean): Promise<boolean | null> {
+    const host = this.electronApp
+    if (!host) return null
+    return host.evaluate(({ BrowserWindow }, desired) => {
+      const window = BrowserWindow.getAllWindows().find(item => !item.isDestroyed())
+      if (!window) return null
+      if (desired === false) window.hide()
+      return window.isVisible() && !window.isMinimized()
+    }, visible)
   }
 
   // ---------------------------------------------------------------- 下载

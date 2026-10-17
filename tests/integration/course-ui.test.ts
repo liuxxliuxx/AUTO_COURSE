@@ -25,6 +25,7 @@ let fixtureLogs: LogEntry[]
 let accounts: AccountService, accountId: string, accountDir: string
 let workflows: WorkflowService
 let runFixtures: WorkflowRun[] | null
+let fixtureWindowVisible: boolean
 let lastFlowId: string
 let cacheClears: number
 let cancelExport: boolean
@@ -36,6 +37,7 @@ beforeAll(async () => { server = await startFixtureServer(resolve('out/renderer'
 afterAll(async () => { await browser?.close(); await server?.close() })
 beforeEach(async () => {
   db = new Database(':memory:'); settings = new SettingsService(db)
+  fixtureWindowVisible = false
   starts = 0; failSave = false; fixtureLogs = []; perRunLogs = null; delayedLogs = {}; runFixtures = null
   cancelExport = false; cacheClears = 0
   failFlowListOnce = false;actionDelay=0;startRejection=null;failSettingsLoadOnce=false
@@ -64,6 +66,7 @@ beforeEach(async () => {
       case 'workflows.update': if(failSave)throw Error('fixture 保存失败');return workflows.update(args[0] as string,args[1] as number,args[2] as WorkflowInput)
       case 'workflows.remove': return workflows.remove(args[0] as string)
       case 'workflows.logs': {const id=args[0] as string; const data=perRunLogs?.[id]??fixtureLogs;if(delayedLogs[id])await new Promise(resolve=>setTimeout(resolve,delayedLogs[id]));return data.map(l=>({...l,workflowId:lastFlowId,runId:id,stepId:'fixture-step'}))}
+      case 'workflows.windowVisibility': if (typeof args[1] === 'boolean') fixtureWindowVisible=args[1]; return fixtureWindowVisible
       case 'workflows.confirm': return
       case 'workflows.stop': {
         const run=runFixtures?.find(run=>run.id===args[0])
@@ -80,7 +83,11 @@ beforeEach(async () => {
         return [{id:'fixture-run',workflowId:flow.id,source:'manual',state:state.state==='idle'?(state.error?'failed':'cancelled'):state.state==='stopping'?'stopping':'running',snapshot:{workflow:flow,steps:flow.steps.map(s=>({...s,account:accounts.get(s.accountId)!,course:courses.get(s.courseId)!})),settings:settings.getAll()},startedAt:new Date().toISOString(),finishedAt:null,message:state.error?.message??'',steps:flow.steps.map(s=>({stepId:s.id,state:state.state==='idle'?'failed':'running',status:state,transcription:null,error:state.error?.message??null,startedAt:null,finishedAt:null}))}] satisfies WorkflowRun[]
       }
       case 'workflows.start': {
-        if(startRejection)return {ok:false,...startRejection}
+        if(startRejection){
+          const rejected=runFixtures?.find(run=>run.id===startRejection!.runId)
+          if(rejected)rejected.startedAt=new Date().toISOString()
+          return {ok:false,...startRejection}
+        }
         const flow=workflows.get(args[0] as string);lastFlowId=flow?.id??''
         const course=flow?courses.get(flow.steps[0].courseId)!:state.snapshot!.course
         starts++;state={...state,state:'running',phase:'executing',courseId:course.id,error:null,snapshot:{id:'fixture-run',course,settings:settings.getAll(),startedAt:new Date().toISOString(),source:'manual'}}
@@ -336,11 +343,59 @@ describe('紧凑界面操作与提示', () => {
     state = { ...state, state: 'idle', phase: 'finished', intervention:null, error: { stage: 'executing', code: 'execution', message: '测试执行失败' } }
     await page.reload()
     await page.getByRole('navigation', { name: '主导航' }).getByRole('link', { name: '运行', exact: true }).click(); await waitForPageTransition()
-    await page.getByRole('button', { name: '运行最新配置', exact: true }).click()
+    await page.getByRole('button', { name: '重新运行', exact: true }).click()
     expect(starts).toBe(1)
   })
 })
 
+
+describe('运行窗口按钮', () => {
+  it('同一位置切换打开和隐藏，并跟随实际窗口状态', async () => {
+    await add('窗口切换课程','window-toggle')
+    const course=courses.list().courses[0]
+    const flow=workflows.create({name:'窗口切换任务',steps:[{id:'window',accountId,courseId:course.id,options:course.options}],schedule:null})
+    runFixtures=[{id:'window-run',workflowId:flow.id,source:'manual',state:'running',startedAt:new Date().toISOString(),finishedAt:null,message:'',snapshot:{workflow:flow,steps:flow.steps.map(s=>({...s,account:accounts.get(s.accountId)!,course})),settings:settings.getAll()},steps:[]}]
+    await page.getByRole('link',{name:'运行',exact:true}).click(); await waitForPageTransition()
+    const open=page.getByRole('button',{name:'打开课程窗口',exact:true})
+    const hide=page.getByRole('button',{name:'隐藏课程窗口',exact:true})
+    await open.click()
+    await hide.waitFor()
+    expect(await open.count()).toBe(0)
+    expect(fixtureWindowVisible).toBe(true)
+    await hide.click()
+    await open.waitFor()
+    expect(await hide.count()).toBe(0)
+    expect(fixtureWindowVisible).toBe(false)
+    expect(runFixtures[0].state).toBe('running')
+    fixtureWindowVisible=true
+    await hide.waitFor()
+    fixtureWindowVisible=false
+    await open.waitFor()
+  })
+})
+
+describe('播放与窗口设置', () => {
+  it('默认静音、前台运行，支持取消、保存及刷新恢复', async () => {
+    await page.getByRole('link', { name: '设置', exact: true }).click(); await waitForPageTransition()
+    await page.getByRole('button', { name: '播放与窗口', exact: true }).click()
+    const muted = page.getByRole('checkbox', { name: '静音播放', exact: true })
+    const background = page.getByRole('checkbox', { name: '后台运行', exact: true })
+    expect(await muted.isChecked()).toBe(true)
+    expect(await background.isChecked()).toBe(false)
+    await muted.uncheck(); await background.check()
+    await page.getByRole('button', { name: '取消修改', exact: true }).click()
+    expect(await muted.isChecked()).toBe(true)
+    expect(await background.isChecked()).toBe(false)
+    await muted.uncheck(); await background.check()
+    await page.getByRole('button', { name: '保存当前分类', exact: true }).click()
+    await page.getByText('当前分类设置已保存', { exact: true }).waitFor()
+    expect(settings.getAll()).toMatchObject({ mutePlayback: false, backgroundRun: true })
+    await page.reload()
+    await page.getByRole('button', { name: '播放与窗口', exact: true }).click()
+    expect(await muted.isChecked()).toBe(false)
+    expect(await background.isChecked()).toBe(true)
+  })
+})
 
 describe('外观强调色', () => {
   it('预览、取消、保存失败、全局应用和刷新恢复', async () => {
@@ -1029,23 +1084,48 @@ describe('交互状态与直接操作',()=>{
     await page.screenshot({path:`${shots}/interaction-logs.png`})
   })
 
+  it('只有同一任务最新的异常或主动停止记录显示重新运行，新运行会隐藏旧记录入口',async()=>{
+    await add('重跑可见性课程','restart-visibility')
+    const course=courses.list().courses[0]
+    const flow=workflows.create({name:'重跑可见性',steps:[{id:'visibility',accountId,courseId:course.id,options:course.options}],schedule:null})
+    const make=(id:string,state:WorkflowRun['state'],startedAt='2026-10-01T00:00:00Z'):WorkflowRun=>({id,workflowId:flow.id,source:'manual',state,startedAt,finishedAt:null,message:'',snapshot:{workflow:flow,steps:flow.steps.map(s=>({...s,account:accounts.get(s.accountId)!,course})),settings:settings.getAll()},steps:[]})
+    const retry=page.getByRole('button',{name:'重新运行',exact:true})
+    for(const state of ['succeeded','cancelled','running','stopping','failed','partial','interrupted','rejected'] as const){
+      runFixtures=[make('selected',state)]
+      await page.goto(server.origin + '/index.html#/run?id=selected')
+      await page.reload()
+      await page.getByRole('heading',{name:'重跑可见性',exact:true}).waitFor()
+      expect(await retry.count(),state).toBe(['failed','partial','interrupted','rejected','cancelled'].includes(state)?1:0)
+    }
+    // A newer run of another workflow must not hide this workflow's retry.
+    runFixtures=[make('selected','failed'),{...make('unrelated','succeeded','2026-10-02T00:00:00Z'),workflowId:'other'}]
+    await page.reload()
+    await retry.waitFor()
+    for(const state of ['running','succeeded','failed','rejected'] as const){
+      runFixtures=[make('selected','failed'),make('newer',state,'2026-10-02T00:00:00Z')]
+      await page.reload()
+      await page.getByRole('heading',{name:'重跑可见性',exact:true}).waitFor()
+      expect(await retry.count(),state).toBe(0)
+    }
+  })
+
   it('历史记录重跑显示最新配置含义，拒绝入口定位记录，删除原工作流后禁止启动',async()=>{
     await add('历史状态课程','restart-feedback')
     const course=courses.list().courses[0]
     const flow=workflows.create({name:'历史任务',steps:[{id:'history',accountId, courseId:course.id,options:course.options}],schedule:null})
     const make=(id:string,state:WorkflowRun['state']):WorkflowRun=>({id,workflowId:flow.id,source:'manual',state,startedAt:'2026-10-01T00:00:00Z',finishedAt:'2026-10-01T00:30:00Z',message:'',snapshot:{workflow:flow,steps:flow.steps.map(s=>({...s,account:accounts.get(s.accountId)!,course})),settings:settings.getAll()},steps:[]})
-    runFixtures=[make('old-run','failed'),make('rejected-run','rejected')]
+    runFixtures=[make('old-run','failed'),{...make('rejected-run','rejected'),startedAt:'2026-09-30T00:00:00Z'}]
     startRejection={message:'请先保存登录账号和密码',runId:'rejected-run'}
     await page.getByRole('link',{name:'运行',exact:true}).click(); await waitForPageTransition()
     await page.evaluate(()=>location.hash='/run?id=old-run')
-    await page.getByRole('button',{name:'运行最新配置',exact:true}).click()
+    await page.getByRole('button',{name:'重新运行',exact:true}).click()
     await page.getByRole('alert').filter({hasText:'请先保存登录账号和密码'}).waitFor()
     await page.getByRole('button',{name:'查看启动记录',exact:true}).click()
     expect(page.url()).toContain('id=rejected-run')
     workflows.remove(flow.id)
-    await page.getByRole('button',{name:'运行最新配置',exact:true}).waitFor({state:'visible'})
+    await page.getByRole('button',{name:'重新运行',exact:true}).waitFor({state:'visible'})
     await page.waitForFunction(()=>document.querySelector('.run-detail')?.textContent?.includes('原工作流已删除'))
-    expect(await page.getByRole('button',{name:'运行最新配置',exact:true}).isDisabled()).toBe(true)
+    expect(await page.getByRole('button',{name:'重新运行',exact:true}).isDisabled()).toBe(true)
     expect(await page.getByRole('heading',{name:'历史任务',exact:true}).isVisible()).toBe(true)
     await page.screenshot({path:`${shots}/interaction-deleted-flow.png`})
   })

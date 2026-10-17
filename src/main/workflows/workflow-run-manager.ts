@@ -91,6 +91,9 @@ export class WorkflowRunManager {
   }
   async stop(id: string): Promise<void> { const a = this.active.get(id); if (!a) return; await a.executor.stop(); await a.done }
   async openWindow(id: string): Promise<void> { const a = this.active.get(id); if (!a) throw new Error('运行已结束'); await a.executor.runtime.openWindow() }
+  async windowVisibility(id: string, visible?: boolean): Promise<boolean | null> {
+    return this.active.get(id)?.executor.runtime.windowVisibility(visible) ?? null
+  }
   confirm(id: string, stepId: string, requestId: string): void {
     const a = this.active.get(id), step = a?.executor.run.steps.find(s => s.stepId === stepId && s.state === 'running')
     if (!step || !requestId || step.status?.intervention?.id !== requestId) throw new Error('处理请求已过期')

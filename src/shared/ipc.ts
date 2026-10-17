@@ -32,6 +32,7 @@ import type {
 export const IPC_INVOKE = {
   workflowsList: 'workflows:list', workflowsGet: 'workflows:get', workflowsCreate: 'workflows:create', workflowsUpdate: 'workflows:update', workflowsRemove: 'workflows:remove',
   workflowRuns: 'workflows:runs', workflowRun: 'workflows:run', workflowStart: 'workflows:start', workflowStop: 'workflows:stop', workflowWindow: 'workflows:window', workflowConfirm: 'workflows:confirm', workflowLogs: 'workflows:logs',
+  workflowWindowVisibility: 'workflows:window-visibility',
   botStart: 'bot:start',
   botStop: 'bot:stop',
   botStatus: 'bot:status',
@@ -122,6 +123,7 @@ export interface InvokeMap {
   'workflows:start': {req:{workflowId:string};res:WorkflowStartResult}
   'workflows:stop': {req:{runId:string};res:void}
   'workflows:window': {req:{runId:string};res:void}
+  'workflows:window-visibility': {req:{runId:string;visible?:boolean};res:boolean|null}
   'workflows:confirm': {req:{runId:string;stepId:string;requestId:string};res:void}
   'workflows:logs': {req:{runId:string};res:RunEvent[]}
 

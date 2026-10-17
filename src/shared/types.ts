@@ -209,6 +209,10 @@ export type LoginMethod = 'zhihuishu' | 'upc-institution' | 'upc'
  * 键名与 v1 保持一致，便于 v1 数据库迁移。
  */
 export interface AppSettings {
+  /** 课程窗口静音，不改变视频本身的音轨。 */
+  mutePlayback: boolean
+  /** 启动课程窗口时保持隐藏，可手动打开。 */
+  backgroundRun: boolean
   // --- 账号 ---
   loginMethod: LoginMethod
 

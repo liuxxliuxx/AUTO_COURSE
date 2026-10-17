@@ -38,6 +38,8 @@ function withApp<T>(fn: (ctx: { db: Database; settings: SettingsService }) => T)
 describe('重启恢复', () => {
   it('设置在全量重启后保持不变', () => {
     const snapshot: AppSettings = {
+      mutePlayback: false,
+      backgroundRun: true,
       loginMethod: 'upc',
       videoUrl: 'https://ai-smart-course-student-pro.zhihuishu.com/singleCourse/knowledgeStudy/1/2?mapUid=u',
       courseNote: '艺术与审美',

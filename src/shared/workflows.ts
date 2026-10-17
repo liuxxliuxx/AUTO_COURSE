@@ -29,6 +29,7 @@ export interface WorkflowApi {
   runs(): Promise<WorkflowRun[]>; run(id: string): Promise<WorkflowRun | null>
   start(workflowId: string): Promise<WorkflowStartResult>; stop(runId: string): Promise<void>
   openWindow(runId: string): Promise<void>
+  windowVisibility(runId: string, visible?: boolean): Promise<boolean | null>
   confirm(runId: string, stepId: string, requestId: string): Promise<void>
   logs(runId: string): Promise<RunEvent[]>
 }

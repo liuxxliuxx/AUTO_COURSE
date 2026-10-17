@@ -8,6 +8,7 @@ export interface WorkflowRuntime {
   task: CourseTaskExecutor
   stop?(): Promise<void>
   openWindow(): Promise<void>
+  windowVisibility(visible?: boolean): Promise<boolean | null>
   cleanupStep(): Promise<void>
   dispose(): Promise<void>
 }

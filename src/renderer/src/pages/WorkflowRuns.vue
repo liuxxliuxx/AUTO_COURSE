@@ -20,8 +20,26 @@ const visibleRuns = computed(() => orderedRuns.value.filter(r => runFilter.value
 const steps = computed(() => current.value?.snapshot.steps.map(definition => ({ definition, result: current.value!.steps.find(step => step.stepId === definition.id) })) ?? [])
 const activeStep = computed(()=>steps.value.find(step=>step.result?.state==='running'))
 const latestFlow = computed(()=>store.flows.find(flow=>flow.id===current.value?.workflowId))
+const canRestart = computed(()=>!!current.value && ['failed','partial','interrupted','rejected','cancelled'].includes(current.value.state) && orderedRuns.value.find(run=>run.workflowId===current.value?.workflowId)?.id===current.value.id)
 const restartReason = computed(()=>!latestFlow.value ? '原工作流已删除，无法再次启动。历史记录仍可查看。' : store.running.some(run=>run.workflowId===current.value?.workflowId) ? '该工作流已有进行中的记录，请先查看或停止该记录。' : '')
 const relatedRun = computed(()=>store.running.find(run=>run.workflowId===current.value?.workflowId))
+const windowVisible = ref<boolean | null>(null)
+let visibilityRequest = 0, visibilityTimer: ReturnType<typeof setInterval> | undefined
+async function refreshWindow(): Promise<void> {
+  const run = current.value, request = ++visibilityRequest
+  if (!run || !activeRun(run)) { windowVisible.value = null; return }
+  try {
+    const visible = await api.workflows.windowVisibility(run.id)
+    if (!disposed && request === visibilityRequest && selected.value === run.id) windowVisible.value = visible
+  } catch { if (request === visibilityRequest) windowVisible.value = null }
+}
+async function toggleWindow(run: WorkflowRun): Promise<void> {
+  await action(run, windowVisible.value ? '正在隐藏窗口…' : '正在打开窗口…', async () => {
+    visibilityRequest++
+    await api.workflows.windowVisibility(run.id, !windowVisible.value)
+    await refreshWindow()
+  })
+}
 const copied = ref(false), logLoading = ref(true), logError = ref(''), followLogs = ref(true), unseenLogs = ref(0), logPanel = ref<HTMLElement | null>(null)
 const logText = computed(()=>filtered.value.map(l=>new Date(l.time).toLocaleTimeString()+' ['+l.level+'] '+l.message).join('\n'))
 const metrics = computed(() => ({completed: current.value?.steps.filter(s=>s.state==='succeeded').length??0, handled: current.value?.steps.reduce((n,s)=>n+(s.status?.completedCount??0),0)??0, minutes: Math.floor((current.value?.steps.reduce((n,s)=>n+(s.status?.watchedSeconds??0),0)??0)/60)}))
@@ -53,12 +71,13 @@ watch(visibleRuns, () => {
   if (!visibleRuns.value.some(run => run.id === selected.value)) selected.value=visibleRuns.value[0]?.id??''
 }, {immediate:true})
 watch(selected, () => {
+  visibilityRequest++; windowVisible.value=null; void refreshWindow()
   logRequest++; logs.value=[];logLoading.value=!!selected.value;logError.value='';copied.value=false;followLogs.value=true;unseenLogs.value=0;clearTimeout(copyTimer)
   if (String(route.query.id??'')!==selected.value) void router.replace({query:{...route.query,id:selected.value||undefined}})
   void refreshLogs()
 })
-onMounted(async () => {await store.refreshRuns();if(disposed)return;await refreshLogs();if(!disposed)timer=setInterval(()=>void refreshLogs(),2000)})
-onUnmounted(() => { disposed = true; logRequest++; clearInterval(timer); clearTimeout(copyTimer) })
+onMounted(async () => {await store.refreshRuns();if(disposed)return;await refreshLogs();if(!disposed){timer=setInterval(()=>void refreshLogs(),2000);void refreshWindow();visibilityTimer=setInterval(()=>void refreshWindow(),1000)}})
+onUnmounted(() => { disposed = true; visibilityRequest++; clearInterval(visibilityTimer); logRequest++; clearInterval(timer); clearTimeout(copyTimer) })
 async function action(run: WorkflowRun, label: string, fn: () => Promise<unknown>): Promise<void> {
   const id=run.id
   if(pending.value[id])return
@@ -68,6 +87,7 @@ async function action(run: WorkflowRun, label: string, fn: () => Promise<unknown
   finally {delete pending.value[id]}
 }
 async function restart(run: WorkflowRun): Promise<void> {
+  if (!canRestart.value || current.value?.id!==run.id || restartReason.value) return
   await action(run,'正在启动…',async()=>{
     const result=await api.workflows.start(run.workflowId)
     await store.refreshRuns()
@@ -102,12 +122,12 @@ function choose(id:string):void{runFilter.value='all';selected.value=id}
       <div v-if="current.message" class="notice" :class="{error:['failed','partial','rejected'].includes(current.state)}">{{current.message}}</div>
       <div class="actions">
         <button v-if="activeRun(current)" :disabled="busy||current.state==='stopping'" :title="current.state==='stopping'?'已收到停止请求，正在等待当前任务退出':'停止本次运行，尚未开始的步骤不会执行'" @click="action(current,'正在停止…',()=>api.workflows.stop(current!.id))"><UiIcon name="stop"/>{{current.state==='stopping'?'正在停止…':'停止任务'}}</button>
-        <button v-if="activeRun(current) && !needsAttention(current)" :disabled="busy" title="显示本次任务使用的课程窗口" @click="action(current,'正在打开窗口…',()=>api.workflows.openWindow(current!.id))">打开课程窗口</button>
-        <button v-if="!activeRun(current)" :disabled="busy||!!restartReason" :title="restartReason || '使用任务列表目前保存的配置新建一次运行，历史记录保持不变'" @click="restart(current)"><UiIcon name="play"/>运行最新配置</button>
+        <button v-if="activeRun(current) && !needsAttention(current)" :disabled="busy || windowVisible === null" :title="windowVisible ? '隐藏窗口，任务继续运行' : '显示本次任务使用的课程窗口'" @click="toggleWindow(current)">{{windowVisible ? '隐藏课程窗口' : '打开课程窗口'}}</button>
+        <button v-if="canRestart" :disabled="busy||!!restartReason" :title="restartReason || '使用任务列表目前保存的配置新建一次运行，历史记录保持不变'" @click="restart(current)"><UiIcon name="play"/>重新运行</button>
         <span v-if="busy" class="muted small" role="status">{{pending[current.id]}}</span>
       </div>
-      <p v-if="!activeRun(current) && restartReason" class="muted small">{{restartReason}} <button v-if="relatedRun" class="quiet" @click="choose(relatedRun.id)">查看进行中的记录</button></p>
-      <p v-else-if="!activeRun(current)" class="muted small">再次启动使用最新配置，不重放历史快照。</p>
+      <p v-if="canRestart && restartReason" class="muted small">{{restartReason}} <button v-if="relatedRun" class="quiet" @click="choose(relatedRun.id)">查看进行中的记录</button></p>
+      <p v-else-if="canRestart" class="muted small">重新运行使用最新配置，不重放历史快照。</p>
       <div v-if="current.state==='stopping'" class="notice" role="status">已收到停止请求，正在等待当前任务退出；不会再开始后续步骤。</div>
       <div v-if="activeStep && current.state==='running'" class="current-task"><strong>当前第 {{steps.findIndex(s=>s.definition.id===activeStep!.definition.id)+1}} 步 · {{activeStep.definition.course.name}} · {{activeStep.definition.account.name}}</strong><p>{{phases[activeStep.result?.status?.phase??'preparing']}} · {{activeStep.result?.status?.currentTitle || activeStep.result?.status?.message || '正在准备课程'}}</p></div>
       <template v-for="step in current.steps" :key="step.stepId"><div v-if="current.state==='running' && step.state==='running' && step.status?.intervention" class="notice warning" role="status"><p>{{step.status!.intervention!.message}}</p><div class="actions"><button :disabled="busy" title="在课程窗口中完成登录或验证码" @click="action(current,'正在打开窗口…',()=>api.workflows.openWindow(current!.id))">打开处理窗口</button><button :disabled="busy || !step.status!.intervention!.id" title="完成窗口中的操作后，通知当前任务继续" @click="action(current,'正在确认…',()=>api.workflows.confirm(current!.id,step.stepId,step.status!.intervention!.id!))">已完成，继续</button></div></div></template>

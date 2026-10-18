@@ -190,6 +190,25 @@ export class BrowserService {
     return this.openSession()
   }
 
+  /** 获取期间把课程弹窗收进受控窗口，保留账号登录态。 */
+  async enableCourseDiscoveryNavigation(): Promise<void> {
+    const host = await this.ensureHost()
+    await host.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows().find(w => !w.isDestroyed())
+      if (!window) throw new Error('课程窗口尚未就绪')
+      window.webContents.setWindowOpenHandler(({ url }) => {
+        try {
+          const target = new URL(url)
+          if (target.protocol === 'https:' && !target.username && !target.password &&
+            ['studyvideoh5.zhihuishu.com', 'ai-smart-course-student-pro.zhihuishu.com', 'onlineh5.zhihuishu.com'].includes(target.hostname)) {
+            setImmediate(() => { if (!window.isDestroyed()) void window.loadURL(url).catch(() => {}) })
+          }
+        } catch { /* 非课程弹窗不打开 */ }
+        return { action: 'deny' }
+      })
+    })
+  }
+
   /**
    * 把课程窗口提到前台并聚焦。
    *

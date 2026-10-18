@@ -11,6 +11,30 @@ const input = (id: string, name = id) => ({ name, url: `https://studyvideoh5.zhi
 function created(result: CourseMutationResult): Course { expect(result.ok).toBe(true); if (!result.ok) throw new Error(result.message); return result.library.courses.find(c => c.id === result.courseId)! }
 
 describe('课程库与迁移', () => {
+  it('课程获取去重并保留已有配置和默认选择，图谱不继承仅转录', () => {
+    const { db, settings } = setup(), courses = new CourseService(db, settings)
+    const original = created(courses.create(input('existing', '自定义名称')))
+    courses.defaults({ ...DEFAULT_COURSE_OPTIONS, action: 'transcribe', timeLimitMinutes: 15 })
+    const items = [
+      { name: '平台名称', url: input('existing').url, kind: 'classic' as const },
+      { name: '新共享课', url: input('new').url, kind: 'classic' as const },
+      { name: '新图谱课', url: 'https://ai-smart-course-student-pro.zhihuishu.com/singleCourse/knowledgeStudy/123/456', kind: 'map' as const }
+    ]
+    expect(courses.importDiscovered(items)).toEqual({ added: 2, existing: 1 })
+    expect(courses.get(original.id)).toEqual(original)
+    expect(courses.list().selectedCourseId).toBe(original.id)
+    expect(courses.list().courses.find(c => c.kind === 'map')?.options).toMatchObject({ action: 'learn', timeLimitMinutes: 15 })
+    expect(courses.importDiscovered(items)).toEqual({ added: 0, existing: 3 })
+  })
+  it('批量导入失败回滚整批课程和默认选择', () => {
+    const { db, settings } = setup(), courses = new CourseService(db, settings)
+    expect(() => courses.importDiscovered([
+      { name: '有效', url: input('valid').url, kind: 'classic' },
+      { name: '类型不符', url: input('invalid').url, kind: 'map' }
+    ])).toThrow('类型不一致')
+    expect(courses.list().courses).toEqual([])
+    expect(courses.list().selectedCourseId).toBeNull()
+  })
   it('旧课程、历史与进度不导入新版课程库', () => {
     const {db,settings}=setup()
     settings.update({videoUrl:input('a').url,courseNote:'旧课程'})

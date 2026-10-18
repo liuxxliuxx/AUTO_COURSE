@@ -21,6 +21,7 @@ import { addLogSink, createLogger } from './logger'
 import { EventBus } from './event-bus'
 import { SettingsService } from './settings-service'
 import { CourseService } from './course-service'
+import { CourseDiscoveryService } from './course-discovery-service'
 import { type RunnerFactory } from './bot-service'
 import { Database } from '../storage/database'
 import type { SttWorkerOptions } from './stt-worker'
@@ -65,6 +66,7 @@ export class ServiceContainer {
   readonly accounts: AccountService
   readonly settings: SettingsService
   readonly courses: CourseService
+  readonly courseDiscovery: CourseDiscoveryService
   readonly workflows: WorkflowService
   readonly workflowRuns: WorkflowRunManager
   readonly workflowScheduler: WorkflowScheduler
@@ -100,6 +102,7 @@ export class ServiceContainer {
       return createWorkflowRuntime(run,report,{db:this.db,accounts:this.accounts,courses:this.courses,settingsService:this.settings,userData,worker:sttOptions(userData),runnerFactory:()=>this.runnerFactory})
     },run=>this.bus.emit('event:workflow-run',run))
     this.workflowScheduler = new WorkflowScheduler(this.db,this.workflows,this.workflowRuns)
+    this.courseDiscovery = new CourseDiscoveryService(this.accounts, this.courses, this.settings, this.workflowRuns, userData)
 
 
   }
@@ -217,6 +220,7 @@ export class ServiceContainer {
     this.disposed = true
 
     this.workflowScheduler.stop()
+    await this.courseDiscovery.dispose()
     await this.workflowRuns.dispose()
 
     this.removeLogSink?.()

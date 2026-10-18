@@ -4,6 +4,7 @@ import { identifyCourse, optionsFromLegacy, validateRunOptions } from '@shared/c
 import type { Database } from '../storage/database'
 import type { SettingsService } from './settings-service'
 import { sanitizeCourseNote } from '../util/filename'
+import type { DiscoveredCourse } from '@shared/course-discovery'
 
 type Row = { id: string; identity: string; name: string; url: string; kind: Course['kind']; options: string;
   created_at: string; updated_at: string; last_run_at: string | null; progress_warning: string | null }
@@ -95,6 +96,25 @@ export class CourseService {
     return this.mutate(() => { validateRunOptions(options); this.db.setSetting('courseDefaults', JSON.stringify(options)) })
   }
   markRun(id: string): void { this.db.raw().prepare('UPDATE courses SET last_run_at=? WHERE id=?').run(new Date().toISOString(), id) }
+
+  /** 同一事务导入，已有课程保持名称、配置与默认选择。 */
+  importDiscovered(items: DiscoveredCourse[]): { added: number; existing: number } {
+    return this.db.transaction(() => {
+      const { selectedCourseId, defaults } = this.list()
+      let added = 0, existing = 0
+      for (const item of items) {
+        if (identifyCourse(item.url).kind !== item.kind) throw new Error(`课程标签与地址类型不一致：${item.name}`)
+        const options = { ...defaults }
+        if (item.kind === 'map' && options.action === 'transcribe') options.action = 'learn'
+        const result = this.create({ name: item.name, url: item.url, options })
+        if (result.ok) added++
+        else if (result.existingCourseId) existing++
+        else throw new Error(result.message)
+      }
+      if (selectedCourseId) this.db.setSetting('selectedCourseId', selectedCourseId)
+      return { added, existing }
+    })
+  }
 
   /**
    * 转录输出目录名。默认就是课程名，保证和 v1 已有的「课程录音/<课程名>/」一致；

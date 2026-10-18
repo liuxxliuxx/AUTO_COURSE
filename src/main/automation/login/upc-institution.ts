@@ -45,7 +45,9 @@ export class UpcInstitutionLogin implements LoginProvider {
     }
 
     ctx.log.info(`机构 SSO 重定向链完成：${result.finalUrl}`)
-    const course = await checkCourseSession(ctx)
+    // hub 工作台只是授权落地页。继续访问调用方要求的课程页/课程中心并验证页面。
+    ctx.log.info('机构授权完成，正在跳转到目标课程页面')
+    const course = await checkCourseSession(ctx, { afterAuthentication: true })
     if (!course.loggedIn) {
       return { ok: false, alreadyLoggedIn: false, message: `机构授权后课程鉴权未通过：${course.detail}` }
     }

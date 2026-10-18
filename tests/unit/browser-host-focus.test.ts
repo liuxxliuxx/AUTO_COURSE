@@ -15,7 +15,7 @@
  */
 
 import { readFileSync, readdirSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
@@ -31,8 +31,8 @@ function walk(dir: string): string[] {
 }
 
 const files = walk(mainDir).map((path) => ({ path, text: readFileSync(path, 'utf8') }))
-const hostSource = files.find((file) => file.path.endsWith('automation/browser-host.ts'))!
-const runtime = files.find((file) => file.path.endsWith('workflows/workflow-runtime.ts'))!
+const hostSource = files.find((file) => file.path.endsWith(join('automation', 'browser-host.ts')))!
+const runtime = files.find((file) => file.path.endsWith(join('workflows', 'workflow-runtime.ts')))!
 /** 注释里可以随便提历史写法，这里只钉代码本身 */
 const code = (text: string): string =>
   text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
@@ -48,9 +48,10 @@ describe('课程窗口焦点策略', () => {
   it('只有「打开课程窗口」这个用户主动入口会聚焦窗口', () => {
     const callers = files
       .filter((file) => file.text.includes('focusCourseWindow'))
-      .map((file) => file.path.replace(`${root}/`, ''))
+      .map((file) => relative(root, file.path).replaceAll('\\', '/'))
     expect(callers.sort()).toEqual([
       'src/main/automation/browser-service.ts',
+      'src/main/services/course-discovery-service.ts',
       'src/main/workflows/workflow-runtime.ts'
     ])
     expect(runtime.text).toContain('await current.browser.ensureSession();await current.browser.focusCourseWindow()')

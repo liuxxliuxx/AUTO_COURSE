@@ -33,6 +33,19 @@ export const UPC_FORWARD_URL =
 export const DEFAULT_LOGGED_URL =
   'https://hike-teaching-center.polymas.com/custom-stu-hike/agent-course-hike/ai-course-center'
 
+/** 课程中心实测选择器。共享课的学期由下拉筛选确定，卡片自身没有学期。 */
+export const COURSE_CENTER = {
+  cards: ['.course-card'], title: ['h4'], tag: ['.course-tag', '.type-tag-component'],
+  term: ['.course-term'], semester: ['[role="combobox"]'],
+  // Element Plus 的 readonly input 会被选中文字覆盖；点击其可见外层容器。
+  semesterTriggerAncestors: [
+    'xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " el-select__wrapper ")][1]',
+    'xpath=ancestor::*[contains(concat(" ", normalize-space(@class), " "), " el-select ")][1]'
+  ],
+  loading: ['.el-loading-mask', '.el-skeleton'],
+  endText: /到底了/, emptyText: /暂无课程|暂无数据|没有课程/
+}
+
 // ============================================================================
 // 智慧树登录页
 // ============================================================================

@@ -17,6 +17,8 @@ export interface LoginContext {
   settings: AppSettings
   credentials: Credentials
   captcha: CaptchaService
+  /** 获取课程时先走所选账号的认证入口，不提前导航目标页面检查会话。 */
+  authenticateFirst?: boolean
   /** 外部停止请求 */
   shouldStop: () => boolean
   log: Logger

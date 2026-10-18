@@ -36,7 +36,7 @@ export class FixedAnswerStrategy implements AnswerStrategy {
 }
 
 export type QuizResult = { state: 'handled' | 'stopped' | 'protected' } | { state: 'failed'; message: string }
-interface QuestionState { fingerprint: string; options: string[]; unsupported: boolean }
+interface QuestionState { fingerprint: string; options: string[]; selectedIndex: number; unsupported: boolean }
 
 /** One selection per question; every transition is verified, never inferred from a click. */
 export class QuizService {
@@ -53,9 +53,14 @@ export class QuizService {
   }
   private async question(dialog:Locator):Promise<QuestionState>{
     return dialog.evaluate(root=>{
-      const options=Array.from(root.querySelectorAll('.topic-item')).map(el=>(el.textContent??'').replace(/\s+/g,' ').trim())
-      const question=(root.querySelector('#question,.topic-title,.topicTitle,.el-dialog__body p,p')?.textContent??'').replace(/\s+/g,' ').trim()
-      return {fingerprint:JSON.stringify([question,options]),options,unsupported:/多选|填空|简答|排序/.test(question)||!!root.querySelector('textarea,input[type="text"],input[type="checkbox"]')}
+      const items=Array.from(root.querySelectorAll('.topic-item'))
+      const options=items.map(el=>(el.textContent??'').replace(/\s+/g,' ').trim())
+      const title=root.querySelector('#question,.topic-title,.topicTitle,.el-dialog__body p,p')?.cloneNode(true) as Element|undefined
+      // Result feedback is not part of the question identity on resume.
+      title?.querySelectorAll('.right,.wrong').forEach(el=>el.remove())
+      const question=(title?.textContent??'').replace(/\s+/g,' ').trim()
+      const selectedIndex=items.findIndex(el=>el.matches('.active,[aria-checked="true"]')||!!el.querySelector('.active,input:checked,[aria-checked="true"]'))
+      return {fingerprint:JSON.stringify([question,options]),options,selectedIndex,unsupported:/多选|填空|简答|排序/.test(question)||!!root.querySelector('textarea,input[type="text"],input[type="checkbox"]')}
     })
   }
   private async gone(dialog:Locator):Promise<boolean>{
@@ -85,9 +90,12 @@ export class QuizService {
         if(state.unsupported||!state.options.length)return fail('弹题题型或选项无法识别')
         const id=await dialog.getAttribute('data-ac-layer')??'quiz'
         const key=id+state.fingerprint
-        let index=this.choices.get(key)
+        // A previous run or the user may already have answered this question.
+        // Preserve that selection instead of trying to overwrite it randomly.
+        let index=state.selectedIndex>=0?state.selectedIndex:this.choices.get(key)
         if(index===undefined){index=this.strategy.selectIndex(state.options.length);this.choices.set(key,index)}
         if(!Number.isInteger(index)||index<0||index>=state.options.length)return fail('答题策略返回了无效选项')
+        this.choices.set(key,index)
         const choice=dialog.locator('.topic-item').nth(index)
         const content=choice.locator('.item-topic').first()
         // The real site's option text may own the click handler; the row centre

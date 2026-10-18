@@ -229,6 +229,28 @@ describe('completion and recording boundaries',()=>{
 
 const quizPanel=(optionAction:string,nextAction:string)=>`<div role="dialog" aria-label="弹题测验" class="el-dialog" style="position:fixed;inset:100px;background:white"><p id="question">【单选题】样本问题</p><div class="topic-item" onclick="${optionAction}">A. 选项</div><button class="btn-next" onclick="${nextAction}">下一题</button><div class="dialog-footer"><div class="btn" onclick="document.body.dataset.unknown='clicked'">确认提交</div><div class="btn" onclick="this.closest('.el-dialog').remove()">关闭</div></div></div>`
 describe('verified quiz transitions',()=>{
+  it.each(['close','next'])('preserves the report selection C instead of clicking covered D before %s',async(action)=>{
+    await page.setViewportSize({width:1271,height:667})
+    await page.setContent(`<div class="el-dialog" role="dialog" aria-label="弹题测验" style="position:fixed;left:300px;top:100px;width:600px;height:450px;background:white">
+      <p class="topic-title"><span class="right">正确</span>【单选题】样本问题</p>
+      <ul>${['A','B','C','D'].map((letter,i)=>`<li class="topic-item" onclick="document.body.dataset.optionClicked='yes'" style="height:80px"><span class="topic-option-item ${i===2?'active':''}">${letter}.</span><div class="item-topic ${i===2?'active':''}">样本选项 ${letter}</div></li>`).join('')}</ul>
+      <p class="answer">正确答案：C</p>
+      <button class="btn-next" ${action==='close'?'disabled':''} onclick="document.body.dataset.next='yes';this.closest('.el-dialog').remove()">下一题</button>
+      <div class="dialog-footer" style="position:absolute;left:0;right:0;top:315px;height:60px;background:white"><div class="btn" style="height:100%" onclick="document.body.dataset.closed=String(event.isTrusted);this.closest('.el-dialog').remove()">关闭</div></div>
+    </div>`)
+    const selectIndex=vi.fn(()=>3),quiz=new QuizService(page,log,{name:'would-choose-D',selectIndex})
+    expect((await quiz.handle((await quiz.findDialog())!)).state).toBe('handled')
+    expect(selectIndex).not.toHaveBeenCalled()
+    expect(await page.locator('body').getAttribute('data-option-clicked')).toBeNull()
+    expect(await page.locator('body').getAttribute(action==='close'?'data-closed':'data-next')).toBe(action==='close'?'true':'yes')
+  })
+  it('does not treat result feedback appearing in the title as question advancement',async()=>{
+    await page.setContent(quizPanel("this.classList.add('active')","document.querySelector('#question').insertAdjacentHTML('afterbegin','<span class=&quot;right&quot;>正确</span>')"))
+    const selectIndex=vi.fn(()=>0),quiz=new QuizService(page,log,{name:'counted',selectIndex})
+    expect(await quiz.handle((await quiz.findDialog())!)).toMatchObject({state:'failed',message:'点击下一题后题目未推进'})
+    expect(selectIndex).toHaveBeenCalledTimes(1)
+    expect(await page.getByRole('dialog').isVisible()).toBe(true)
+  })
   it('uses the report footer close instead of repeatedly clicking an ineffective header X',async()=>{
     await page.setContent(`<div class="el-dialog" role="dialog" aria-label="弹题测验" style="position:fixed;inset:100px;background:white"><button aria-label="Close" class="el-dialog__headerbtn" onclick="document.body.dataset.header='clicked'"><i class="el-dialog__close">×</i></button><p class="topic-title">【判断题】子网掩码示例</p><div class="topic-item"><span class="topic-option-item active">A.</span><div class="item-topic active">对</div></div><button class="btn-next" disabled>下一题</button><div class="dialog-footer"><div class="btn" onclick="document.body.dataset.trusted=String(event.isTrusted);this.closest('.el-dialog').remove()">关闭</div></div></div>`)
     const quiz=new QuizService(page,log,new FixedAnswerStrategy(0))

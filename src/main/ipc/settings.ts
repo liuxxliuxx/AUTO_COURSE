@@ -46,6 +46,15 @@ export function registerSettingsIpc(container: ServiceContainer): void {
   // ------------------------------------------------------------------ 课程
 
   handle(IPC_INVOKE.coursesList, () => container.courses.list())
+  handle(IPC_INVOKE.coursesDiscover, async ({ accountId }) => {
+    const result = await container.courseDiscovery.start(accountId)
+    container.bus.emit(IPC_EVENT.courseLibraryChanged, result.library)
+    return result
+  })
+  handle(IPC_INVOKE.coursesDiscoveryStatus, () => container.courseDiscovery.getStatus())
+  handle(IPC_INVOKE.coursesDiscoveryConfirm, () => container.courseDiscovery.confirm())
+  handle(IPC_INVOKE.coursesDiscoveryCancel, () => container.courseDiscovery.cancel())
+  handle(IPC_INVOKE.coursesDiscoveryWindow, () => container.courseDiscovery.openWindow())
   const changed = <T extends { ok: boolean }>(result: T): T => {
     if (result.ok) {
       container.bus.emit(IPC_EVENT.courseLibraryChanged, container.courses.list())

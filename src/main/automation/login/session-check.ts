@@ -13,8 +13,9 @@
  */
 
 import type { LoginContext } from './provider'
+import type { Page } from 'playwright-core'
 import type { BrowserSession } from '../browser-session'
-import { SLEEP, UPC_BASE_URL, VIDEO_LIST_ITEM_CSS } from '../constants'
+import { SLEEP, UPC_BASE_URL, VIDEO_LIST_ITEM_CSS, DEFAULT_LOGGED_URL, COURSE_CENTER } from '../constants'
 import type { Logger } from '../../services/logger'
 
 /**
@@ -82,6 +83,34 @@ export function isCourseDestination(target: string, current: string): boolean {
   }
 }
 
+/** 允许目标课程中心的同源父级路由等待启动，不接受旁支路由或其他站点。 */
+export function isCourseCenterLanding(raw: string): boolean {
+  try {
+    const url = new URL(raw), target = new URL(DEFAULT_LOGGED_URL)
+    const path = url.pathname.replace(/\/+$/, '')
+    return url.origin === target.origin && path.length > 0 &&
+      (path === target.pathname || target.pathname.startsWith(`${path}/`))
+  } catch { return false }
+}
+
+export async function waitForCourseCenter(page: Page, shouldStop: () => boolean, timeoutMs = 30_000): Promise<CourseSessionState> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (shouldStop() || page.isClosed()) return { loggedIn: false, detail: '登录已停止或课程窗口已关闭' }
+    const current = page.url()
+    if (isLoginUrl(current)) return { loggedIn: false, detail: `被带到登录页：${current}` }
+    if (!isCourseCenterLanding(current)) return { loggedIn: false, detail: `课程入口跳转到了其他页面：${current}` }
+    if (isCourseDestination(DEFAULT_LOGGED_URL, current)) {
+      const ready = await page.locator(COURSE_CENTER.semester.join(',')).first().isVisible().catch(() => false)
+      if (ready && !shouldStop() && isCourseDestination(DEFAULT_LOGGED_URL, page.url())) {
+        return { loggedIn: true, detail: page.url() }
+      }
+    }
+    try { await page.waitForTimeout(200) } catch { return { loggedIn: false, detail: '课程窗口已关闭' } }
+  }
+  return { loggedIn: false, detail: `课程主页加载超时，未出现学期筛选：${page.url()}` }
+}
+
 /**
  * 现在能不能直接打开课程页 —— 也就是"这次还需不需要登录"。
  *
@@ -89,13 +118,17 @@ export function isCourseDestination(target: string, current: string): boolean {
  * 跳登录页是前端 JS 干的（实测 `page.request` 拿不到任何信号）。
  * 所以这里真导航一次，用**最终 URL** 判断。
  */
-export async function checkCourseSession(ctx: LoginContext): Promise<CourseSessionState> {
+export async function checkCourseSession(ctx: LoginContext, options: { afterAuthentication?: boolean } = {}): Promise<CourseSessionState> {
+  if (ctx.authenticateFirst && !options.afterAuthentication) {
+    return { loggedIn: false, detail: '先按账号设置完成认证，再进入课程页面' }
+  }
   const { session, settings, log } = ctx
   const target = settings.videoUrl?.trim()
 
   if (!target) return { loggedIn: false, detail: '未配置课程地址' }
 
-  if (!(await hasCookiesFor(session, target))) {
+  // 机构授权可能仅写入 hub 的 Cookie；首次访问课程中心才能完成跨子域 SSO。
+  if (!options.afterAuthentication && !(await hasCookiesFor(session, target))) {
     return { loggedIn: false, detail: '会话里没有该站点的 cookie（全新会话）' }
   }
 
@@ -103,6 +136,10 @@ export async function checkCourseSession(ctx: LoginContext): Promise<CourseSessi
     await session.navigate(target)
   } catch (error) {
     return { loggedIn: false, detail: `打开课程页失败：${String(error)}` }
+  }
+  if (isCourseDestination(DEFAULT_LOGGED_URL, target)) {
+    log.info('等待课程中心完成启动路由并加载学期筛选')
+    return waitForCourseCenter(session.playwrightPage, ctx.shouldStop)
   }
   await session.playwrightPage.waitForTimeout(SLEEP.short)
 

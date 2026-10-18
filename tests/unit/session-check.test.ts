@@ -5,13 +5,37 @@
  * 要么在没登录的情况下直接去开课。这里把两头的边界钉死。
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   hasCookiesFor,
+  checkCourseSession,
+  isCourseCenterLanding,
   isCourseDestination,
   isLoginUrl
 } from '../../src/main/automation/login/session-check'
 import type { BrowserSession } from '../../src/main/automation/browser-session'
+import type { LoginContext } from '../../src/main/automation/login/provider'
+
+describe('获取课程的登录顺序', () => {
+  it('课程中心的所有同源父级路由都可等待，拒绝相似前缀和旁支路由', () => {
+    expect(isCourseCenterLanding('https://hike-teaching-center.polymas.com/custom-stu-hike/')).toBe(true)
+    expect(isCourseCenterLanding('https://hike-teaching-center.polymas.com/custom-stu-hike/agent-course-hike')).toBe(true)
+    expect(isCourseCenterLanding('https://hike-teaching-center.polymas.com/custom-stu-hike/agent-course-hike/?from=sso#loading')).toBe(true)
+    expect(isCourseCenterLanding('https://hike-teaching-center.polymas.com/custom-stu-hike/agent-course-hike/ai-course-center')).toBe(true)
+    expect(isCourseCenterLanding('https://hike-teaching-center.polymas.com/custom-stu-hike/other')).toBe(false)
+    expect(isCourseCenterLanding('https://hike-teaching-center.polymas.com/custom-stu-hike/agent-course-hike-other')).toBe(false)
+    expect(isCourseCenterLanding('https://hike-teaching-center.polymas.com/custom-stu-hike/agent-course-hike/other')).toBe(false)
+    expect(isCourseCenterLanding('https://hike-teaching-center.polymas.com/')).toBe(false)
+    expect(isCourseCenterLanding('https://hub.polymas.com/custom-stu-hike/')).toBe(false)
+  })
+  it('认证前不凭残留 Cookie 导航目标主页', async () => {
+    const navigate = vi.fn(), getCookies = vi.fn()
+    const ctx = { authenticateFirst: true, session: { navigate, getCookies } } as unknown as LoginContext
+    expect(await checkCourseSession(ctx)).toMatchObject({ loggedIn: false })
+    expect(navigate).not.toHaveBeenCalled()
+    expect(getCookies).not.toHaveBeenCalled()
+  })
+})
 
 describe('isLoginUrl', () => {
   it('认得出智慧树与数字石大的登录页', () => {

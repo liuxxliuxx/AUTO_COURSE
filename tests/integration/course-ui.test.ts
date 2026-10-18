@@ -1,4 +1,5 @@
 import { AccountService } from '../../src/main/services/account-service'
+import { currentCourseTerm, emptyDiscoveryStatus, type CourseDiscoveryStatus } from '../../src/shared/course-discovery'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -32,8 +33,9 @@ let cancelExport: boolean
 let failFlowListOnce: boolean
 let failSettingsLoadOnce:boolean
 let actionDelay:number, startRejection:{message:string;runId?:string}|null
-const shots = '/private/tmp/auto-course-ui'
-beforeAll(async () => { server = await startFixtureServer(resolve('out/renderer')); browser = await chromium.launch({ headless: true }); mkdirSync(shots, { recursive: true }) })
+let discoveryStatus: CourseDiscoveryStatus
+const shots = join(tmpdir(), 'auto-course-ui')
+beforeAll(async () => { server = await startFixtureServer(resolve('out/renderer')); browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH }); mkdirSync(shots, { recursive: true }) })
 afterAll(async () => { await browser?.close(); await server?.close() })
 beforeEach(async () => {
   db = new Database(':memory:'); settings = new SettingsService(db)
@@ -41,6 +43,7 @@ beforeEach(async () => {
   starts = 0; failSave = false; fixtureLogs = []; perRunLogs = null; delayedLogs = {}; runFixtures = null
   cancelExport = false; cacheClears = 0
   failFlowListOnce = false;actionDelay=0;startRejection=null;failSettingsLoadOnce=false
+  discoveryStatus = emptyDiscoveryStatus()
   state = { state: 'idle', mode: null, currentTitle: null, completedCount: 0, watchedSeconds: 0, stoppedReason: null, message: '准备好后开始一门课程', tone: 'neutral' }
   courses = new CourseService(db, settings, () => state.state !== 'idle' ? state.courseId ?? null : null)
   accountDir=mkdtempSync(join(tmpdir(),'ac-ui-'));accounts=new AccountService(db,accountDir)
@@ -94,6 +97,19 @@ beforeEach(async () => {
         return {ok:true,runId:'fixture-run'}
       }
       case 'courses.list': return courses.list()
+      case 'courses.discoveryStatus': return structuredClone(discoveryStatus)
+      case 'courses.discover': {
+        if (failSave) throw new Error('fixture 获取失败')
+        expect(args[0]).toBe(accountId)
+        discoveryStatus = { ...emptyDiscoveryStatus(), accountId, term: currentCourseTerm(), phase: 'running', message: '正在登录课程主页' }
+        if (actionDelay) await new Promise(resolve => setTimeout(resolve, actionDelay))
+        const imported = courses.importDiscovered([
+          { name: '自动获取共享课', kind: 'classic', url: 'https://studyvideoh5.zhihuishu.com/stuStudy?recruitAndCourseId=discovered' },
+          { name: '自动获取图谱课', kind: 'map', url: 'https://ai-smart-course-student-pro.zhihuishu.com/singleCourse/knowledgeStudy/123/456' }
+        ])
+        discoveryStatus = { ...discoveryStatus, ...imported, phase: 'done', message: `获取完成：新增 ${imported.added} 门，已存在 ${imported.existing} 门`, warnings: ['无法读取课程：学习进度未完整加载'] }
+        return { status: discoveryStatus, library: courses.list() }
+      }
       case 'courses.exportQuestionBank': {
         if (failSave) throw new Error('fixture 写入失败')
         const data = buildCourseQuestionBankExport(db, courses, args[0] as string)
@@ -146,7 +162,7 @@ async function waitForPageTransition(): Promise<void> {
 const choiceLabels: Record<string,string>={learn:'学习','learn-transcribe':'学习并转录',transcribe:'仅转录',limited:'指定分钟',unlimited:'不限时长',none:'仅手动',daily:'每日定时',once:'单次定时',beginning:'课程开头',resume:'上次位置',info:'信息',warning:'警告',error:'错误',debug:'调试','':'全部'}
 async function choose(scope:Page|Locator,label:string,value:string):Promise<void>{await scope.getByRole('radiogroup',{name:label,exact:true}).getByRole('radio',{name:choiceLabels[value],exact:true}).click()}
 async function add(name: string, key: string, action = 'learn'): Promise<void> {
-  await page.getByRole('button', { name: '添加课程', exact: true }).click()
+  await page.getByRole('button', { name: '手动添加课程', exact: true }).click()
   const form = page.getByRole('dialog')
   await form.getByLabel('课程地址', { exact: false }).fill(`https://studyvideoh5.zhihuishu.com/stuStudy?recruitAndCourseId=${key}`)
   await form.getByLabel('课程名称', { exact: true }).fill(name)
@@ -156,10 +172,37 @@ async function add(name: string, key: string, action = 'learn'): Promise<void> {
   await page.waitForFunction(() => document.activeElement?.matches('.page-header button'))
 }
 describe('课程与运行界面', () => {
+  it('恢复获取入口、显示动态学期，获取后刷新并去重，展示错误明细', async () => {
+    actionDelay = 250
+    const auto = page.getByRole('button', { name: '自动获取可学课程', exact: true })
+    const manual = page.getByRole('button', { name: '手动添加课程', exact: true })
+    expect(await auto.evaluate(el => el.classList.contains('primary'))).toBe(true)
+    expect(await manual.evaluate(el => getComputedStyle(el).backgroundColor)).toBe('rgb(255, 255, 255)')
+    expect(await manual.evaluate(el => el.classList.contains('primary'))).toBe(false)
+    await page.getByRole('button', { name: '自动获取可学课程', exact: true }).click()
+    const panel = page.getByRole('region', { name: '自动获取可学课程' })
+    expect(await panel.textContent()).toContain(currentCourseTerm())
+    expect(await panel.getByLabel('登录账号').inputValue()).toBe(accountId)
+    await panel.getByRole('button', { name: '开始获取', exact: true }).click()
+    await panel.getByRole('button', { name: '正在获取…', exact: true }).waitFor()
+    expect(await panel.getByLabel('登录账号').isDisabled()).toBe(true)
+    await panel.getByText('获取完成：新增 2 门，已存在 0 门', { exact: true }).waitFor()
+    expect(await page.locator('.course-row').count()).toBe(2)
+    expect(starts).toBe(0)
+    await panel.getByRole('button', { name: '开始获取', exact: true }).click()
+    await panel.getByText('获取完成：新增 0 门，已存在 2 门', { exact: true }).waitFor()
+    await panel.locator('summary').click()
+    expect(await panel.getByText('无法读取课程：学习进度未完整加载', { exact: true }).isVisible()).toBe(true)
+    await page.screenshot({ path: join(shots, 'course-discovery.png'), fullPage: true })
+    failSave = true
+    await panel.getByRole('button', { name: '开始获取', exact: true }).click()
+    await panel.getByRole('alert').filter({ hasText: 'fixture 获取失败' }).waitFor()
+    expect(await page.locator('.course-row').count()).toBe(2)
+  })
   it('只有掌握度课程显示导出，空题库/写入失败提示，取消不报成功，成功按课程导出', async () => {
     await add('传统课', 'export-classic')
     expect(await page.getByRole('button', { name: '导出题库', exact: true }).count()).toBe(0)
-    await page.getByRole('button', { name: '添加课程', exact: true }).click()
+    await page.getByRole('button', { name: '手动添加课程', exact: true }).click()
     const form = page.getByRole('dialog')
     await form.getByLabel('课程地址', { exact: false }).fill('https://studywisdomh5.zhihuishu.com/study/mastery?recruitAndCourseId=export-mastery')
     await form.getByLabel('课程名称', { exact: true }).fill('掌握度导出')
@@ -202,7 +245,7 @@ describe('课程与运行界面', () => {
   })
   it('重复地址可打开已有课程，取消编辑不覆盖原课程，保存失败保留输入', async () => {
     await add('课程 A', 'a')
-    await page.getByRole('button', { name: '添加课程', exact: true }).click()
+    await page.getByRole('button', { name: '手动添加课程', exact: true }).click()
     const form = page.getByRole('dialog')
     await form.getByLabel('课程地址', { exact: false }).fill('https://studyvideoh5.zhihuishu.com/stuStudy?recruitAndCourseId=a')
     await form.getByLabel('课程名称', { exact: true }).fill('重复课程')
@@ -213,7 +256,7 @@ describe('课程与运行界面', () => {
     await form.getByLabel('课程名称', { exact: true }).fill('不保存的名称')
     page.once('dialog', dialog => dialog.accept()); await form.getByRole('button', { name: '取消', exact: true }).click()
     expect(courses.list().courses[0].name).toBe('课程 A')
-    await page.getByRole('button', { name: '添加课程', exact: true }).click()
+    await page.getByRole('button', { name: '手动添加课程', exact: true }).click()
     await form.getByLabel('课程地址', { exact: false }).fill('https://studyvideoh5.zhihuishu.com/stuStudy?recruitAndCourseId=b')
     await form.getByLabel('课程名称', { exact: true }).fill('输入应保留')
     failSave = true; await form.getByRole('button', { name: '保存课程', exact: true }).click()
@@ -786,7 +829,7 @@ describe('舒适工具界面',()=>{
     expect(await rows.count()).toBe(2)
     const action=page.getByRole('button',{name:'创建任务',exact:true})
     expect(await action.evaluate(el=>{const r=el.getBoundingClientRect();return r.top>=0&&r.bottom<innerHeight/2})).toBe(true)
-    expect(await page.getByRole('button',{name:'添加课程',exact:true}).evaluate(el=>el.getBoundingClientRect().height)).toBeGreaterThanOrEqual(32)
+    expect(await page.getByRole('button',{name:'手动添加课程',exact:true}).evaluate(el=>el.getBoundingClientRect().height)).toBeGreaterThanOrEqual(32)
     expect(await rows.first().evaluate(el=>el.getBoundingClientRect().height)).toBeGreaterThanOrEqual(48)
   })
 

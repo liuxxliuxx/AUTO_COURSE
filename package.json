@@ -33,6 +33,7 @@
   "dependencies": {
     "better-sqlite3": "^13.0.3",
     "jpeg-js": "0.4.4",
+    "lunar-typescript": "1.8.6",
     "onnxruntime-node": "1.23.2",
     "playwright-core": "^1.63.0",
     "pngjs": "7.0.0",

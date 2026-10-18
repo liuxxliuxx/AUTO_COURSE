@@ -60,6 +60,11 @@ export function createApi(ipcRenderer: IpcRenderer): AppApi {
     },
 
     courses: {
+      discover: accountId => invoke(ipcRenderer, IPC_INVOKE.coursesDiscover, { accountId }),
+      discoveryStatus: () => invoke(ipcRenderer, IPC_INVOKE.coursesDiscoveryStatus),
+      discoveryConfirm: () => invoke(ipcRenderer, IPC_INVOKE.coursesDiscoveryConfirm),
+      discoveryCancel: () => invoke(ipcRenderer, IPC_INVOKE.coursesDiscoveryCancel),
+      discoveryWindow: () => invoke(ipcRenderer, IPC_INVOKE.coursesDiscoveryWindow),
       list: () => invoke(ipcRenderer, IPC_INVOKE.coursesList),
       select: (id) => invoke(ipcRenderer, IPC_INVOKE.coursesSelect, { id }),
       create: (input) => invoke(ipcRenderer, IPC_INVOKE.coursesCreate, input),

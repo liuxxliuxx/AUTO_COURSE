@@ -55,6 +55,17 @@ function account(name:string,loginMethod:'zhihuishu'|'upc-institution'='zhihuish
 function course(){const result=courses.create({name:'共享课',url:'https://studyvideoh5.zhihuishu.com/stuStudy?recruitAndCourseId=shared',options:{...DEFAULT_COURSE_OPTIONS}});if(!result.ok)throw Error(result.message);return result.courseId!}
 const done=async()=>vi.waitFor(()=>expect(manager.occupiedAccounts()).toEqual([]))
 describe('multi-account execution',()=>{
+  it('获取课程占用账号直到释放，期间禁止同账号任务和清理缓存', async () => {
+    const a = account('discovery'), courseId = course()
+    const flow = flows.create({ name: 'discover', steps: [{ id: 'step', accountId: a.id, courseId, options: DEFAULT_COURSE_OPTIONS }], schedule: null })
+    const release = manager.reserveAccount(a.id)
+    expect(() => manager.reserveAccount(a.id)).toThrow('账号正在运行')
+    expect(manager.start(flow.id).ok).toBe(false)
+    await expect(manager.withMaintenance(async () => {})).rejects.toThrow('课程获取')
+    release()
+    expect(manager.start(flow.id).ok).toBe(true)
+    await done()
+  })
   it('runs the same course concurrently for different accounts, isolates profiles and progress, and rejects account overlap',async()=>{
     const a=account('A'),b=account('B'),courseId=course(),release:Array<()=>void>=[]
     work=async ctx=>{ctx.reportVideoCompleted(`${ctx.credentials.username} chapter`);await new Promise<void>(r=>release.push(r));return {reason:'completed',completedCount:1,watchedSeconds:0}}

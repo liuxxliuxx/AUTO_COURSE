@@ -1,5 +1,6 @@
 import type { Account, AccountInput, AccountApi, AccountCourseProgress } from './accounts'
 import type { AppInfo, SupportResource } from './app-info'
+import type { CourseDiscoveryStatus, CourseDiscoveryResult } from './course-discovery'
 import type { WorkflowApi, Workflow, WorkflowInput, WorkflowRun, WorkflowStartResult, RunEvent } from './workflows'
 /**
  * Typed IPC 契约 —— 单一事实来源。
@@ -43,6 +44,11 @@ export const IPC_INVOKE = {
   settingsClearCache: 'settings:clear-cache',
 
   coursesList: 'courses:list',
+  coursesDiscover: 'courses:discover',
+  coursesDiscoveryStatus: 'courses:discovery-status',
+  coursesDiscoveryConfirm: 'courses:discovery-confirm',
+  coursesDiscoveryCancel: 'courses:discovery-cancel',
+  coursesDiscoveryWindow: 'courses:discovery-window',
   coursesSelect: 'courses:select',
   coursesCreate: 'courses:create',
   coursesUpdate: 'courses:update',
@@ -137,6 +143,11 @@ export interface InvokeMap {
   [IPC_INVOKE.settingsClearCache]: { req: void; res: { bytes: number } }
 
   [IPC_INVOKE.coursesList]: { req: void; res: CourseLibrary }
+  [IPC_INVOKE.coursesDiscover]: { req: { accountId: string }; res: CourseDiscoveryResult }
+  [IPC_INVOKE.coursesDiscoveryStatus]: { req: void; res: CourseDiscoveryStatus }
+  [IPC_INVOKE.coursesDiscoveryConfirm]: { req: void; res: void }
+  [IPC_INVOKE.coursesDiscoveryCancel]: { req: void; res: void }
+  [IPC_INVOKE.coursesDiscoveryWindow]: { req: void; res: void }
   [IPC_INVOKE.coursesSelect]: { req: { id: string }; res: CourseMutationResult }
   [IPC_INVOKE.coursesCreate]: { req: CourseInput; res: CourseMutationResult }
   [IPC_INVOKE.coursesUpdate]: { req: { id: string; input: CourseInput }; res: CourseMutationResult }
@@ -195,6 +206,11 @@ export interface AppApi {
   }
 
   courses: {
+    discover(accountId: string): Promise<CourseDiscoveryResult>
+    discoveryStatus(): Promise<CourseDiscoveryStatus>
+    discoveryConfirm(): Promise<void>
+    discoveryCancel(): Promise<void>
+    discoveryWindow(): Promise<void>
     list(): Promise<CourseLibrary>
     select(id: string): Promise<CourseMutationResult>
     create(input: CourseInput): Promise<CourseMutationResult>

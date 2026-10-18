@@ -2,6 +2,7 @@
 import { UNSAVED_CONFIRM, START_LABELS, completedLabel, durationLabel, errorMessage, errorText } from '../lib/ui-copy'
 import { courseOccupancy } from '../lib/run-presentation'
 import WorkspaceToolbar from '../components/WorkspaceToolbar.vue'
+import CourseDiscoveryPanel from '../components/CourseDiscoveryPanel.vue'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router'
 import { useCoursesStore } from '../stores/courses'
@@ -19,6 +20,7 @@ let progressRequest = 0
 const route = useRoute(), router = useRouter()
 const uid = useId()
 const kindFilter = ref('')
+const discoveryOpen = ref(false)
 const search = ref(''), focusedId = ref(String(route.query.id ?? (store.viewedCourseId || store.library.selectedCourseId) ?? ''))
 const detailPanel = ref<HTMLElement | null>(null)
 watch(focusedId, async () => { await nextTick(); if (detailPanel.value) detailPanel.value.scrollTop = 0 })
@@ -127,11 +129,12 @@ const lastRun = (date: string | null): string => date ? new Date(date).toLocaleS
 </script>
 <template>
   <div class="page courses-page">
-    <WorkspaceToolbar title="课程"><button :disabled="busy" class="primary" @click="openForm()"><UiIcon name="add"/>添加课程</button></WorkspaceToolbar>
+    <WorkspaceToolbar title="课程"><button :disabled="busy" class="primary" @click="discoveryOpen = true">自动获取可学课程</button><button :disabled="busy" @click="openForm()"><UiIcon name="add"/>手动添加课程</button></WorkspaceToolbar>
+    <CourseDiscoveryPanel :open="discoveryOpen" @close="discoveryOpen = false" />
     <div v-if="!modal && (error || run.error || store.error)" class="notice error" role="alert">{{ error || run.error || store.error }} <button v-if="store.error" @click="store.load">重新加载</button></div>
     <div v-if="message" class="notice success" role="status">{{ message }}</div>
     <div v-if="store.loading" class="empty" role="status">正在加载课程…</div>
-    <div v-else-if="!store.library.courses.length" class="panel empty"><h2>从第一门课程开始</h2><p>粘贴课程学习页地址，为它取一个容易找到的名字。</p><p class="small">支持智慧树传统课、图谱课和掌握度课，添加后可组合为任务。</p><button class="primary" @click="openForm()">添加第一门课程</button></div>
+    <div v-else-if="!store.library.courses.length" class="panel empty"><h2>从第一门课程开始</h2><p>粘贴课程学习页地址，为它取一个容易找到的名字。</p><p class="small">支持智慧树传统课、图谱课和掌握度课，添加后可组合为任务。</p><button @click="openForm()">手动添加第一门课程</button></div>
     <div v-else class="course-layout">
       <section class="course-list" aria-label="课程列表"><div class="list-header"><strong>全部课程 <span class="muted">{{ store.library.courses.length }}</span></strong><input v-model="search" type="search" aria-label="搜索课程" placeholder="搜索课程名称" /><div class="type-filters" role="group" aria-label="课程类型筛选"><button :aria-pressed="!kindFilter" @click="kindFilter=''">全部</button><button v-for="(label,kind) in filterKinds" :key="kind" :aria-pressed="kindFilter===kind" @click="kindFilter=kind">{{label}}</button></div></div>
         <div class="course-rows"><div v-if="!filtered.length" class="empty">没有匹配的课程</div>

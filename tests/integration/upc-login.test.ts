@@ -11,8 +11,9 @@ import { UpcInstitutionLogin } from '../../src/main/automation/login/upc-institu
 import { UpcLegacyLogin } from '../../src/main/automation/login/upc-legacy'
 import { buildUpcInstitutionCasUrl } from '../../src/main/automation/login/upc-cas'
 import { submitCasForm } from '../../src/main/automation/login/upc-cas'
-import { checkCourseSession } from '../../src/main/automation/login/session-check'
+import { checkCourseSession, waitForCourseCenter } from '../../src/main/automation/login/session-check'
 import { waitForAuthDestination } from '../../src/main/automation/login/auth-redirect'
+import { DEFAULT_LOGGED_URL } from '../../src/main/automation/constants'
 import { ClassicCourseRunner } from '../../src/main/automation/classic/classic-course-runner'
 import { MapCourseRunner } from '../../src/main/automation/map/map-course-runner'
 import type { RunnerContext } from '../../src/main/automation/runner'
@@ -28,7 +29,7 @@ let page: Page
 
 beforeAll(async () => {
   server = await startFixtureServer(fixturesDir)
-  browser = await chromium.launch({ headless: true })
+  browser = await chromium.launch({ headless: true, executablePath: process.env.PLAYWRIGHT_EXECUTABLE_PATH })
   page = await browser.newPage()
 }, 60_000)
 
@@ -62,6 +63,91 @@ function context(requestCaptcha: () => Promise<boolean> = async () => false): Lo
 }
 
 describe('数字石大登录模块', () => {
+  it('机构授权后经过根路由和 agent-course-hike，再等最终课程页和学期控件就绪', async () => {
+    await page.context().clearCookies()
+    let entries = 0
+    const root = 'https://hike-teaching-center.polymas.com/custom-stu-hike/'
+    await page.route('https://hub.polymas.com/**', route => route.fulfill({ contentType: 'text/html', body: '<h1>Workspace</h1>' }))
+    await page.route(DEFAULT_LOGGED_URL, route => {
+      entries++
+      return route.fulfill({ contentType: 'text/html', body: `<script>location.replace('${root}')</script>` })
+    })
+    await page.route(root, route => route.fulfill({ contentType: 'text/html', body: `<div>Loading</div>
+      <script>setTimeout(()=>{history.replaceState({},'', '/custom-stu-hike/agent-course-hike');
+        setTimeout(()=>{history.replaceState({},'', '${new URL(DEFAULT_LOGGED_URL).pathname}');
+          setTimeout(()=>{document.body.innerHTML='<button role="combobox">Semester</button>'},500)},1500)},2000)</script>` }))
+    try {
+      const ctx = context()
+      ctx.authenticateFirst = true
+      ctx.settings.videoUrl = DEFAULT_LOGGED_URL
+      const result = await new UpcInstitutionLogin({ casLoginUrl: 'https://hub.polymas.com/stu-hike/ctp/student-workspace' }).login(ctx)
+      expect(result.ok, result.message).toBe(true)
+      expect(page.url()).toBe(DEFAULT_LOGGED_URL)
+      expect(await page.getByRole('combobox').isVisible()).toBe(true)
+      expect(entries).toBe(1)
+    } finally { await page.unrouteAll({ behavior: 'wait' }) }
+  })
+  it.each(['/custom-stu-hike/', '/custom-stu-hike/agent-course-hike'])('停留在 %s 不误报成功，超时、取消和跳回登录页均能结束', async path => {
+    const root = `https://hike-teaching-center.polymas.com${path}`
+    await page.route(root, route => route.fulfill({ contentType: 'text/html', body: '<button role="combobox">Not the course center</button>' }))
+    await page.route('https://login.zhihuishu.com/', route => route.fulfill({ body: 'Login' }))
+    try {
+      await page.goto(root)
+      expect(await waitForCourseCenter(page, () => false, 250)).toMatchObject({ loggedIn: false, detail: expect.stringContaining('加载超时') })
+      expect(await waitForCourseCenter(page, () => true)).toMatchObject({ loggedIn: false, detail: expect.stringContaining('停止') })
+      await page.goto('https://login.zhihuishu.com/')
+      expect(await waitForCourseCenter(page, () => false)).toMatchObject({ loggedIn: false, detail: expect.stringContaining('登录页') })
+    } finally { await page.unrouteAll({ behavior: 'wait' }) }
+  })
+  it('获取课程即使有残留 Cookie，也先完成机构 CAS → hub，再访问课程中心', async () => {
+    await page.context().clearCookies()
+    await page.context().addCookies([{ name: 'old-session', value: 'expired', domain: '.polymas.com', path: '/' }])
+    const visited: string[] = []
+    await page.route('https://cas.upc.edu.cn/**', route => {
+      const posted = route.request().method() === 'POST'
+      visited.push(posted ? 'cas-submit' : 'cas')
+      return route.fulfill({ contentType: 'text/html', body: posted
+        ? `<script>location.href='https://hub.polymas.com/stu-hike/ctp/student-workspace'</script>`
+        : '<form id="loginForm" method="post"><input name="username"><input name="password" type="password"><input type="submit"></form>' })
+    })
+    await page.route('https://hub.polymas.com/**', route => {
+      visited.push('hub')
+      return route.fulfill({ contentType: 'text/html', body: '<h1>Workspace</h1>' })
+    })
+    await page.route(DEFAULT_LOGGED_URL, route => {
+      visited.push('center')
+      return route.fulfill({ contentType: 'text/html', body: '<button role="combobox">Semester</button>' })
+    })
+    try {
+      const ctx = context()
+      ctx.authenticateFirst = true
+      ctx.settings.videoUrl = DEFAULT_LOGGED_URL
+      const result = await createLoginProvider('upc-institution').login(ctx)
+      expect(result.ok, result.message).toBe(true)
+      expect(visited).toEqual(['cas', 'cas-submit', 'hub', 'center'])
+      expect(page.url()).toBe(DEFAULT_LOGGED_URL)
+    } finally { await page.unrouteAll({ behavior: 'wait' }); await page.context().clearCookies() }
+  })
+  it('机构授权落在 hub 且无课程中心 Cookie 时，仍访问课程主页完成 SSO', async () => {
+    await page.context().clearCookies()
+    const visited: string[] = []
+    await page.route('https://hub.polymas.com/**', route => {
+      visited.push('hub')
+      return route.fulfill({ contentType: 'text/html', body: '<h1>Workspace</h1>' })
+    })
+    await page.route(DEFAULT_LOGGED_URL, route => {
+      visited.push('center')
+      return route.fulfill({ contentType: 'text/html', body: '<button role="combobox">Semester</button>' })
+    })
+    try {
+      const ctx = context()
+      ctx.settings.videoUrl = DEFAULT_LOGGED_URL
+      const result = await new UpcInstitutionLogin({ casLoginUrl: 'https://hub.polymas.com/stu-hike/ctp/student-workspace' }).login(ctx)
+      expect(result.ok, result.message).toBe(true)
+      expect(visited).toEqual(['hub', 'center'])
+      expect(page.url()).toBe(DEFAULT_LOGGED_URL)
+    } finally { await page.unrouteAll({ behavior: 'wait' }) }
+  })
   it('新模块直接提交标准 CAS 表单并保留浏览器 Cookie', async () => {
     await page.context().clearCookies()
     const provider = new UpcInstitutionLogin({ casLoginUrl: server.origin + '/login/cas-request',
@@ -122,20 +208,28 @@ describe('数字石大登录模块', () => {
 
   it('旧门户等待异步认证落地，才允许打开 forward 工作台', async () => {
     await page.context().clearCookies()
+    await page.context().addCookies([{ name: 'old-session', value: 'expired', domain: '.polymas.com', path: '/' }])
     let authenticated = false
     let forwardedBeforeAuth = false
     let forwarded = false
+    const visited: string[] = []
+    await page.route(DEFAULT_LOGGED_URL, route => {
+      visited.push('center')
+      return route.fulfill({ contentType: 'text/html', body: '<button role="combobox">Semester</button>' })
+    })
     const probe = vi.spyOn(page.request, 'get').mockResolvedValue({
       url: () => 'https://cas.upc.edu.cn/cas/login'
     } as Awaited<ReturnType<typeof page.request.get>>)
     await page.route('https://i.upc.edu.cn/**', async route => {
       const path = new URL(route.request().url()).pathname
       if (path === '/') {
+        visited.push('portal')
         await route.fulfill({ contentType: 'text/html', body: `<script>location.href='https://cas.upc.edu.cn/cas/login'</script>` })
       } else if (path === '/dcp/index.jsp') {
         authenticated = true
         await route.fulfill({ contentType: 'text/html', body: '<h1>门户</h1>' })
       } else {
+        visited.push('forward')
         forwarded = true
         forwardedBeforeAuth = !authenticated
         await route.fulfill({ contentType: 'text/html', body: `<script>location.href='${server.origin}/cas-success'</script>` })
@@ -149,14 +243,18 @@ describe('数字石大登录模块', () => {
     }))
     try {
       const ctx = context()
+      ctx.authenticateFirst = true
+      ctx.settings.videoUrl = DEFAULT_LOGGED_URL
       ctx.settings.loggedUrl = server.origin + '/cas-success'
-      const result = await new UpcLegacyLogin().login(ctx)
+      const result = await createLoginProvider('upc').login(ctx)
       expect(result.ok, result.message + ' ' + page.url()).toBe(true)
       expect(forwarded).toBe(true)
       expect(forwardedBeforeAuth).toBe(false)
+      expect(visited).toEqual(['portal', 'forward'])
     } finally {
       probe.mockRestore()
       await page.unrouteAll({ behavior: 'wait' })
+      await page.context().clearCookies()
     }
   })
 

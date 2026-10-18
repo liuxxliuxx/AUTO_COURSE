@@ -20,7 +20,7 @@ export class WorkflowRunManager {
   async withMaintenance<T>(operation: () => Promise<T>): Promise<T> {
     if (this.closing) throw new Error('应用正在退出')
     if (this.maintenance) throw new Error('正在清理缓存，请稍候')
-    if (this.active.size) throw new Error('请先停止所有运行中的任务，等待课程窗口关闭后再清理缓存')
+    if (this.active.size || this.reservations.size) throw new Error('请先停止所有运行中的任务和课程获取，等待课程窗口关闭后再清理缓存')
     const pending = Promise.resolve().then(operation)
     this.maintenance = pending
     try { return await pending } finally { this.maintenance = null }
@@ -29,6 +29,14 @@ export class WorkflowRunManager {
   isActive(id: string): boolean { return [...this.active.values()].some(a => a.executor.run.workflowId === id) }
   occupiedAccounts(): string[] { return [...new Set([...this.reservations.values()].flat())] }
   occupiedCourses(): string[] { return [...this.active.values()].flatMap(a => a.executor.run.snapshot.steps.map(s => s.courseId)) }
+  reserveAccount(accountId: string): () => void {
+    if (this.closing) throw new Error('应用正在退出')
+    if (this.isMaintaining) throw new Error('正在清理缓存，请稍候')
+    if (this.occupiedAccounts().includes(accountId)) throw new Error('账号正在运行或获取课程，请等待结束')
+    const key = `discovery:${randomUUID()}`
+    this.reservations.set(key, [accountId])
+    return () => { this.reservations.delete(key) }
+  }
   start(workflowId: string, source: 'manual' | 'schedule' = 'manual'): WorkflowStartResult {
     if (this.closing) return { ok: false, message: '应用正在退出' }
     if (this.isMaintaining) return { ok: false, message: '正在清理缓存，请稍候再启动任务' }

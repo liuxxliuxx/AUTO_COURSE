@@ -1,6 +1,6 @@
 import type { Locator, Page } from 'playwright-core'
 import type { Logger } from '../services/logger'
-import { CourseOverlays } from './classic/course-overlays'
+import { CourseOverlays, type CourseLayer } from './classic/course-overlays'
 
 // ============================================================================
 // 答题策略
@@ -41,6 +41,9 @@ interface QuestionState { fingerprint: string; options: string[]; unsupported: b
 /** One selection per question; every transition is verified, never inferred from a click. */
 export class QuizService {
   private readonly choices = new Map<string, number>()
+  private closeRecords: NonNullable<CourseLayer['closeAttempts']> = []
+  private closeSerial = 0
+  get closeAttempts(): CourseLayer['closeAttempts'] { return this.closeRecords.map(record=>({...record})) }
   constructor(private readonly page: Page, private readonly log: Logger, private readonly strategy: AnswerStrategy = new RandomAnswerStrategy()) {}
 
   async findDialog(): Promise<Locator|null> {
@@ -69,6 +72,7 @@ export class QuizService {
     return false
   }
   async handle(dialog:Locator,shouldStop:()=>boolean=()=>false):Promise<QuizResult>{
+    this.closeRecords=[]
     const fail=(message:string):QuizResult=>({state:'failed',message})
     try{
       const overlays=new CourseOverlays(this.page,this.log)
@@ -108,13 +112,14 @@ export class QuizService {
         const next=dialog.locator('.btn-next').first()
         if(await next.isVisible()&&await next.isEnabled()){
           let advanced=false
+          let nextError=''
           for(let attempt=0;attempt<2&&!shouldStop();attempt++){
-            await next.click({timeout:700}).catch(()=>{})
+            try { await next.click({timeout:3000}) } catch(error) { nextError=String(error);this.log.warn(`弹题下一题点击失败：${nextError}`) }
             advanced=await this.waitFor(async()=>await this.gone(dialog)||(await this.question(dialog)).fingerprint!==state.fingerprint,shouldStop)
             if(advanced)break
           }
           if(shouldStop())return {state:'stopped'}
-          if(!advanced)return fail('点击下一题后题目未推进')
+          if(!advanced)return fail('点击下一题后题目未推进'+(nextError?`：${nextError}`:''))
           if(await this.gone(dialog))return {state:'handled'}
           continue
         }
@@ -125,18 +130,41 @@ export class QuizService {
     }catch(error){return shouldStop()?{state:'stopped'}:fail(`弹题处理失败：${String(error)}`)}
   }
   async close(dialog:Locator,shouldStop:()=>boolean=()=>false):Promise<boolean>{
+    this.closeRecords=[]
+    const tried=new Set<string>()
     for(let attempt=0;attempt<2&&!shouldStop();attempt++){
       if(await this.gone(dialog))return true
-      const controls=dialog.locator('.el-dialog__headerbtn,.el-dialog__close,button[aria-label="Close"],button[aria-label="关闭"],.dialog-footer .btn').filter({visible:true})
-      let chosen:Locator|null=null
-      for(let i=0;i<await controls.count();i++){
-        const el=controls.nth(i)
-        const explicit=await el.evaluate(el=>/headerbtn|dialog__close/.test(el.className)||/^(?:Close|关闭)$/i.test(el.getAttribute('aria-label')??'')||(el.textContent??'').trim()==='关闭')
-        if(explicit){chosen=el;break}
+      // The report exposes both a header X and the real footer dismissal. Try
+      // the explicit footer first, then a distinct header control if it fails.
+      const groups=[dialog.locator('.dialog-footer .btn').filter({visible:true}),dialog.locator('.el-dialog__headerbtn,button[aria-label="Close"],button[aria-label="关闭"]').filter({visible:true}),dialog.locator('.el-dialog__close').filter({visible:true})]
+      const candidates:Array<{el:Locator;id:string}>=[]
+      const layerId=await dialog.getAttribute('data-ac-layer')??'quiz'
+      for(const group of groups){
+        for(let i=0;i<await group.count();i++){
+          const el=group.nth(i)
+          const id=await el.evaluate((el,generated)=>{
+            if(el.matches('.el-dialog__close')&&el.closest('button,.el-dialog__headerbtn'))return null
+            const explicit=/headerbtn|dialog__close/.test(el.getAttribute('class')??'')||/^(?:Close|关闭)$/i.test(el.getAttribute('aria-label')??'')||(el.textContent??'').trim()==='关闭'
+            if(!explicit||el.closest('.yidun_popup,.yidun_modal,[class*="captcha" i]'))return null
+            const id=el.getAttribute('data-ac-quiz-close')??generated
+            el.setAttribute('data-ac-quiz-close',id)
+            el.setAttribute('data-ac-layer-close',id)
+            return id
+          },`${layerId}-close-${this.closeSerial++}`)
+          if(id)candidates.push({el,id})
+        }
       }
+      const chosen=candidates.find(candidate=>!tried.has(candidate.id))??candidates[0]
       if(!chosen)return false
-      await chosen.click({timeout:700}).catch(()=>{})
-      if(await this.waitFor(()=>this.gone(dialog),shouldStop))return true
+      tried.add(chosen.id)
+      const record:NonNullable<CourseLayer['closeAttempts']>[number]={attempt:attempt+1,clicked:false,hidden:false}
+      this.closeRecords.push(record)
+      if(shouldStop())return false
+      try { await chosen.el.click({timeout:3000});record.clicked=true }
+      catch(error){record.error=String(error);this.log.warn(`弹题关闭点击失败（${attempt+1}/2）：${record.error}`)}
+      record.hidden=await this.waitFor(()=>this.gone(dialog),shouldStop,1500)
+      if(record.hidden)return true
+      if(record.clicked)this.log.warn(`弹题关闭点击已完成，但弹窗仍可见（${attempt+1}/2）`)
     }
     return false
   }

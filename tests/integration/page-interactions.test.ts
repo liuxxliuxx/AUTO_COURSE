@@ -229,6 +229,31 @@ describe('completion and recording boundaries',()=>{
 
 const quizPanel=(optionAction:string,nextAction:string)=>`<div role="dialog" aria-label="弹题测验" class="el-dialog" style="position:fixed;inset:100px;background:white"><p id="question">【单选题】样本问题</p><div class="topic-item" onclick="${optionAction}">A. 选项</div><button class="btn-next" onclick="${nextAction}">下一题</button><div class="dialog-footer"><div class="btn" onclick="document.body.dataset.unknown='clicked'">确认提交</div><div class="btn" onclick="this.closest('.el-dialog').remove()">关闭</div></div></div>`
 describe('verified quiz transitions',()=>{
+  it('uses the report footer close instead of repeatedly clicking an ineffective header X',async()=>{
+    await page.setContent(`<div class="el-dialog" role="dialog" aria-label="弹题测验" style="position:fixed;inset:100px;background:white"><button aria-label="Close" class="el-dialog__headerbtn" onclick="document.body.dataset.header='clicked'"><i class="el-dialog__close">×</i></button><p class="topic-title">【判断题】子网掩码示例</p><div class="topic-item"><span class="topic-option-item active">A.</span><div class="item-topic active">对</div></div><button class="btn-next" disabled>下一题</button><div class="dialog-footer"><div class="btn" onclick="document.body.dataset.trusted=String(event.isTrusted);this.closest('.el-dialog').remove()">关闭</div></div></div>`)
+    const quiz=new QuizService(page,log,new FixedAnswerStrategy(0))
+    expect((await quiz.handle((await quiz.findDialog())!)).state).toBe('handled')
+    expect(await page.locator('body').getAttribute('data-header')).toBeNull()
+    expect(await page.locator('body').getAttribute('data-trusted')).toBe('true')
+    expect(quiz.closeAttempts).toEqual([{attempt:1,clicked:true,hidden:true}])
+  })
+  it('falls back to a distinct header control when footer close has no effect',async()=>{
+    await page.setContent(`<div class="el-dialog" role="dialog" aria-label="弹题测验" style="position:fixed;inset:100px;background:white"><button aria-label="Close" class="el-dialog__headerbtn" onclick="this.closest('.el-dialog').remove()"><i class="el-dialog__close">×</i></button><div class="dialog-footer"><div class="btn" onclick="document.body.dataset.footer='clicked'">关闭</div></div></div>`)
+    const quiz=new QuizService(page,log)
+    expect(await quiz.close((await quiz.findDialog())!)).toBe(true)
+    expect(await page.locator('body').getAttribute('data-footer')).toBe('clicked')
+    expect(quiz.closeAttempts).toEqual([{attempt:1,clicked:true,hidden:false},{attempt:2,clicked:true,hidden:true}])
+  })
+  it('writes quiz close attempts and tagged close control geometry into diagnostics',async()=>{
+    await page.setContent(quizPanel("this.classList.add('active')",'').replace('<button class="btn-next" onclick="">下一题</button>','').replace("this.closest('.el-dialog').remove()",'void 0'))
+    const diagnostics=new CourseDiagnostics(dir,{runId:'run',courseId:'course'},log)
+    expect((await checkpoint(diagnostics).checkpoint()).state).toBe('failed')
+    const state=JSON.parse(await readFile(join(dir,(await readdir(dir))[0],'state.json'),'utf8'))
+    expect(state.reason).toBe('弹题关闭后仍可见')
+    expect(state.layer.closeAttempts).toEqual([{attempt:1,clicked:true,hidden:false},{attempt:2,clicked:true,hidden:false}])
+    expect(state.renderer.closeControls.some((el:{receivesPointer:boolean})=>el.receivesPointer)).toBe(true)
+    await diagnostics.finish()
+  })
   it('clicks the real text control when blank option-row space has no click handler',async()=>{
     await page.setContent(quizPanel('','').replace('<div class="topic-item" onclick="">A. 选项</div>',`<div class="topic-item" style="width:500px;height:80px"><span class="item-topic" onclick="this.classList.add('active');document.body.dataset.trusted=String(event.isTrusted)">A. 选项</span></div>`).replace('<button class="btn-next" onclick="">下一题</button>',''))
     const quiz=new QuizService(page,log,new FixedAnswerStrategy(0))

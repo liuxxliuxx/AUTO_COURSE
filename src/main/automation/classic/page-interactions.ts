@@ -57,7 +57,7 @@ export class ClassicPageInteractions {
         if(layer.kind==='quiz'){
           const result=await this.quiz.handle(this.overlays.root(layer),this.shouldStop)
           if(result.state==='stopped')return {state:'stopped'}
-          if(result.state==='failed')return this.failure(result.message,layer)
+          if(result.state==='failed'){layer.closeAttempts=this.quiz.closeAttempts;return this.failure(result.message,layer)}
           if(result.state==='protected')continue
           handled=true;continue
         }

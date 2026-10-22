@@ -15,16 +15,16 @@ beforeAll(async () => { browser = await chromium.launch() })
 afterEach(async () => { await context?.close() })
 afterAll(async () => { await browser?.close() })
 
-async function setup(options: { acceptAt?: number; status?: string; mode?: string; dpr?: number; iframe?: boolean; infer?: () => Promise<GlyphPrediction> } = {}) {
+async function setup(options: { acceptAt?: number; status?: string; mode?: string; dpr?: number; iframe?: boolean; surface?: boolean; covered?: boolean; infer?: () => Promise<GlyphPrediction> } = {}) {
   context = await browser.newContext({ deviceScaleFactor: options.dpr ?? 2, viewport: { width: 1000, height: 800 } })
   page = await context.newPage()
   let checks = 0
   const html = `<body data-number="1" data-clicks="0"><div class="yidun_popup" style="position:fixed;left:80px;top:100px;background:white;padding:10px">
-  <p class="yidun_tips__text">请点击红色大写A</p><img class="yidun_bg-img" src="/image?n=1" style="display:block;width:320px;height:160px">
+  <p class="yidun_tips__text">请点击红色大写A</p><div class="yidun_bgimg" style="position:relative;width:320px;height:160px"><img class="yidun_bg-img" src="/image?n=1" style="display:block;width:320px;height:160px;pointer-events:${options.surface?'none':'auto'}">${options.covered?'<div class="yidun_refresh-cover" style="position:absolute;inset:0;z-index:2"></div>':''}</div>
   <button class="yidun_refresh">刷新</button></div><script>
   const img=document.querySelector('img');
   document.querySelector('button').onclick=()=>{document.body.dataset.number=String(+document.body.dataset.number+1);img.src='/image?n='+document.body.dataset.number};
-  img.onclick=async()=>{document.body.dataset.clicks=String(+document.body.dataset.clicks+1);
+  document.querySelector('.yidun_bgimg').onclick=async()=>{document.body.dataset.clicks=String(+document.body.dataset.clicks+1);
     const result=await fetch('/api/v3/check?n='+document.body.dataset.number).then(r=>r.json());
     if(${JSON.stringify(options.mode)}==='close-only'||result.data.result&&${JSON.stringify(options.mode)}!=='keep-open')document.querySelector('.yidun_popup').style.display='none';
   };</script></body>`
@@ -35,7 +35,7 @@ async function setup(options: { acceptAt?: number; status?: string; mode?: strin
       checks++
       return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: { result: options.mode === 'close-only' ? null : checks >= (options.acceptAt ?? 1) } }) })
     }
-    return route.fulfill({ contentType: 'text/html', body: options.iframe && url.pathname === '/outer' ? '<iframe src="/fixture" style="margin:100px;width:700px;height:500px"></iframe>' : html })
+    return route.fulfill({ contentType: 'text/html', body: options.iframe && url.pathname === '/outer' ? '<iframe src="/fixture?captcha=1" style="margin:100px;width:700px;height:500px"></iframe>' : html })
   })
   const manual = vi.fn(async () => true), dispose = vi.fn()
   const infer = vi.fn(async (_input: GlyphInput) => options.infer ? options.infer() : ({ ...matched, status: options.status ?? 'matched' }))
@@ -50,6 +50,16 @@ async function setup(options: { acceptAt?: number; status?: string; mode?: strin
 }
 
 describe('DPR 2 离线验证码与人工兜底', () => {
+  it.each([false,true])('真实易盾点击层可接收指针，含 iframe 偏移=%s',async iframe=>{
+    const t=await setup({surface:true,iframe})
+    await t.service.checkAndHandle('course','人工验证')
+    expect(t.checks()).toBe(1);expect(t.manual).not.toHaveBeenCalled()
+  })
+  it('题图内的其他覆盖控件仍阻止提交',async()=>{
+    const t=await setup({surface:true,covered:true})
+    await t.service.checkAndHandle('course','人工验证')
+    expect(t.checks()).toBe(0);expect(t.manual).toHaveBeenCalledOnce()
+  })
   it('原图坐标映射到 CSS 坐标，站点通过且退出后继续', async () => {
     const t = await setup()
     expect(await t.service.checkAndHandle('course', '人工验证')).toBe(true)

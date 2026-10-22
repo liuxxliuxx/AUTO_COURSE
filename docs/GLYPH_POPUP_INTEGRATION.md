@@ -15,6 +15,20 @@
 - 离线测试命令：`npx vitest run tests/integration/glyph-captcha.test.ts tests/unit/glyph-worker.test.ts`。实际宿主与原生 worker 冒烟：先构建，再运行 `node scripts/check-glyph-electron.mjs`。
 - 已有独立 DPR=2 公开页联调记录在 `output/playwright/glyph-live-10-dpr2-20261017/results.json`：10/10 提交并通过，原图 480×240。该记录不是本次生产入口的在线验收。
 
+## 2026-10-22 liuxx 真实课程排查
+
+使用用户指定账号的临时 profile 副本和实际 Electron Browser Host，复用生产登录、离线 worker 与 GlyphCaptchaSolver。未运行课程播放循环，结束后关闭调试窗口并删除临时 profile；凭据仅在内存中用于登录。
+
+修复前：5/5 原图均为 480×240，离线结果全部 matched 且目标坐标有效；但目标点的 `elementFromPoint` 均为 `div.yidun_bgimg`。生产逻辑要求命中对象严格等于 `img.yidun_bg-img`，因此在提交前返回 failed，实际上没有自动点击。针对 IMG 的 Playwright trial 同样无法通过 SDK 点击层。
+
+修复后：只额外接受当前题图所在、属于同一个验证码弹窗的 `.yidun_bgimg` 本身；在这个点击层上做正常 trial，实际点击仍使用原图坐标映射得到的页面坐标。其他遮挡物、刷新控件、无唯一题图的容器仍拒绝。日志补充识别状态、原图尺寸及命中检查失败原因。
+
+在线复测：登录后未立即弹出，重载同一课程一次自然出现挑战“请点击侧向的数字7”；第 1 次 matched，经正确点击层提交后获得站点确认且浮层退出，返回 solved。一次通过仅证明本次定位故障修复，不代表模型整体准确率。
+
+回归 API 跟踪还发现成功退出时的 DOM 竞态：分步执行 popup count、图片 count、图片 evaluate，可能在前两步之后被 SDK 隐藏弹窗，导致 evaluate 等待已不存在的可见定位器。现改为每个 frame 一次原子读取弹窗数量、题图及题干；成功退出不会再进入该定位器等待。完整验证码及 worker 回归 20 项通过，类型检查和构建通过。
+
+本机证据位于 `output/playwright/glyph-debug-20261022/`：修复前 events.jsonl、predictions.json、各轮题图及 hit.json；`fixed/` 内为修复后事件、命中状态与窗口截图。资料包含课程信息，不提交到 Git。回归覆盖 pointer-events:none 题图的正常点击层、iframe 坐标偏移，以及同一点击区域中的其他覆盖控件仍不提交。
+
 ## 已落地的运行资源
 
 训练交付来源：`/Users/wangyafei/Projects/captcha_solver/release/glyph-recognition-v1/`。本项目持有自己的运行资源副本，开发与打包运行均不依赖该绝对路径。

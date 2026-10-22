@@ -69,20 +69,31 @@ export class GlyphCaptchaSolver {
     const found: Challenge[] = []
     let popupCount = 0
     for (const frame of this.page.frames()) {
-      const popups = frame.locator('.yidun_popup:visible')
-      const count = await popups.count()
-      popupCount += count
-      if (count !== 1) continue
-      const popup = popups.first(), images = popup.locator('.yidun_bg-img:visible')
-      if (await images.count() !== 1) continue
-      const image = images.first()
-      const state = await image.evaluate(el => {
-        const img = el as HTMLImageElement
-        return { source: img.currentSrc, width: img.naturalWidth, height: img.naturalHeight, complete: img.complete, dpr: devicePixelRatio }
+      // Read in one browser turn. Separate count/evaluate calls can race a
+      // successful SDK dismissal and wait forever on a now-hidden locator.
+      const snapshot = await frame.evaluate(() => {
+        const visible = (el: Element): boolean => {
+          const r = el.getBoundingClientRect()
+          if (!r.width || !r.height || r.right <= 0 || r.bottom <= 0 || r.left >= innerWidth || r.top >= innerHeight) return false
+          for (let node: Element | null = el; node; node = node.parentElement) {
+            const style = getComputedStyle(node)
+            if (style.display === 'none' || /hidden|collapse/.test(style.visibility) || Number(style.opacity) === 0) return false
+          }
+          return true
+        }
+        const popups = Array.from(document.querySelectorAll('.yidun_popup')).filter(visible)
+        if (popups.length !== 1) return { count: popups.length, state: null }
+        const images = Array.from(popups[0].querySelectorAll<HTMLImageElement>('.yidun_bg-img')).filter(visible)
+        if (images.length !== 1) return { count: 1, state: null }
+        const img = images[0]
+        const instruction = Array.from(popups[0].querySelectorAll('.yidun_tips__text')).map(el => el.textContent ?? '').join(' ').replace(/\s+/g, ' ').trim()
+        return { count: 1, state: { source: img.currentSrc, width: img.naturalWidth, height: img.naturalHeight, complete: img.complete, dpr: devicePixelRatio, instruction } }
       })
-      const instruction = (await popup.locator('.yidun_tips__text').allTextContents()).join(' ').replace(/\s+/g, ' ').trim()
-      if (!state.complete || !state.width || !state.height || state.dpr !== 2 || !state.source || !instruction) continue
-      found.push({ frame, popup, image, source: state.source, instruction, width: state.width, height: state.height })
+      popupCount += snapshot.count
+      const state = snapshot.state
+      if (!state || !state.complete || !state.width || !state.height || state.dpr !== 2 || !state.source || !state.instruction) continue
+      const popup = frame.locator('.yidun_popup:visible').first(), image = popup.locator('.yidun_bg-img:visible')
+      found.push({ frame, popup, image, source: state.source, instruction: state.instruction, width: state.width, height: state.height })
     }
     return popupCount === 1 && found.length === 1 ? found[0] : null
   }
@@ -123,12 +134,23 @@ export class GlyphCaptchaSolver {
     const point = prediction.pointInImage!
     // Locator coordinates are CSS pixels within the image, including iframe offsets.
     // DPR is already reflected in naturalWidth; applying it again would double-scale.
-    const position = await current.image.evaluate((el, p) => {
+    const hit = await current.image.evaluate((el, p) => {
       const img = el as HTMLImageElement, r = img.getBoundingClientRect()
       const x = p.x * r.width / img.naturalWidth, y = p.y * r.height / img.naturalHeight
-      return document.elementFromPoint(r.x + x, r.y + y) === img ? { x, y } : null
+      const top = document.elementFromPoint(r.x + x, r.y + y)
+      // Yidun's IMG is pointer-events:none; its own .yidun_bgimg receives
+      // input. Accept that exact associated surface, never any popup descendant.
+      const surface = img.closest('.yidun_bgimg')
+      if (top === img) return { kind: 'image' as const, position: { x, y } }
+      if (surface && top === surface && surface.closest('.yidun_popup') === img.closest('.yidun_popup')) {
+        const box = surface.getBoundingClientRect()
+        return { kind: 'surface' as const, position: { x: r.x + x - box.x, y: r.y + y - box.y } }
+      }
+      return null
     }, point)
-    if (!position) return 'failed'
+    if (!hit) { this.log.warn('验证码提交前命中检查未通过：目标点被其他元素遮挡'); return 'failed' }
+    const clickTarget = hit.kind === 'image' ? current.image : current.popup.locator('.yidun_bgimg').filter({ has: current.frame.locator('.yidun_bg-img') })
+    if (await clickTarget.count() !== 1) { this.log.warn('验证码点击层无法唯一定位'); return 'failed' }
     let result: boolean | null = null, limited = false
     const pending = new Set<Promise<void>>()
     const onResponse = (response: Response): void => {
@@ -143,7 +165,7 @@ export class GlyphCaptchaSolver {
     try {
       if (this.stopped(shouldStop)) return 'stopped'
       if (!this.same(challenge, await this.read())) return 'failed'
-      await current.image.click({ position, trial: true, timeout: 1500 })
+      await clickTarget.click({ position: hit.position, trial: true, timeout: 1500 })
       if (!this.same(challenge, await this.read())) return 'failed'
       const box = await current.image.boundingBox()
       if (!box || this.stopped(shouldStop)) return this.stopped(shouldStop) ? 'stopped' : 'failed'
@@ -185,6 +207,7 @@ export class GlyphCaptchaSolver {
         if (this.stopped(shouldStop)) { this.recognizer.dispose(); return 'stopped' }
         const prediction = await this.recognizer.recognize({ bytes, width: challenge.width, height: challenge.height, instruction: challenge.instruction }, shouldStop)
         if (this.stopped(shouldStop)) return 'stopped'
+        this.log.info(`离线验证码结果：${prediction.status}，原图 ${challenge.width}×${challenge.height}，目标${validGlyphPoint(prediction, challenge.width, challenge.height) ? '有效' : '无有效匹配'}`)
         if (prediction.status === 'unsupported_instruction') return 'manual'
         if (validGlyphPoint(prediction, challenge.width, challenge.height)) {
           const outcome = await this.submit(challenge, prediction, hash, shouldStop)

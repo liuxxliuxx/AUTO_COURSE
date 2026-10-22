@@ -36,7 +36,7 @@ export class FixedAnswerStrategy implements AnswerStrategy {
 }
 
 export type QuizResult = { state: 'handled' | 'stopped' | 'protected' } | { state: 'failed'; message: string }
-interface QuestionState { fingerprint: string; options: string[]; selectedIndex: number; unsupported: boolean }
+interface QuestionState { fingerprint: string; options: string[]; selectedIndex: number; unsupported: boolean; reviewedMultiple: boolean }
 
 /** One selection per question; every transition is verified, never inferred from a click. */
 export class QuizService {
@@ -55,12 +55,17 @@ export class QuizService {
     return dialog.evaluate(root=>{
       const items=Array.from(root.querySelectorAll('.topic-item'))
       const options=items.map(el=>(el.textContent??'').replace(/\s+/g,' ').trim())
-      const title=root.querySelector('#question,.topic-title,.topicTitle,.el-dialog__body p,p')?.cloneNode(true) as Element|undefined
+      const heading=root.querySelector('#question,.topic-title,.topicTitle,.el-dialog__body p,p')
+      const title=heading?.cloneNode(true) as Element|undefined
       // Result feedback is not part of the question identity on resume.
-      title?.querySelectorAll('.right,.wrong').forEach(el=>el.remove())
+      title?.querySelectorAll('.right,.wrong,.error').forEach(el=>el.remove())
       const question=(title?.textContent??'').replace(/\s+/g,' ').trim()
       const selectedIndex=items.findIndex(el=>el.matches('.active,[aria-checked="true"]')||!!el.querySelector('.active,input:checked,[aria-checked="true"]'))
-      return {fingerprint:JSON.stringify([question,options]),options,selectedIndex,unsupported:/多选|填空|简答|排序/.test(question)||!!root.querySelector('textarea,input[type="text"],input[type="checkbox"]')}
+      // Only resume an already graded multiple-choice question. This does not
+      // introduce a strategy for answering an unanswered multiple-choice quiz.
+      const shown=(el:Element|null)=>!!el&&(el as HTMLElement).getClientRects().length>0&&getComputedStyle(el).visibility!=='hidden'
+      const reviewedMultiple=/多选/.test(question)&&!/填空|简答|排序/.test(question)&&selectedIndex>=0&&shown(heading?.querySelector('.right,.wrong,.error')??null)&&shown(root.querySelector('.answer'))&&/^\s*正确答案\s*[:：]/.test(root.querySelector('.answer')?.textContent??'')
+      return {fingerprint:JSON.stringify([question,options]),options,selectedIndex,reviewedMultiple,unsupported:/多选|填空|简答|排序/.test(question)||!!root.querySelector('textarea,input[type="text"],input[type="checkbox"]')}
     })
   }
   private async gone(dialog:Locator):Promise<boolean>{
@@ -87,7 +92,7 @@ export class QuizService {
         const visible=(await overlays.scan()).find(l=>l.actionable)
         if(visible&&visible.kind!=='quiz')return {state:'protected'} // coordinator handles the upper layer first
         const state=await this.question(dialog)
-        if(state.unsupported||!state.options.length)return fail('弹题题型或选项无法识别')
+        if(state.unsupported&&!state.reviewedMultiple||!state.options.length)return fail('弹题题型或选项无法识别')
         const id=await dialog.getAttribute('data-ac-layer')??'quiz'
         const key=id+state.fingerprint
         // A previous run or the user may already have answered this question.

@@ -39,6 +39,27 @@ afterEach(async () => { vi.restoreAllMocks(); await page.close() })
 afterAll(async () => { await browser?.close() })
 
 describe('classic course initialization barrier', () => {
+  it('allows slow initialization past one minute without clicking before it becomes ready',async()=>{
+    const nav=navigator(),started=Date.now()
+    let elapsed=0
+    vi.spyOn(Date,'now').mockImplementation(()=>started+elapsed)
+    vi.spyOn(nav,'settle').mockResolvedValue({state:'clear'})
+    vi.spyOn(page,'evaluate').mockImplementation(async()=>elapsed>=65_000?{ready:true,reason:''}:{ready:false,reason:'学习记录尚未初始化'})
+    vi.spyOn(page,'waitForTimeout').mockImplementation(async()=>{elapsed+=65_000})
+    expect((await nav.waitForLearningReady()).state).toBe('clear')
+    expect(elapsed).toBe(65_000)
+    expect(log.error).not.toHaveBeenCalled()
+  })
+  it('includes both saving flags when saving never settles and still refuses to click',async()=>{
+    await page.setContent(fixture(0))
+    await page.evaluate(()=>{
+      const vm=(document.querySelector('#runtime') as unknown as {__vue__:{$parent:{$data:{isSaving:boolean;saveDataFilish:boolean}}}}).__vue__.$parent
+      vm.$data.isSaving=false;vm.$data.saveDataFilish=true
+    })
+    const result=await navigator().waitForLearningReady(()=>false,100)
+    expect(result).toMatchObject({state:'failed',message:expect.stringContaining('isSaving=false, saveDataFilish=true')})
+    expect(await page.locator('body').getAttribute('data-clicked')).toBeNull()
+  })
   it('chooses the first unfinished lesson after asynchronous account completion marks load',async()=>{
     await page.setContent(fixture(650).replace('<div id="runtime">','<li class="video"><span class="catalogue_title">未完成视频</span></li><div id="runtime">')+`<script>setTimeout(()=>document.querySelector('li.video').insertAdjacentHTML('beforeend','<i class="time_icofinish"></i>'),450)</script>`)
     const click=vi.spyOn(ClassicCourseNavigator.prototype,'clickVideoWithRetry').mockResolvedValue(false)

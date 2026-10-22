@@ -46,6 +46,21 @@ afterEach(async () => { vi.restoreAllMocks(); await page.close() })
 afterAll(async () => { await browser?.close() })
 
 describe('passive course overlays', () => {
+  it.each(['static','absolute'])('keeps the progress card outer dialog when its inner message is %s',async(position)=>{
+    await page.setContent(`<div class="el-dialog__wrapper ss2077-custom-dialog" style="position:fixed;right:20px;top:100px;z-index:100"><div role="dialog" class="el-dialog" style="position:relative;width:320px;height:260px;background:#eef"><div class="el-dialog__body"><div class="ss2077-custom-title"><img alt="close" style="position:absolute;right:12px;top:12px;width:24px;height:24px;cursor:pointer" onclick="document.body.dataset.trusted=String(event.isTrusted);this.closest('.el-dialog__wrapper').remove()"></div><div class="ss2077-msg-custom" style="position:${position};top:60px;width:280px;height:170px"><div style="position:relative">当前时间计划学习进度<span>61.7%</span>，你的学习进度为31.6%，你所在班级平均学习进度23.3%</div></div></div></div></div>`)
+    const layers=await overlays.scan()
+    expect(layers).toHaveLength(1)
+    expect(layers[0]).toMatchObject({kind:'info',actionable:true,closeId:expect.any(String)})
+    expect(await overlays.root(layers[0]).getAttribute('class')).toBe('el-dialog')
+    expect(await overlays.dismiss()).toBe(1)
+    expect(await page.locator('body').getAttribute('data-trusted')).toBe('true')
+  })
+  it('does not close a progress card containing a protected challenge',async()=>{
+    await page.setContent(`<div class="ss2077-custom-dialog"><div role="dialog" class="el-dialog" style="position:fixed;inset:100px;background:white"><img alt="close" style="width:24px;height:24px" onclick="document.body.dataset.closed='yes'"><div class="ss2077-msg-custom">当前时间计划学习进度 61%</div><div class="yidun_modal" style="position:absolute;inset:40px;background:white">验证</div></div></div>`)
+    expect((await overlays.scan())[0].kind).toBe('protected')
+    expect(await overlays.dismiss()).toBe(0)
+    expect(await page.locator('body').getAttribute('data-closed')).toBeNull()
+  })
   it('closes a screenshot-style assistant with unknown classes using a trusted event', async () => {
     await page.evaluate(() => {
       document.querySelector('#assistant i')!.addEventListener('click', event => {

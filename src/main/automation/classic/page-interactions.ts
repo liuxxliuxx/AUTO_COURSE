@@ -29,14 +29,24 @@ export class ClassicPageInteractions {
     try{
       for(let round=0;round<10;round++){
         if(this.shouldStop())return {state:'stopped'}
-        const layers=await this.overlays.scan(target)
         // A protected challenge owns the page even if its centre is occupied by an inner frame.
-        const layer=layers.find(l=>l.actionable&&(l.kind!=='unknown'||l.blocking))
-        if(!layer){
-          const obstruction=target?await this.overlays.obstruction(target):null
-          if(obstruction)return this.failure(`操作目标被无法识别的浮层遮挡：${obstruction}`)
-          return {state:handled?'handled':'clear'}
+        const scan=async()=> (await this.overlays.scan(target)).find(l=>l.actionable&&(l.kind!=='unknown'||l.blocking))
+        let layer=await scan()
+        if(!layer&&target){
+          let obstruction=await this.overlays.obstruction(target)
+          // A dialog can appear (or finish its entrance animation) between the
+          // scan and hit test. Reclassify it before reporting an unknown blocker.
+          const deadline=Date.now()+1500
+          while(obstruction&&!layer&&Date.now()<deadline){
+            if(this.shouldStop())return {state:'stopped'}
+            await this.page.waitForTimeout(80)
+            if(this.shouldStop())return {state:'stopped'}
+            layer=await scan()
+            if(!layer)obstruction=await this.overlays.obstruction(target)
+          }
+          if(!layer&&obstruction)return this.failure(`操作目标被无法识别的浮层遮挡：${obstruction}`)
         }
+        if(!layer)return {state:handled?'handled':'clear'}
         if(layer.kind==='protected')return {state:'protected'}
         if(layer.exiting){
           const cleared=await this.overlays.waitForExit(layer)

@@ -1,6 +1,6 @@
 /** Read-only probe: the catalogue renders before prelearningNote creates the study record. */
 export interface LearningTarget { title: string; previousSource?: string }
-export function inspectLearningReadiness(target?: LearningTarget): { ready: boolean; reason: string; source?: string; title?: string } {
+export function inspectLearningReadiness(target?: LearningTarget): { ready: boolean; reason: string; source?: string; title?: string; saving?: { isSaving: boolean; saveDataFilish: boolean } } {
   interface CourseVm {
     $data?: Record<string, unknown>
     $parent?: CourseVm
@@ -32,7 +32,7 @@ export function inspectLearningReadiness(target?: LearningTarget): { ready: bool
   if (!data) return location.hostname === 'studyvideoh5.zhihuishu.com'
     ? { ready: false, reason: '课程运行状态尚未加载' }
     : { ready: true, reason: '' }
-  if (data.isSaving || data.saveDataFilish) return { ready: false, reason: '上一节进度仍在保存或切换中' }
+  if (data.isSaving || data.saveDataFilish) return { ready: false, reason: '上一节进度仍在保存或切换中', saving: { isSaving: !!data.isSaving, saveDataFilish: !!data.saveDataFilish } }
   const record = data.preVideoInfo as { studiedLessonDto?: { id?: unknown } } | undefined
   if (!record?.studiedLessonDto?.id) return { ready: false, reason: '学习记录尚未初始化' }
   const video = document.querySelector('video')

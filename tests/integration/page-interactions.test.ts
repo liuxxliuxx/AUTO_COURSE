@@ -229,6 +229,54 @@ describe('completion and recording boundaries',()=>{
 
 const quizPanel=(optionAction:string,nextAction:string)=>`<div role="dialog" aria-label="弹题测验" class="el-dialog" style="position:fixed;inset:100px;background:white"><p id="question">【单选题】样本问题</p><div class="topic-item" onclick="${optionAction}">A. 选项</div><button class="btn-next" onclick="${nextAction}">下一题</button><div class="dialog-footer"><div class="btn" onclick="document.body.dataset.unknown='clicked'">确认提交</div><div class="btn" onclick="this.closest('.el-dialog').remove()">关闭</div></div></div>`
 describe('verified quiz transitions',()=>{
+  it('reclassifies a quiz appearing between the layer scan and target hit test',async()=>{
+    const interactions=checkpoint(),obstruction=interactions.overlays.obstruction.bind(interactions.overlays)
+    vi.spyOn(interactions.overlays,'obstruction').mockImplementationOnce(async target=>{
+      await page.locator('body').evaluate(body=>body.insertAdjacentHTML('beforeend',`<div id="playTopic-dialog" class="el-dialog__wrapper" style="position:fixed;inset:0;z-index:100;background:#8888"><div class="el-dialog" role="dialog" aria-label="弹题测验" style="position:absolute;inset:100px;background:white"><p class="topic-title">【单选题】样本问题</p><div class="topic-item active">A. 样本</div><div class="dialog-footer"><div class="btn" onclick="document.body.dataset.trusted=String(event.isTrusted);this.closest('.el-dialog__wrapper').remove()">关闭</div></div></div></div>`))
+      return obstruction(target)
+    })
+    expect((await interactions.checkpoint(page.locator('li.video'))).state).toBe('handled')
+    expect(await page.locator('#playTopic-dialog').count()).toBe(0)
+    expect(await page.locator('body').getAttribute('data-trusted')).toBe('true')
+  })
+  it('waits for a transparent quiz entrance to finish before classifying its wrapper',async()=>{
+    await page.locator('body').evaluate(body=>{
+      body.insertAdjacentHTML('beforeend',`<div id="playTopic-dialog" class="el-dialog__wrapper" style="position:fixed;inset:0;z-index:100;opacity:0"><div class="el-dialog" role="dialog" aria-label="弹题测验" style="position:absolute;inset:100px;background:white"><p class="topic-title">【单选题】样本问题</p><div class="topic-item active">A. 样本</div><div class="dialog-footer"><div class="btn" onclick="this.closest('.el-dialog__wrapper').remove()">关闭</div></div></div></div>`)
+      setTimeout(()=>document.querySelector<HTMLElement>('#playTopic-dialog')!.style.opacity='1',250)
+    })
+    expect((await checkpoint().checkpoint(page.locator('li.video'))).state).toBe('handled')
+    expect(await page.locator('#playTopic-dialog').count()).toBe(0)
+  })
+  it('keeps a permanently transparent blocker and fails within the rescan budget',async()=>{
+    await page.locator('body').evaluate(body=>body.insertAdjacentHTML('beforeend','<div id="playTopic-dialog" style="position:fixed;inset:0;z-index:100;opacity:0"></div>'))
+    const started=Date.now(),result=await checkpoint().checkpoint(page.locator('li.video'))
+    expect(result).toMatchObject({state:'failed',message:expect.stringContaining('无法识别的浮层遮挡')})
+    expect(Date.now()-started).toBeLessThan(3000)
+    expect(await page.locator('#playTopic-dialog').count()).toBe(1)
+  })
+  it('yields to a challenge arriving between scan and obstruction checks',async()=>{
+    const interactions=checkpoint(),obstruction=interactions.overlays.obstruction.bind(interactions.overlays)
+    vi.spyOn(interactions.overlays,'obstruction').mockImplementationOnce(async target=>{
+      await page.locator('body').evaluate(body=>body.insertAdjacentHTML('beforeend','<div class="yidun_modal" style="position:fixed;inset:0;z-index:100;background:white">验证</div>'))
+      return obstruction(target)
+    })
+    expect((await interactions.checkpoint(page.locator('li.video'))).state).toBe('protected')
+    expect(await page.locator('.yidun_modal').count()).toBe(1)
+  })
+  it.each(['right','error'])('closes an already graded multiple-choice quiz with %s feedback without changing selections',async(feedback)=>{
+    await page.setContent(quizPanel('','').replace('【单选题】样本问题',`<span class="${feedback}">结果反馈</span>【多选题】样本问题`).replace('<div class="topic-item" onclick="">A. 选项</div>',`<div class="topic-item" onclick="document.body.dataset.changed='yes'"><span class="topic-option-item active">A.</span><span class="item-topic active">样本甲</span></div><div class="topic-item active" onclick="document.body.dataset.changed='yes'">B. 样本乙</div><p class="answer">正确答案：A,B</p>`).replace('<button class="btn-next" onclick="">下一题</button>',''))
+    const selectIndex=vi.fn(()=>0),quiz=new QuizService(page,log,{name:'counted',selectIndex})
+    expect((await quiz.handle((await quiz.findDialog())!)).state).toBe('handled')
+    expect(selectIndex).not.toHaveBeenCalled()
+    expect(await page.locator('body').getAttribute('data-changed')).toBeNull()
+  })
+  it('does not treat selected multiple-choice options alone as a submitted result',async()=>{
+    await page.setContent(quizPanel("document.body.dataset.changed='yes'",'').replace('单选题','多选题').replace('class="topic-item"','class="topic-item active"'))
+    const quiz=new QuizService(page,log)
+    expect(await quiz.handle((await quiz.findDialog())!)).toMatchObject({state:'failed',message:'弹题题型或选项无法识别'})
+    expect(await page.getByRole('dialog').isVisible()).toBe(true)
+    expect(await page.locator('body').getAttribute('data-changed')).toBeNull()
+  })
   it.each(['close','next'])('preserves the report selection C instead of clicking covered D before %s',async(action)=>{
     await page.setViewportSize({width:1271,height:667})
     await page.setContent(`<div class="el-dialog" role="dialog" aria-label="弹题测验" style="position:fixed;left:300px;top:100px;width:600px;height:450px;background:white">

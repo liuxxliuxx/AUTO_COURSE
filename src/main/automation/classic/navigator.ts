@@ -208,9 +208,10 @@ export class ClassicCourseNavigator {
 
   // ---------------------------------------------------------------- 点击
 
-  async waitForLearningReady(shouldStop:()=>boolean=()=>false, timeout:number=TIMEOUT.extraLong, target?:LearningTarget):Promise<InteractionResult>{
+  async waitForLearningReady(shouldStop:()=>boolean=()=>false, timeout:number=TIMEOUT.learningReady, target?:LearningTarget):Promise<InteractionResult>{
     const deadline=Date.now()+timeout
     let pending='课程运行状态尚未加载', announced=false
+    let saving: {isSaving:boolean;saveDataFilish:boolean}|undefined
     while(Date.now()<deadline){
       if(shouldStop())return {state:'stopped'}
       const settled=await this.settle(undefined,shouldStop)
@@ -222,12 +223,13 @@ export class ClassicCourseNavigator {
           return {state:'clear'}
         }
         pending=state.reason
+        saving=state.saving
       }catch{ /* Navigation can replace the execution context while initialization is pending. */ }
       if(!announced){this.log.info('等待课程播放器与学习记录初始化');announced=true}
-      await this.page.waitForTimeout(200)
+      await this.page.waitForTimeout(500)
     }
     if(shouldStop())return {state:'stopped'}
-    return this.interactions.failure(`课程初始化超时：${pending}，未继续点击课程`)
+    return this.interactions.failure(`课程初始化超时：${pending}${saving?`（isSaving=${saving.isSaving}, saveDataFilish=${saving.saveDataFilish}）`:''}，未继续点击课程`)
   }
 
   async clickVideo(video: Locator, title: string, shouldStop:()=>boolean=()=>false): Promise<boolean> {
@@ -248,7 +250,7 @@ export class ClassicCourseNavigator {
       if (shouldStop()) return false
       await clickTarget.click({timeout:COURSE_CLICK_PROBE_MS})
       await this.page.waitForTimeout(SLEEP.extraLong)
-      const switched=await this.waitForLearningReady(shouldStop,TIMEOUT.extraLong,{
+      const switched=await this.waitForLearningReady(shouldStop,TIMEOUT.learningReady,{
         title,previousSource:before.title&&before.title!==title?before.source:undefined
       })
       if(switched.state==='failed'){this.lastClickError=switched.message;return false}

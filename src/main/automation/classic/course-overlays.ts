@@ -65,7 +65,13 @@ export function inspectCourseLayers(targetId: string | null): CourseLayer[] {
     }
   }
   // Keep the semantic content, not its wrapper, mask or a text descendant.
-  const panels = [...roots].filter(el => ![...roots].some(other => other !== el && el.contains(other)))
+  // Progress cards expose an inner .ss2077-msg-custom as well as a dialog.
+  // Keep their outer semantic panel so its sibling image dismissal is in scope.
+  const normalized = new Set([...roots].map(el => {
+    const dialog = el.closest('.ss2077-custom-dialog .el-dialog')
+    return dialog?.querySelector('.ss2077-msg-custom') ? dialog : el
+  }))
+  const panels = [...normalized].filter(el => ![...normalized].some(other => other !== el && el.contains(other)))
   const results: Array<CourseLayer & { rank: number }> = []
   for (const root of panels) {
     if (!visible(root,root.matches(exitingMask)) || ignored(root)) continue
@@ -99,11 +105,11 @@ export function inspectCourseLayers(targetId: string | null): CourseLayer[] {
     root.setAttribute('data-ac-layer', id)
     let close: Element | undefined
     if (kind !== 'protected' && kind !== 'quiz') {
-      const controls = Array.from(root.querySelectorAll('button,[role="button"],a,i,svg,span,div,[aria-label],[title]'))
+      const controls = Array.from(root.querySelectorAll('button,[role="button"],a,i,svg,span,div,img[alt],[aria-label],[title]'))
       if(kind==='assistant')root.closest('.ai-helper-sections')?.querySelectorAll('.not-expand-icon,.ai-close-icon').forEach(el=>controls.push(el))
       close = controls.filter(el => {
         if (!visible(el) || el.matches('input,textarea,select') || el.closest(protectedCss)) return false
-        const label = `${el.getAttribute('aria-label') ?? ''} ${el.getAttribute('title') ?? ''}`.trim()
+        const label = `${el.getAttribute('aria-label') ?? ''} ${el.getAttribute('title') ?? ''} ${el.getAttribute('alt') ?? ''}`.trim()
         const t = text(el), cls = el.getAttribute('class') ?? ''
         if (kind === 'reminder') return el.matches('.talk-later-btn') && t === '下次再说'
         if (kind === 'assistant') return /close|collapse|not-expand/i.test(cls) || /^(?:收起|关闭)$/.test(t)

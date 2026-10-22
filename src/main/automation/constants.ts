@@ -239,6 +239,8 @@ export const TIMEOUT = {
   long: 30_000,
   /** 超长等待（登录跳转） */
   extraLong: 60_000,
+  /** 传统课学习记录、保存与播放器初始化；慢设备单独使用此预算。 */
+  learningReady: 120_000,
   /** 单个视频最长监控：60 分钟 */
   videoMonitorMax: 60 * 60 * 1000
 } as const
